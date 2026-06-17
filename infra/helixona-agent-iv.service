@@ -1,0 +1,16 @@
+[Unit]
+Description=Helixona Billing Agent (IV Corrections Bot)
+After=network.target xvfb.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/helixona-agent
+ExecStart=/opt/helixona-agent/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:99
+Environment=BOT_ROLE=iv_corrections
+
+[Install]
+WantedBy=multi-user.target

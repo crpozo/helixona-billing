@@ -1,0 +1,45 @@
+# --- Secrets & credentials (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+.claude/settings.local.json
+
+# --- PHI / patient data (NEVER commit) ---
+*.csv
+*.xlsx
+*.xls
+*.pdf
+/documents/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# --- Backups / logs ---
+*.bak
+*.bak_*
+*.log

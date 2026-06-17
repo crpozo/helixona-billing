@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Helixona — Operations</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0f;
+  --surface:#13131a;
+  --surface-2:#1a1a23;
+  --border:#23232f;
+  --border-2:#2d2d3d;
+  --text:#f1f5f9;
+  --text-2:#9ca3af;
+  --text-3:#6b7280;
+  --text-4:#4b5563;
+  --accent:#8b5cf6;
+  --accent-2:#a78bfa;
+  --gold:#CDB486;
+  --ok:#10b981;
+  --warn:#f59e0b;
+  --bad:#ef4444;
+  --info:#3b82f6;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+
+.wrap{max-width:1280px;margin:0 auto;padding:36px 28px 80px}
+
+/* HEADER */
+.header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:42px;gap:20px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-logo{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,var(--accent),var(--gold));display:flex;align-items:center;justify-content:center;color:#000;font-weight:800;font-size:18px;letter-spacing:-1px}
+.brand-name{font-size:20px;font-weight:700;letter-spacing:-.4px;line-height:1.1}
+.brand-sub{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:1.4px;font-weight:600;margin-top:4px}
+.header-meta{text-align:right;font-size:12px;color:var(--text-3)}
+.header-meta .live{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--ok);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.live .pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(16,185,129,.5);animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.5)}50%{box-shadow:0 0 0 8px rgba(16,185,129,0)}}
+
+/* SECTION */
+.section{margin-bottom:36px}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;gap:12px}
+.section-title{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:1.6px;font-weight:700}
+.section-meta{font-size:11px;color:var(--text-4)}
+
+/* HEADLINE METRICS */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 22px 18px;position:relative;overflow:hidden;transition:border-color .2s}
+.metric:hover{border-color:var(--border-2)}
+.metric::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent)}
+.metric.m-ok::before{background:var(--ok)}
+.metric.m-warn::before{background:var(--warn)}
+.metric.m-info::before{background:var(--info)}
+.metric.m-gold::before{background:var(--gold)}
+.metric-label{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:10px}
+.metric-num{font-size:36px;font-weight:800;letter-spacing:-1.5px;color:var(--text);line-height:1.05;margin-bottom:8px}
+.metric-num .unit{font-size:16px;color:var(--text-3);font-weight:600;margin-left:4px}
+.metric-foot{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-2)}
+
+/* CLAIM TYPES — two side-by-side cards */
+.types{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.type-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 24px;transition:border-color .2s}
+.type-card:hover{border-color:var(--border-2)}
+.type-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.type-name{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700;color:var(--text)}
+.type-icon{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.type-icon.iv{background:rgba(139,92,246,.14);color:var(--accent-2)}
+.type-icon.ov{background:rgba(59,130,246,.14);color:#60a5fa}
+.type-share{font-size:11px;color:var(--text-3);font-weight:600}
+.type-row{display:flex;align-items:baseline;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border)}
+.type-row:first-of-type{border-top:none;padding-top:0}
+.type-row-label{font-size:12px;color:var(--text-2);font-weight:500}
+.type-row-val{font-size:18px;font-weight:700;color:var(--text);letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.type-row-val .sub{font-size:11px;color:var(--text-3);font-weight:500;margin-left:4px}
+.type-row.alert .type-row-val{color:var(--warn)}
+.type-row.alert.bad .type-row-val{color:var(--bad)}
+
+/* PAYERS */
+.payers{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 26px}
+.payer-row{display:flex;align-items:center;gap:18px;padding:14px 0;border-bottom:1px solid var(--border)}
+.payer-row:last-child{border-bottom:none}
+.payer-row:first-child{padding-top:0}
+.payer-name{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--text)}
+.payer-claims{font-size:13px;color:var(--text-2);font-weight:600;font-variant-numeric:tabular-nums;min-width:80px;text-align:right}
+.payer-money{font-size:14px;font-weight:700;color:var(--gold);letter-spacing:-.3px;font-variant-numeric:tabular-nums;min-width:100px;text-align:right}
+
+/* PIPELINE FUNNEL */
+.funnel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px 26px}
+.funnel-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.funnel-step{position:relative}
+.funnel-step:not(:last-child)::after{content:'→';position:absolute;right:-15px;top:24px;color:var(--text-4);font-size:14px}
+.funnel-num{font-size:30px;font-weight:800;letter-spacing:-1.2px;color:var(--text);line-height:1;margin-bottom:4px}
+.funnel-money{font-size:12px;color:var(--gold);font-weight:600;margin-bottom:8px;font-variant-numeric:tabular-nums}
+.funnel-pct{font-size:11px;color:var(--text-3);font-weight:600;margin-bottom:10px}
+.funnel-pct strong{color:var(--text-2)}
+.funnel-bar{height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden;margin-bottom:8px}
+.funnel-fill{height:100%;border-radius:3px;transition:width .6s ease}
+.funnel-fill.f1{background:var(--info)}
+.funnel-fill.f2{background:var(--accent)}
+.funnel-fill.f3{background:var(--gold)}
+.funnel-fill.f4{background:var(--ok)}
+.funnel-label{font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px}
+
+/* ERROR */
+.err{text-align:center;padding:40px;color:var(--bad)}
+
+@media (max-width:900px){
+  .metrics,.funnel-grid,.types{grid-template-columns:repeat(2,1fr)}
+  .funnel-step:not(:last-child)::after{display:none}
+}
+@media (max-width:560px){
+  .wrap{padding:24px 16px 60px}
+  .metrics,.funnel-grid,.types{grid-template-columns:1fr}
+  .header{align-items:flex-start;flex-direction:column}
+  .header-meta{text-align:left}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-logo">H</div>
+      <div>
+        <div class="brand-name">Helixona</div>
+        <div class="brand-sub">Operations Overview</div>
+      </div>
+    </div>
+    <div class="header-meta">
+      <select id="monthFilter" onchange="applyMonth()" title="Filter by month of service"
+        style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;outline:none;font-family:inherit">
+        <option value="">All months</option>
+      </select>
+      <div class="live"><span class="pulse"></span><span>Live</span></div>
+      <div id="lastUpdate">Loading…</div>
+    </div>
+  </header>
+
+  <!-- HEADLINE METRICS -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title">Pipeline at a glance</div>
+      <div class="section-meta">All claims currently being worked</div>
+    </div>
+    <div class="metrics">
+      <div class="metric m-info">
+        <div class="metric-label">Claims in Pipeline</div>
+        <div class="metric-num" id="mTotal">—</div>
+        <div class="metric-foot"><span id="mTotalSub">—</span></div>
+      </div>
+      <div class="metric m-gold">
+        <div class="metric-label">Total Charges</div>
+        <div class="metric-num" id="mCharges">—<span class="unit">USD</span></div>
+        <div class="metric-foot"><span id="mChargesAvg">—</span><span>avg per claim</span></div>
+      </div>
+      <div class="metric m-ok">
+        <div class="metric-label">Submitted</div>
+        <div class="metric-num" id="mSubmitted">—</div>
+        <div class="metric-foot"><span id="mSubmittedMoney">—</span><span>· <span id="mSubmittedPct">—</span> of pipeline</span></div>
+      </div>
+      <div class="metric m-warn">
+        <div class="metric-label">Needs Attention</div>
+        <div class="metric-num" id="mReview">—</div>
+        <div class="metric-foot"><span id="mReviewMoney">—</span><span>· flagged for review</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLAIM MIX -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title">Claim Mix</div>
+      <div class="section-meta">Split by service type</div>
+    </div>
+    <div class="types">
+      <!-- IV Therapy -->
+      <div class="type-card">
+        <div class="type-head">
+          <div class="type-name"><span class="type-icon iv">💉</span> IV Therapy</div>
+          <div class="type-share" id="ivShare">—</div>
+        </div>
+        <div class="type-row">
+          <div class="type-row-label">Claims</div>
+          <div class="type-row-val" id="ivCount">—</div>
+        </div>
+        <div class="type-row">
+          <div class="type-row-label">Total Charges</div>
+          <div class="type-row-val" id="ivCharges">—</div>
+        </div>
+        <div class="type-row">
+          <div class="type-row-label">Submitted</div>
+          <div class="type-row-val" id="ivSubmitted">—</div>
+        </div>
+        <div class="type-row alert bad">
+          <div class="type-row-label">Missing Progress Note</div>
+          <div class="type-row-val" id="ivMissing">—</div>
+        </div>
+      </div>
+      <!-- Office Visit -->
+      <div class="type-card">
+        <div class="type-head">
+          <div class="type-name"><span class="type-icon ov">🏥</span> Office Visit</div>
+          <div class="type-share" id="ovShare">—</div>
+        </div>
+        <div class="type-row">
+          <div class="type-row-label">Claims</div>
+          <div class="type-row-val" id="ovCount">—</div>
+        </div>
+        <div class="type-row">
+          <div class="type-row-label">Total Charges</div>
+          <div class="type-row-val" id="ovCharges">—</div>
+        </div>
+        <div class="type-row">
+          <div class="type-row-label">Submitted</div>
+          <div class="type-row-val" id="ovSubmitted">—</div>
+        </div>
+        <div class="type-row alert">
+          <div class="type-row-label">Needs Review</div>
+          <div class="type-row-val" id="ovReview">—</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAYERS -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title">By Insurer</div>
+      <div class="section-meta">Claims and charges per payer</div>
+    </div>
+    <div class="payers" id="payersGrid">
+      <!-- populated by JS -->
+    </div>
+  </section>
+
+  <!-- PIPELINE FUNNEL -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title">Submission Progress</div>
+      <div class="section-meta">How claims move through the pipeline</div>
+    </div>
+    <div class="funnel">
+      <div class="funnel-grid">
+        <div class="funnel-step">
+          <div class="funnel-num" id="fNew">—</div>
+          <div class="funnel-money" id="fNewMoney">—</div>
+          <div class="funnel-pct"><strong>100%</strong> &nbsp;baseline</div>
+          <div class="funnel-bar"><div class="funnel-fill f1" style="width:100%"></div></div>
+          <div class="funnel-label">Captured</div>
+        </div>
+        <div class="funnel-step">
+          <div class="funnel-num" id="fDocs">—</div>
+          <div class="funnel-money" id="fDocsMoney">—</div>
+          <div class="funnel-pct"><strong id="fDocsPct">—%</strong> &nbsp;of pipeline</div>
+          <div class="funnel-bar"><div class="funnel-fill f2" id="fDocsBar" style="width:0%"></div></div>
+          <div class="funnel-label">Docs Complete</div>
+        </div>
+        <div class="funnel-step">
+          <div class="funnel-num" id="fReady">—</div>
+          <div class="funnel-money" id="fReadyMoney">—</div>
+          <div class="funnel-pct"><strong id="fReadyPct">—%</strong> &nbsp;of pipeline</div>
+          <div class="funnel-bar"><div class="funnel-fill f3" id="fReadyBar" style="width:0%"></div></div>
+          <div class="funnel-label">Ready to Submit</div>
+        </div>
+        <div class="funnel-step">
+          <div class="funnel-num" id="fSub">—</div>
+          <div class="funnel-money" id="fSubMoney">—</div>
+          <div class="funnel-pct"><strong id="fSubPct">—%</strong> &nbsp;of pipeline</div>
+          <div class="funnel-bar"><div class="funnel-fill f4" id="fSubBar" style="width:0%"></div></div>
+          <div class="funnel-label">Submitted</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const OFFICE_RE = /\b(9920[1-5]|9921[1-5])\b/;
+
+function fmtNum(n){ return (n || 0).toLocaleString('en-US'); }
+function fmtMoney(n){
+  const v = parseFloat(n || 0);
+  if (v >= 1_000_000) return '$' + (v/1_000_000).toFixed(2) + 'M';
+  if (v >= 1_000) return '$' + (v/1_000).toFixed(1) + 'K';
+  return '$' + v.toFixed(0);
+}
+function fmtPct(n){ return Math.round(n) + '%'; }
+
+function classify(c){
+  // True if office visit (CPT 99201-99205/99211-99215 or explicit flag).
+  return !!c.office_visit || OFFICE_RE.test(String(c.cpt || ''));
+}
+function isSubmitted(c){
+  // Either the explicit symplisend flag or pipeline state >= 3.
+  return !!c.symplisend_submitted || parseInt(c.state || 0) >= 3;
+}
+function docsComplete(c){
+  const hasH = !!c.hcfa_s3_path;
+  const hasI = !!c.prog_notes_s3_path && !c.iv_note_patient_mismatch;
+  const hasP = !!c.encounter_file_s3_path && !c.encounter_revision_needed;
+  return classify(c) ? (hasH && hasI) : (hasH && hasI && hasP);
+}
+
+function compute(claims){
+  const total = claims.length;
+  let charges = 0, submitted = 0, submittedMoney = 0, reviewCount = 0, reviewMoney = 0;
+
+  // Per-type
+  let ivCount = 0, ivCharges = 0, ivSubmitted = 0, ivMissing = 0;
+  let ovCount = 0, ovCharges = 0, ovSubmitted = 0, ovReview = 0;
+
+  // Funnel money
+  let docsCompleteCount = 0, docsCompleteMoney = 0;
+  let readyCount = 0, readyMoney = 0;
+
+  // Payers
+  const payers = new Map(); // payer -> {count, money}
+
+  claims.forEach(c => {
+    const $ = parseFloat(c.charges || 0) || 0;
+    charges += $;
+    const isOV = classify(c);
+    const isSub = isSubmitted(c);
+    const isDocsDone = docsComplete(c);
+    const needsReview = !!c.encounter_revision_needed || !!c.iv_note_patient_mismatch;
+
+    if (isOV) {
+      ovCount++; ovCharges += $;
+      if (isSub) ovSubmitted++;
+      if (needsReview) ovReview++;
+    } else {
+      ivCount++; ivCharges += $;
+      if (isSub) ivSubmitted++;
+      // For IV Therapy, "missing progress note" means no encounter file captured
+      // (or it was captured for the wrong patient and got cleared).
+      if (!c.encounter_file_s3_path || c.encounter_revision_needed) ivMissing++;
+    }
+
+    if (isSub) { submitted++; submittedMoney += $; }
+    if (needsReview) { reviewCount++; reviewMoney += $; }
+    if (isDocsDone) { docsCompleteCount++; docsCompleteMoney += $; }
+    if (isDocsDone) { readyCount++; readyMoney += $; }  // ready ≈ docs complete
+
+    const payer = (c.payer || 'Unknown').trim() || 'Unknown';
+    if (!payers.has(payer)) payers.set(payer, {count:0, money:0});
+    const p = payers.get(payer); p.count++; p.money += $;
+  });
+
+  const payersList = [...payers.entries()]
+    .map(([name, v]) => ({name, count:v.count, money:v.money}))
+    .sort((a,b) => b.money - a.money);
+
+  return {
+    total, charges, submitted, submittedMoney, reviewCount, reviewMoney,
+    ivCount, ivCharges, ivSubmitted, ivMissing,
+    ovCount, ovCharges, ovSubmitted, ovReview,
+    docsCompleteCount, docsCompleteMoney,
+    readyCount, readyMoney,
+    payersList,
+  };
+}
+
+function render(claims){
+  const m = compute(claims);
+  const pct = (n, d) => d > 0 ? (n / d) * 100 : 0;
+
+  // HEADLINE
+  document.getElementById('mTotal').textContent = fmtNum(m.total);
+  document.getElementById('mTotalSub').textContent = `Across ${m.payersList.length} payer${m.payersList.length === 1 ? '' : 's'}`;
+  document.getElementById('mCharges').innerHTML = `${fmtMoney(m.charges)}<span class="unit">USD</span>`;
+  document.getElementById('mChargesAvg').textContent = fmtMoney(m.total ? m.charges / m.total : 0);
+  document.getElementById('mSubmitted').textContent = fmtNum(m.submitted);
+  document.getElementById('mSubmittedMoney').textContent = fmtMoney(m.submittedMoney);
+  document.getElementById('mSubmittedPct').textContent = fmtPct(pct(m.submitted, m.total));
+  document.getElementById('mReview').textContent = fmtNum(m.reviewCount);
+  document.getElementById('mReviewMoney').textContent = fmtMoney(m.reviewMoney);
+
+  // CLAIM MIX
+  document.getElementById('ivCount').textContent = fmtNum(m.ivCount);
+  document.getElementById('ivCharges').textContent = fmtMoney(m.ivCharges);
+  document.getElementById('ivSubmitted').innerHTML = `${fmtNum(m.ivSubmitted)} <span class="sub">of ${m.ivCount}</span>`;
+  document.getElementById('ivMissing').textContent = fmtNum(m.ivMissing);
+  document.getElementById('ivShare').textContent = `${fmtPct(pct(m.ivCount, m.total))} of pipeline`;
+
+  document.getElementById('ovCount').textContent = fmtNum(m.ovCount);
+  document.getElementById('ovCharges').textContent = fmtMoney(m.ovCharges);
+  document.getElementById('ovSubmitted').innerHTML = `${fmtNum(m.ovSubmitted)} <span class="sub">of ${m.ovCount}</span>`;
+  document.getElementById('ovReview').textContent = fmtNum(m.ovReview);
+  document.getElementById('ovShare').textContent = `${fmtPct(pct(m.ovCount, m.total))} of pipeline`;
+
+  // PAYERS
+  document.getElementById('payersGrid').innerHTML = m.payersList.map(p => `
+    <div class="payer-row">
+      <div class="payer-name">${p.name}</div>
+      <div class="payer-claims">${fmtNum(p.count)} claim${p.count === 1 ? '' : 's'}</div>
+      <div class="payer-money">${fmtMoney(p.money)}</div>
+    </div>
+  `).join('') || '<div style="color:var(--text-3);font-size:12px;padding:8px 0;">No payers yet.</div>';
+
+  // FUNNEL — counts + money
+  document.getElementById('fNew').textContent = fmtNum(m.total);
+  document.getElementById('fNewMoney').textContent = fmtMoney(m.charges);
+  document.getElementById('fDocs').textContent = fmtNum(m.docsCompleteCount);
+  document.getElementById('fDocsMoney').textContent = fmtMoney(m.docsCompleteMoney);
+  document.getElementById('fReady').textContent = fmtNum(m.readyCount);
+  document.getElementById('fReadyMoney').textContent = fmtMoney(m.readyMoney);
+  document.getElementById('fSub').textContent = fmtNum(m.submitted);
+  document.getElementById('fSubMoney').textContent = fmtMoney(m.submittedMoney);
+
+  const docsP = pct(m.docsCompleteCount, m.total);
+  const readyP = pct(m.readyCount, m.total);
+  const subP = pct(m.submitted, m.total);
+  document.getElementById('fDocsPct').textContent = fmtPct(docsP);
+  document.getElementById('fDocsBar').style.width = docsP + '%';
+  document.getElementById('fReadyPct').textContent = fmtPct(readyP);
+  document.getElementById('fReadyBar').style.width = readyP + '%';
+  document.getElementById('fSubPct').textContent = fmtPct(subP);
+  document.getElementById('fSubBar').style.width = subP + '%';
+}
+
+// ── Month-of-service filter ──────────────────────────────────────────
+let allClaims = [];
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function claimMonthKey(c){
+  // Group by month of service. Accept MM/DD/YYYY (ECW) or YYYY-MM-DD (ISO).
+  const raw = String(c.service_date || c.dos || c.encounter_date || '').trim();
+  let m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2,'0')}`;
+  m = raw.match(/^(\d{4})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}`;
+  return '';
+}
+function monthLabel(key){
+  const [y, mo] = key.split('-');
+  return `${MONTH_NAMES[parseInt(mo,10)-1] || mo} ${y}`;
+}
+function buildMonthOptions(){
+  const sel = document.getElementById('monthFilter');
+  if (!sel) return;
+  const prev = sel.value;
+  const counts = new Map();
+  let noDate = 0;
+  allClaims.forEach(c => {
+    const k = claimMonthKey(c);
+    if (k) counts.set(k, (counts.get(k) || 0) + 1);
+    else noDate++;
+  });
+  const keys = [...counts.keys()].sort().reverse();  // newest month first
+  let html = `<option value="">All months (${allClaims.length})</option>`;
+  html += keys.map(k => `<option value="${k}">${monthLabel(k)} (${counts.get(k)})</option>`).join('');
+  if (noDate) html += `<option value="__nodate__">No date (${noDate})</option>`;
+  sel.innerHTML = html;
+  // keep the user's selection across the 15s auto-refresh
+  if (prev && (prev === '__nodate__' || counts.has(prev))) sel.value = prev;
+}
+function currentFilteredClaims(){
+  const sel = document.getElementById('monthFilter');
+  const v = sel ? sel.value : '';
+  if (!v) return allClaims;
+  if (v === '__nodate__') return allClaims.filter(c => !claimMonthKey(c));
+  return allClaims.filter(c => claimMonthKey(c) === v);
+}
+function applyMonth(){ render(currentFilteredClaims()); }
+
+async function loadData(){
+  try {
+    const resp = await fetch('/api/claims');
+    const data = await resp.json();
+    allClaims = data.claims || [];
+    buildMonthOptions();
+    render(currentFilteredClaims());
+    const now = new Date();
+    document.getElementById('lastUpdate').textContent = `Updated ${now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit'})}`;
+  } catch (e) {
+    document.querySelector('.wrap').innerHTML += `<div class="err">⚠️ Could not load metrics: ${e.message}</div>`;
+  }
+}
+
+loadData();
+setInterval(loadData, 15000);
+</script>
+</body>
+</html>
