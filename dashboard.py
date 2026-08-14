@@ -2370,6 +2370,7 @@ AUDIT_COLUMNS = [
     ('documents_label', 'Documents submitted'),
     ('outcome', 'Outcome'),
     ('fln', 'FLN'),
+    ('linkage_label', 'Attached to prior claim?'),
     ('notes', 'Notes'),
 ]
 
@@ -2378,6 +2379,21 @@ DOC_LABELS = {
     'prog_notes': 'IV Note',
     'encounter': 'Progress Note',
 }
+
+
+def _linkage_risk(row):
+    """True when a replacement claim was transmitted as a brand-new one.
+
+    The claim itself is coded as a replacement, but the packet went to the
+    payer under a first-submission form type — so the payer opens a fresh
+    claim instead of attaching the documents to the one being disputed. This
+    is the single most useful thing the log can surface: it marks exactly the
+    submissions a payer is likely to report as never received.
+    """
+    return (
+        str(row.get('claim_submission_type', '')).strip().lower() == 'resubmission'
+        and 'first submission' in str(row.get('submission_form_type', '')).lower()
+    )
 
 
 def _load_audit_rows():
@@ -2404,6 +2420,8 @@ def _load_audit_rows():
         r['documents_label'] = ', '.join(
             DOC_LABELS.get(d.get('document', ''), d.get('document', '?')) for d in docs
         )
+        r['linkage_risk'] = _linkage_risk(r)
+        r['linkage_label'] = 'No — sent as a new claim' if r['linkage_risk'] else 'Yes'
         out.append(r)
 
     out.sort(key=lambda r: r.get('submitted_at_utc', ''), reverse=True)
@@ -2411,14 +2429,28 @@ def _load_audit_rows():
 
 
 def _filter_audit_rows(rows):
-    """Apply ?claim= / ?patient= / ?from= / ?to= / ?outcome= filters."""
+    """Apply the ?q= quick search plus ?from= / ?to= / ?outcome= / ?flag= filters.
+
+    ?q= is one box over everything a payer would quote back at you — patient
+    name, either claim number, date of service, subscriber ID. Asking staff to
+    know which field a number belongs to is a step they should not have to take.
+    The older per-field ?claim= / ?patient= params still work.
+    """
+    q = (request.args.get('q') or '').strip().lower()
     claim = (request.args.get('claim') or '').strip()
     patient = (request.args.get('patient') or '').strip().lower()
     date_from = (request.args.get('from') or '').strip()
     date_to = (request.args.get('to') or '').strip()
     outcome = (request.args.get('outcome') or '').strip().lower()
+    flag = (request.args.get('flag') or '').strip().lower()
 
     def keep(r):
+        if q:
+            haystack = ' '.join(str(r.get(k, '')) for k in (
+                'patient_name', 'claim_id', 'blueshield_claim_number',
+                'dos', 'subscriber_id', 'fln')).lower()
+            if q not in haystack:
+                return False
         if claim and claim not in (str(r.get('claim_id', '')),
                                    str(r.get('blueshield_claim_number', ''))):
             return False
@@ -2429,6 +2461,10 @@ def _filter_audit_rows(rows):
         if date_to and str(r.get('submitted_date_pt', '')) > date_to:
             return False
         if outcome and str(r.get('outcome', '')).lower() != outcome:
+            return False
+        if flag == 'unlinked' and not r.get('linkage_risk'):
+            return False
+        if flag == 'no-fln' and str(r.get('fln', '')):
             return False
         return True
 
@@ -2469,7 +2505,6 @@ def api_audit_log_csv():
                  f'attachment; filename=helixona-submission-audit-{stamp}.csv'},
     )
 
-
 AUDIT_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -2477,159 +2512,363 @@ AUDIT_HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Submission Audit Log — Helixona</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #faf8f4; --panel: #fff; --ink: #2b2b2b; --muted: #6f6a63;
-    --line: #e6e0d6; --accent: #b09968; --ok: #3f7d52; --bad: #b3452f;
-    --warn: #9a7b2e;
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         font-size:14px; }
-  header { padding:22px 28px; border-bottom:1px solid var(--line); background:var(--panel); }
-  h1 { margin:0 0 4px; font-size:20px; font-weight:600; letter-spacing:-0.01em; }
-  .sub { color:var(--muted); font-size:13px; }
-  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;
-         padding:16px 28px; background:var(--panel); border-bottom:1px solid var(--line); }
-  .field { display:flex; flex-direction:column; gap:4px; }
-  .field label { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
-                 color:var(--muted); }
-  input, select { padding:7px 9px; border:1px solid var(--line); border-radius:6px;
-                  background:#fff; font-size:13px; font-family:inherit; color:var(--ink); }
-  button, .btn { padding:8px 14px; border-radius:6px; border:1px solid var(--accent);
-                 background:var(--accent); color:#fff; font-size:13px; cursor:pointer;
-                 text-decoration:none; display:inline-block; font-family:inherit; }
-  .btn.ghost { background:#fff; color:var(--accent); }
-  .wrap { padding:20px 28px 60px; }
-  .count { color:var(--muted); margin-bottom:10px; }
-  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:8px;
-            background:var(--panel); }
-  table { border-collapse:collapse; width:100%; min-width:1180px; }
-  th, td { padding:9px 12px; text-align:left; border-bottom:1px solid var(--line);
-           white-space:nowrap; vertical-align:top; }
-  th { background:#f3efe7; font-size:11px; text-transform:uppercase;
-       letter-spacing:.05em; color:var(--muted); position:sticky; top:0; }
-  tr:last-child td { border-bottom:none; }
-  td.docs { white-space:normal; min-width:210px; }
-  td.notes { white-space:normal; min-width:200px; color:var(--muted); font-size:12px; }
-  .pill { padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
-  .pill.submitted { background:#e7f0e9; color:var(--ok); }
-  .pill.failed { background:#f8e7e3; color:var(--bad); }
-  .pill.blocked { background:#f7efdb; color:var(--warn); }
-  .mono { font-variant-numeric:tabular-nums; font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
-          font-size:12.5px; }
-  .none { color:var(--muted); font-style:italic; }
-  .recon { font-size:11px; color:var(--warn); }
-  .empty { padding:40px; text-align:center; color:var(--muted); }
+:root{
+  --bg:#07070a;--bg2:#0c0c12;--panel:#0f0f16;--panel2:#15151e;--card:#14141c;--card2:#1a1a24;
+  --bdr:#1f1f2b;--bdr2:#2a2a38;
+  --accent:#CDB486;--accent2:#b09968;--accent-glow:rgba(205,180,134,.18);
+  --success:#10b981;--warning:#f59e0b;--bad:#ef4444;--info:#3b82f6;
+  --text-primary:#f1f5f9;--text-secondary:#94a3b8;--text-muted:#64748b;--text-dim:#475569;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:var(--bg);color:var(--text-primary);font-family:'Inter',sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+input,select,button{font-family:'Inter',sans-serif}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:3px}
+
+.wrap{max-width:1500px;margin:0 auto;padding:22px 26px 70px}
+
+/* ---------- header ---------- */
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:20px}
+h1{font-family:'Playfair Display',serif;font-size:26px;font-weight:600;color:var(--accent);letter-spacing:-.3px}
+.sub{color:var(--text-secondary);font-size:13px;margin-top:5px;max-width:640px;line-height:1.5}
+.back{font-size:12px;color:var(--text-muted);border:1px solid var(--bdr);padding:8px 13px;border-radius:8px;transition:all .15s;white-space:nowrap}
+.back:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---------- stat tiles ---------- */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:12px;margin-bottom:20px}
+.tile{background:linear-gradient(180deg,var(--panel) 0%,var(--bg2) 100%);border:1px solid var(--bdr);border-radius:13px;padding:15px 17px;position:relative;overflow:hidden}
+.tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);font-weight:600;margin-bottom:7px;display:flex;align-items:center;gap:5px}
+.tile .v{font-size:29px;font-weight:700;letter-spacing:-1px;line-height:1;color:var(--text-primary)}
+.tile .v.sm{font-size:15px;font-weight:600;letter-spacing:-.2px;padding-top:7px}
+.tile .n{font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.4}
+.tile.hero .v{color:var(--accent);text-shadow:0 0 24px var(--accent-glow)}
+.tile.warn{border-color:rgba(245,158,11,.32)}
+.tile.warn .v{color:var(--warning)}
+.tile.crit{border-color:rgba(239,68,68,.34)}
+.tile.crit .v{color:var(--bad)}
+.tile.act{cursor:pointer;transition:all .15s}
+.tile.act:hover{border-color:var(--accent);transform:translateY(-1px)}
+.tile.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-glow)}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.w{background:var(--warning)} .dot.c{background:var(--bad)} .dot.g{background:var(--success)}
+
+/* ---------- controls ---------- */
+.bar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;background:var(--panel);border:1px solid var(--bdr);border-radius:13px;padding:14px 16px;margin-bottom:16px}
+.fld{display:flex;flex-direction:column;gap:5px}
+.fld label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:600}
+.fld input,.fld select{background:var(--bg2);border:1px solid var(--bdr);color:var(--text-primary);padding:9px 11px;border-radius:8px;font-size:12.5px;outline:none;transition:border-color .15s}
+.fld input:focus,.fld select:focus{border-color:var(--accent)}
+.fld.grow{flex:1;min-width:250px}
+.fld.grow input{width:100%}
+.fld input::placeholder{color:var(--text-dim)}
+.btn{padding:9px 15px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--bdr);background:var(--bg2);color:var(--text-secondary);transition:all .15s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.gold{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;border-color:var(--accent)}
+.btn.gold:hover{filter:brightness(1.08);color:#000}
+
+/* ---------- table ---------- */
+.count{color:var(--text-secondary);font-size:12px;margin-bottom:10px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.count b{color:var(--text-primary)}
+.chip{background:var(--accent-glow);color:var(--accent);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer}
+.chip:hover{background:rgba(205,180,134,.28)}
+.panel{background:var(--panel);border:1px solid var(--bdr);border-radius:13px;overflow:hidden}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:900px}
+th{background:var(--bg2);font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:600;text-align:left;padding:11px 14px;border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:2}
+td{padding:11px 14px;border-bottom:1px solid var(--bdr);vertical-align:top;font-size:12.5px}
+tr.row{cursor:pointer;transition:background .12s}
+tr.row:hover{background:var(--card)}
+tr.row.open{background:var(--card2)}
+.mono{font-family:'JetBrains Mono','Monaco',monospace;font-size:11.5px;font-variant-numeric:tabular-nums}
+.pt{color:var(--text-primary);font-weight:500}
+.dim{color:var(--text-muted)}
+.docs{color:var(--text-secondary);line-height:1.5}
+.nowrap{white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:600;white-space:nowrap}
+.pill.submitted{background:rgba(16,185,129,.13);color:var(--success)}
+.pill.failed{background:rgba(239,68,68,.13);color:var(--bad)}
+.pill.blocked{background:rgba(245,158,11,.13);color:var(--warning)}
+.flag{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:600;background:rgba(239,68,68,.11);color:var(--bad)}
+.caret{color:var(--text-dim);font-size:10px;transition:transform .15s;display:inline-block;width:11px}
+tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
+
+/* ---------- detail ---------- */
+.detail td{background:var(--bg2);padding:0;border-bottom:1px solid var(--bdr)}
+.dwrap{padding:17px 20px 19px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:17px}
+.dsec h4{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--accent);font-weight:600;margin-bottom:9px}
+.dl{display:flex;gap:9px;font-size:12px;padding:3px 0;line-height:1.5}
+.dl .dt{color:var(--text-muted);min-width:96px;flex:none}
+.dl .dd{color:var(--text-primary);word-break:break-word}
+.doc{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 11px;margin-bottom:7px}
+.doc .dn{font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:3px}
+.doc .dm{font-size:10.5px;color:var(--text-muted);font-family:'JetBrains Mono','Monaco',monospace;word-break:break-all;line-height:1.5}
+.callout{grid-column:1/-1;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.28);border-radius:9px;padding:11px 14px;font-size:12px;color:var(--text-secondary);line-height:1.55}
+.callout b{color:var(--bad)}
+.empty{padding:52px 20px;text-align:center;color:var(--text-muted)}
+.empty .big{font-size:15px;color:var(--text-secondary);margin-bottom:6px}
+.more{padding:15px;text-align:center;border-top:1px solid var(--bdr)}
+.loading{padding:52px;text-align:center;color:var(--text-muted)}
 </style>
 </head>
 <body>
-<header>
-  <h1>Submission Audit Log</h1>
-  <div class="sub">Every documentation packet this system sent to a payer &mdash; date, time,
-  method, claim, date of service, patient and the documents included.</div>
-</header>
-
-<div class="bar">
-  <div class="field"><label>Claim #</label><input id="f-claim" placeholder="ECW or BS claim #"></div>
-  <div class="field"><label>Patient</label><input id="f-patient" placeholder="surname"></div>
-  <div class="field"><label>From</label><input id="f-from" type="date"></div>
-  <div class="field"><label>To</label><input id="f-to" type="date"></div>
-  <div class="field"><label>Outcome</label>
-    <select id="f-outcome">
-      <option value="">All</option>
-      <option value="submitted">Submitted</option>
-      <option value="failed">Failed</option>
-      <option value="blocked">Blocked</option>
-    </select>
-  </div>
-  <button onclick="load()">Apply</button>
-  <a class="btn ghost" id="csv" href="/api/audit-log.csv">Export CSV</a>
-</div>
-
 <div class="wrap">
-  <div class="count" id="count">Loading&hellip;</div>
-  <div class="scroll">
-    <table>
-      <thead><tr id="head"></tr></thead>
-      <tbody id="body"></tbody>
-    </table>
+
+  <div class="top">
+    <div>
+      <h1>Submission Audit Log</h1>
+      <div class="sub">Every documentation packet sent to a payer — when it went, how, for which
+      claim and date of service, and exactly which documents were included.</div>
+    </div>
+    <a class="back" href="/">&larr; Dashboard</a>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="bar">
+    <div class="fld grow">
+      <label>Search</label>
+      <input id="q" placeholder="Patient, claim #, Blue Shield claim #, date of service, subscriber ID…" autocomplete="off">
+    </div>
+    <div class="fld"><label>From</label><input id="from" type="date"></div>
+    <div class="fld"><label>To</label><input id="to" type="date"></div>
+    <div class="fld"><label>Outcome</label>
+      <select id="outcome">
+        <option value="">All</option>
+        <option value="submitted">Submitted</option>
+        <option value="failed">Failed</option>
+        <option value="blocked">Blocked</option>
+      </select>
+    </div>
+    <button class="btn" onclick="reset()">Clear</button>
+    <a class="btn gold" id="csv" href="/api/audit-log.csv">Export CSV</a>
+  </div>
+
+  <div class="count" id="count">Loading…</div>
+  <div class="panel">
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th style="width:26px"></th>
+          <th class="nowrap">Sent</th>
+          <th>Patient</th>
+          <th class="nowrap">Claim #</th>
+          <th class="nowrap">Date of service</th>
+          <th>Documents</th>
+          <th class="nowrap">Status</th>
+        </tr></thead>
+        <tbody id="body"><tr><td colspan="7" class="loading">Loading submissions…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="more" id="more" style="display:none">
+      <button class="btn" onclick="showMore()">Show more</button>
+    </div>
   </div>
 </div>
 
 <script>
-const COLS = __COLUMNS__;
+const PAGE = 60;
+let ALL = [], SHOWN = [], limit = PAGE, flag = '';
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const DOCN = {hcfa:'HCFA-1500', prog_notes:'IV Note', encounter:'Progress Note'};
 
 function qs() {
   const p = new URLSearchParams();
-  const map = {claim:'f-claim', patient:'f-patient', from:'f-from', to:'f-to', outcome:'f-outcome'};
-  for (const [k, id] of Object.entries(map)) {
+  for (const id of ['q','from','to','outcome']) {
     const v = document.getElementById(id).value.trim();
-    if (v) p.set(k, v);
+    if (v) p.set(id === 'q' ? 'q' : id, v);
   }
+  if (flag) p.set('flag', flag);
   return p.toString();
 }
 
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"]/g,
-    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function tiles() {
+  // Tiles describe what is currently on screen, not a fixed global total —
+  // filtering to one patient should answer "how many of THEIRS went out
+  // unattached", which is the question being asked at that moment.
+  const view = SHOWN;
+  const n = view.length;
+  const filtered = n !== ALL.length;
+  const noFln = view.filter(r => !r.fln).length;
+  const unlinked = view.filter(r => r.linkage_risk).length;
+  const bad = view.filter(r => r.outcome !== 'submitted').length;
+  const dates = view.map(r => r.submitted_date_pt).filter(Boolean).sort();
+  const range = dates.length ? dates[0] + ' → ' + dates[dates.length - 1] : '—';
+
+  document.getElementById('tiles').innerHTML = `
+    <div class="tile hero">
+      <div class="k">${filtered ? 'Submissions in this view' : 'Submissions on record'}</div>
+      <div class="v">${n.toLocaleString()}</div>
+      <div class="n">${filtered ? 'of ' + ALL.length.toLocaleString() + ' on record' : 'packets sent to a payer'}</div>
+    </div>
+    <div class="tile">
+      <div class="k">Period covered</div>
+      <div class="v sm">${esc(range)}</div>
+      <div class="n">first to most recent</div>
+    </div>
+    <div class="tile crit act ${flag==='unlinked'?'on':''}" onclick="setFlag('unlinked')" title="Click to filter">
+      <div class="k"><span class="dot c"></span>Not attached to prior claim</div>
+      <div class="v">${unlinked.toLocaleString()}</div>
+      <div class="n">replacement claims sent as new ones${unlinked?' — click to filter':''}</div>
+    </div>
+    <div class="tile warn act ${flag==='no-fln'?'on':''}" onclick="setFlag('no-fln')" title="Click to filter">
+      <div class="k"><span class="dot w"></span>No payer acknowledgement</div>
+      <div class="v">${noFln.toLocaleString()}</div>
+      <div class="n">no FLN captured${noFln?' — click to filter':''}</div>
+    </div>
+    <div class="tile ${bad?'warn':''}">
+      <div class="k"><span class="dot ${bad?'w':'g'}"></span>Failed or blocked</div>
+      <div class="v">${bad.toLocaleString()}</div>
+      <div class="n">never reached the payer</div>
+    </div>`;
 }
+
+function setFlag(f) { flag = (flag === f) ? '' : f; limit = PAGE; load(); }
+function reset() {
+  for (const id of ['q','from','to','outcome']) document.getElementById(id).value = '';
+  flag = ''; limit = PAGE; load();
+}
+
+function rowHtml(r, i) {
+  const docs = (r.documents || []).length
+    ? (r.documents || []).map(d => DOCN[d.document] || d.document).join(', ')
+    : '<span class="dim">none</span>';
+  const flagHtml = r.linkage_risk
+    ? '<div class="flag">! Sent as a new claim</div>' : '';
+  const bs = r.blueshield_claim_number
+    ? `<div class="dim mono" style="font-size:10.5px">BS ${esc(r.blueshield_claim_number)}</div>` : '';
+  return `<tr class="row" data-i="${i}" onclick="toggle(${i})">
+    <td><span class="caret">&#9654;</span></td>
+    <td class="nowrap mono">${esc(r.submitted_date_pt)}<div class="dim" style="font-size:10.5px">${esc(r.submitted_time_pt)} PT</div></td>
+    <td class="pt">${esc(r.patient_name) || '<span class="dim">—</span>'}</td>
+    <td class="nowrap mono">${esc(r.claim_id)}${bs}</td>
+    <td class="nowrap mono">${esc(r.dos) || '<span class="dim">—</span>'}</td>
+    <td class="docs">${docs}</td>
+    <td><span class="pill ${esc(r.outcome)}">${esc(r.outcome)}</span>${flagHtml}</td>
+  </tr>
+  <tr class="detail" id="d${i}" style="display:none"><td colspan="7"></td></tr>`;
+}
+
+function detailHtml(r) {
+  const docs = (r.documents || []).length ? (r.documents || []).map(d => `
+    <div class="doc">
+      <div class="dn">${esc(DOCN[d.document] || d.document)}</div>
+      <div class="dm">${d.filename ? esc(d.filename) + (d.bytes ? ' · ' + Number(d.bytes).toLocaleString() + ' bytes' : '') + '<br>' : ''}${d.sha256 ? 'sha256 ' + esc(d.sha256).slice(0,32) + '…<br>' : ''}${esc(d.s3_path || '')}${d.note ? '<br>' + esc(d.note) : ''}</div>
+    </div>`).join('') : '<div class="dim">No documents were attached to this attempt.</div>';
+
+  const warn = r.linkage_risk ? `<div class="callout">
+      <b>Not attached to the prior claim.</b> Our records classify this as a
+      <b>${esc(r.claim_submission_type)}</b>, but it went to the payer as
+      &ldquo;${esc(r.submission_form_type)}&rdquo;${r.blueshield_claim_number ? ' and the prior claim number (' + esc(r.blueshield_claim_number) + ') was never entered' : ''}.
+      The payer opens a new claim instead of adding these documents to the one under dispute —
+      which is how a packet we did send gets reported as never received.
+    </div>` : '';
+
+  return `<div class="dwrap">
+    <div class="dsec">
+      <h4>Submission</h4>
+      <div class="dl"><span class="dt">Date &amp; time</span><span class="dd">${esc(r.submitted_date_pt)} ${esc(r.submitted_time_pt)} PT</span></div>
+      <div class="dl"><span class="dt">UTC</span><span class="dd mono">${esc(r.submitted_at_utc)}</span></div>
+      <div class="dl"><span class="dt">Method</span><span class="dd">${esc(r.method)}</span></div>
+      <div class="dl"><span class="dt">Form type</span><span class="dd">${esc(r.submission_form_type) || '<span class="dim">not recorded</span>'}</span></div>
+      <div class="dl"><span class="dt">Outcome</span><span class="dd">${esc(r.outcome)}</span></div>
+      <div class="dl"><span class="dt">Payer ack (FLN)</span><span class="dd">${r.fln ? esc(r.fln) : '<span class="dim">not captured</span>'}</span></div>
+    </div>
+    <div class="dsec">
+      <h4>Claim</h4>
+      <div class="dl"><span class="dt">Patient</span><span class="dd">${esc(r.patient_name)}</span></div>
+      <div class="dl"><span class="dt">Claim # (ECW)</span><span class="dd mono">${esc(r.claim_id)}</span></div>
+      <div class="dl"><span class="dt">Prior BS claim #</span><span class="dd mono">${esc(r.blueshield_claim_number) || '<span class="dim">none on file</span>'}</span></div>
+      <div class="dl"><span class="dt">Date of service</span><span class="dd mono">${esc(r.dos)}</span></div>
+      <div class="dl"><span class="dt">Subscriber ID</span><span class="dd mono">${esc(r.subscriber_id)}</span></div>
+      <div class="dl"><span class="dt">Our class.</span><span class="dd">${esc(r.claim_submission_type) || '<span class="dim">—</span>'}</span></div>
+    </div>
+    <div class="dsec">
+      <h4>Documents (${(r.documents || []).length})</h4>
+      ${docs}
+    </div>
+    ${(r.error || r.notes || r.record_origin === 'reconstructed-from-claim-record') ? `
+    <div class="dsec">
+      <h4>Notes</h4>
+      ${r.error ? `<div class="dl"><span class="dt">Error</span><span class="dd">${esc(r.error)}</span></div>` : ''}
+      ${r.notes ? `<div class="dl"><span class="dt">Note</span><span class="dd">${esc(r.notes)}</span></div>` : ''}
+      ${r.record_origin === 'reconstructed-from-claim-record' ? `<div class="dl"><span class="dt">Source</span><span class="dd">Reconstructed from the claim record — predates the audit log, so document sizes and hashes were not captured at send time.</span></div>` : ''}
+    </div>` : ''}
+    ${warn}
+  </div>`;
+}
+
+function toggle(i) {
+  const d = document.getElementById('d' + i);
+  const row = document.querySelector(`tr.row[data-i="${i}"]`);
+  const open = d.style.display !== 'none';
+  if (open) { d.style.display = 'none'; row.classList.remove('open'); return; }
+  d.querySelector('td').innerHTML = detailHtml(SHOWN[i]);
+  d.style.display = '';
+  row.classList.add('open');
+}
+
+function render() {
+  const body = document.getElementById('body');
+  if (!SHOWN.length) {
+    body.innerHTML = `<tr><td colspan="7" class="empty">
+      <div class="big">No submissions match this search.</div>
+      <div>Try a surname, a claim number, or a date of service like 07/23/2026.</div></td></tr>`;
+    document.getElementById('more').style.display = 'none';
+    return;
+  }
+  const slice = SHOWN.slice(0, limit);
+  body.innerHTML = slice.map((r, i) => rowHtml(r, i)).join('');
+  document.getElementById('more').style.display = SHOWN.length > limit ? '' : 'none';
+
+  const active = flag === 'unlinked' ? ' <span class="chip" onclick="setFlag(\\'unlinked\\')">not attached to prior claim &times;</span>'
+              : flag === 'no-fln' ? ' <span class="chip" onclick="setFlag(\\'no-fln\\')">no payer acknowledgement &times;</span>' : '';
+  document.getElementById('count').innerHTML =
+    `Showing <b>${slice.length.toLocaleString()}</b> of <b>${SHOWN.length.toLocaleString()}</b> submissions${active}`;
+}
+
+function showMore() { limit += PAGE; render(); }
 
 async function load() {
   const q = qs();
   document.getElementById('csv').href = '/api/audit-log.csv' + (q ? '?' + q : '');
-  document.getElementById('head').innerHTML = COLS.map(c => `<th>${esc(c[1])}</th>`).join('');
-
   const res = await fetch('/api/audit-log' + (q ? '?' + q : ''));
   const data = await res.json();
-  const rows = data.rows || [];
-  document.getElementById('count').textContent =
-    rows.length + ' submission' + (rows.length === 1 ? '' : 's') +
-    (data.error ? ' — error: ' + data.error : '');
-
-  if (!rows.length) {
-    document.getElementById('body').innerHTML =
-      '<tr><td colspan="' + COLS.length + '" class="empty">No submissions match these filters.</td></tr>';
-    return;
-  }
-
-  document.getElementById('body').innerHTML = rows.map(r => {
-    return '<tr>' + COLS.map(([key]) => {
-      let v = r[key];
-      if (key === 'outcome') {
-        return `<td><span class="pill ${esc(v)}">${esc(v)}</span></td>`;
-      }
-      if (key === 'documents_label') {
-        return `<td class="docs">${v ? esc(v) : '<span class="none">none</span>'}</td>`;
-      }
-      if (key === 'fln') {
-        return `<td class="mono">${v ? esc(v) : '<span class="none">not captured</span>'}</td>`;
-      }
-      if (key === 'notes') {
-        const recon = r.record_origin === 'reconstructed-from-claim-record'
-          ? '<div class="recon">reconstructed from claim record</div>' : '';
-        return `<td class="notes">${esc(v || '')}${recon}</td>`;
-      }
-      const mono = ['claim_id','blueshield_claim_number','dos','subscriber_id',
-                    'submitted_date_pt','submitted_time_pt'].includes(key);
-      return `<td${mono ? ' class="mono"' : ''}>${esc(v || '')}</td>`;
-    }).join('') + '</tr>';
-  }).join('');
+  SHOWN = data.rows || [];
+  limit = PAGE;
+  tiles();
+  render();
+  if (data.error) document.getElementById('count').innerHTML += ` — <span style="color:var(--bad)">${esc(data.error)}</span>`;
 }
 
-document.querySelectorAll('input').forEach(el =>
-  el.addEventListener('keydown', e => { if (e.key === 'Enter') load(); }));
-load();
+let t;
+for (const id of ['q','from','to','outcome']) {
+  document.getElementById(id).addEventListener('input', () => {
+    clearTimeout(t); t = setTimeout(() => { limit = PAGE; load(); }, 250);
+  });
+}
+
+(async function init() {
+  const res = await fetch('/api/audit-log');
+  const data = await res.json();
+  ALL = data.rows || [];
+  SHOWN = ALL;
+  tiles();
+  render();
+})();
 </script>
 </body>
 </html>
 """
-
-
 @app.route('/audit')
 def audit_page():
-    return AUDIT_HTML.replace('__COLUMNS__', json.dumps(AUDIT_COLUMNS))
+    return AUDIT_HTML
 
 
 if __name__ == '__main__':
