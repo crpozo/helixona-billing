@@ -30,6 +30,14 @@ from src.documents.cover_letter import generate_cover_letter_pdf
 from src.symplisend.submission import SympliSendSubmission
 from src.rules.engine import RulesEngine
 from src.adjudication.processor import process_adjudication
+from src.audit.submission_log import (
+    record_submission,
+    describe_documents,
+    METHOD_SYMPLISEND,
+    OUTCOME_SUBMITTED,
+    OUTCOME_FAILED,
+    OUTCOME_BLOCKED,
+)
 
 logger = get_logger(__name__)
 rules = RulesEngine()
@@ -10218,7 +10226,18 @@ def process_message(message: dict, aws_client: AWSClient):
                 logger.info(f"═══ Submitting claim {claim_id}: {submission_type} | Subscriber: {subscriber_id} ═══")
                 
                 logger.info(f"  Submission type: {submission_type}")
-                
+
+                # Audit state, set up before the try so the failure handler can
+                # always report what had been gathered when things went wrong.
+                # (label, s3_path, local_path) for every document that will
+                # actually be handed to the uploader — this is what the audit
+                # log itemises.
+                audit_docs = []
+                # What we ended up selecting in the SympliSend form. Recorded
+                # as-observed so the log can expose a mismatch with the claim's
+                # own submission_type.
+                form_type_selected = ''
+
                 try:
                     # Download the PDFs from S3 to /tmp/
                     # Encounter files may be multiple (one per encounter visit on the same date)
@@ -10253,6 +10272,7 @@ def process_message(message: dict, aws_client: AWSClient):
                             try:
                                 aws_client.s3.download_file(bucket, key, local_path)
                                 files_to_upload.append(local_path)
+                                audit_docs.append((doc_name, s3_path, local_path))
                                 logger.info(f"  ✅ Downloaded {doc_name}: {os.path.getsize(local_path)} bytes")
                             except Exception as e:
                                 logger.error(f"  ❌ Failed to download {doc_name}: {e}")
@@ -10267,6 +10287,13 @@ def process_message(message: dict, aws_client: AWSClient):
                     _min_files = 2 if _no_pn_required else 3
                     if len(files_to_upload) < _min_files:
                         logger.warning(f"  Only {len(files_to_upload)}/{_min_files} files downloaded, skipping submission")
+                        record_submission(
+                            aws_client, claim_item,
+                            outcome=OUTCOME_BLOCKED,
+                            documents=describe_documents(audit_docs),
+                            error=f'only {len(files_to_upload)}/{_min_files} documents available',
+                            notes='nothing was uploaded to the payer',
+                        )
                         continue
                     
                     # Click "New Submission"
@@ -10279,6 +10306,13 @@ def process_message(message: dict, aws_client: AWSClient):
                             symplisend_page.screenshot(path=f'/tmp/symplisend_no_btn_{claim_id}.png')
                         except Exception:
                             pass
+                        record_submission(
+                            aws_client, claim_item,
+                            outcome=OUTCOME_FAILED,
+                            documents=describe_documents(audit_docs),
+                            error=f'could not open New Submission form: {e}',
+                            notes='nothing was uploaded to the payer',
+                        )
                         continue
                     
                     # Wait for Angular to finish re-rendering the form after New Submission
@@ -10317,11 +10351,13 @@ def process_message(message: dict, aws_client: AWSClient):
                             return { ok: false };
                         }''')
                         if sel_result and sel_result.get('ok'):
+                            form_type_selected = (sel_result.get('text') or 'Provider First Submission Claim').strip()
                             logger.info(f"✅ Submission Type set to 'Provider First Submission Claim' (value={sel_result.get('value')})")
                         else:
                             # Fallback: Playwright's select_option by visible label
                             try:
                                 symplisend_page.select_option('select', label='Provider First Submission Claim', timeout=5000)
+                                form_type_selected = 'Provider First Submission Claim'
                                 logger.info("✅ Submission Type set via select_option(label=...)")
                             except Exception as e_sel:
                                 logger.warning(f"⚠️ Could not set Submission Type dropdown: {e_sel}")
@@ -10523,6 +10559,13 @@ def process_message(message: dict, aws_client: AWSClient):
                             symplisend_page.screenshot(path=f'/tmp/symplisend_failed_{claim_id}.png')
                         except Exception:
                             pass
+                        record_submission(
+                            aws_client, claim_item,
+                            outcome=OUTCOME_FAILED,
+                            documents=describe_documents(audit_docs),
+                            submission_form_type=form_type_selected,
+                            error='Submit button never fired — packet not sent',
+                        )
                         continue
                     
                     # Check for error indicators on the page
@@ -10538,8 +10581,28 @@ def process_message(message: dict, aws_client: AWSClient):
                     
                     if not submission_ok:
                         logger.error(f"❌ Submission failed for claim {claim_id} — NOT marking as submitted")
+                        record_submission(
+                            aws_client, claim_item,
+                            outcome=OUTCOME_FAILED,
+                            documents=describe_documents(audit_docs),
+                            submission_form_type=form_type_selected,
+                            error='payer form reported an error after submit',
+                        )
                         continue
-                    
+
+                    # Audit row FIRST: if the claim update below fails, we still
+                    # hold dated proof of what went to the payer. The reverse
+                    # order would lose the evidence on the more likely failure.
+                    record_submission(
+                        aws_client, claim_item,
+                        outcome=OUTCOME_SUBMITTED,
+                        documents=describe_documents(audit_docs),
+                        method=METHOD_SYMPLISEND,
+                        submission_form_type=form_type_selected,
+                        fln=fln_number or '',
+                        notes='' if fln_number else 'no FLN acknowledgement captured from the payer',
+                    )
+
                     # Only mark as submitted after confirmed success
                     aws_client.update_claim_status(claim_id, {
                         'symplisend_submitted': True,
@@ -10567,8 +10630,15 @@ def process_message(message: dict, aws_client: AWSClient):
                 
                 except Exception as claim_err:
                     logger.error(f"❌ Submission failed for claim {claim_id}: {claim_err}")
+                    record_submission(
+                        aws_client, claim_item,
+                        outcome=OUTCOME_FAILED,
+                        documents=describe_documents(audit_docs),
+                        submission_form_type=form_type_selected,
+                        error=f'unhandled error during submission: {claim_err}',
+                    )
                     continue
-            
+
             logger.info(f"═══ BlueShield Submissions complete: {submission_count} submitted ═══")
         
         finally:

@@ -2350,8 +2350,291 @@ def api_delete_all_claims():
         return jsonify({'success': False, 'error': str(e)})
 
 
+# ──────────────────────────────────────────────────────────
+# SUBMISSION AUDIT LOG
+# ──────────────────────────────────────────────────────────
+# One row per submission attempt, append-only, written by
+# src/audit/submission_log.py. This is the record shown to a payer who
+# disputes having received documentation.
+
+AUDIT_COLUMNS = [
+    ('submitted_date_pt', 'Date'),
+    ('submitted_time_pt', 'Time (PT)'),
+    ('method', 'Method'),
+    ('submission_form_type', 'Form type'),
+    ('claim_id', 'Claim #'),
+    ('blueshield_claim_number', 'BS claim #'),
+    ('dos', 'DOS'),
+    ('patient_name', 'Patient'),
+    ('subscriber_id', 'Subscriber ID'),
+    ('documents_label', 'Documents submitted'),
+    ('outcome', 'Outcome'),
+    ('fln', 'FLN'),
+    ('notes', 'Notes'),
+]
+
+DOC_LABELS = {
+    'hcfa': 'HCFA-1500',
+    'prog_notes': 'IV Note',
+    'encounter': 'Progress Note',
+}
+
+
+def _load_audit_rows():
+    """Fetch and normalise every audit row, newest first."""
+    table = dynamodb.Table('helixona-submissions')
+    rows, kwargs = [], {}
+    while True:
+        resp = table.scan(**kwargs)
+        rows.extend(resp.get('Items', []))
+        if 'LastEvaluatedKey' not in resp:
+            break
+        kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+
+    out = []
+    for r in rows:
+        # Rows predating the audit log (written by the Stage 6 stub) lack the
+        # timestamp fields. Skip them rather than render blank lines.
+        if not r.get('submitted_at_utc'):
+            continue
+        for k, v in list(r.items()):
+            if hasattr(v, 'real') and not isinstance(v, bool):
+                r[k] = int(v)
+        docs = r.get('documents') or []
+        r['documents_label'] = ', '.join(
+            DOC_LABELS.get(d.get('document', ''), d.get('document', '?')) for d in docs
+        )
+        out.append(r)
+
+    out.sort(key=lambda r: r.get('submitted_at_utc', ''), reverse=True)
+    return out
+
+
+def _filter_audit_rows(rows):
+    """Apply ?claim= / ?patient= / ?from= / ?to= / ?outcome= filters."""
+    claim = (request.args.get('claim') or '').strip()
+    patient = (request.args.get('patient') or '').strip().lower()
+    date_from = (request.args.get('from') or '').strip()
+    date_to = (request.args.get('to') or '').strip()
+    outcome = (request.args.get('outcome') or '').strip().lower()
+
+    def keep(r):
+        if claim and claim not in (str(r.get('claim_id', '')),
+                                   str(r.get('blueshield_claim_number', ''))):
+            return False
+        if patient and patient not in str(r.get('patient_name', '')).lower():
+            return False
+        if date_from and str(r.get('submitted_date_pt', '')) < date_from:
+            return False
+        if date_to and str(r.get('submitted_date_pt', '')) > date_to:
+            return False
+        if outcome and str(r.get('outcome', '')).lower() != outcome:
+            return False
+        return True
+
+    return [r for r in rows if keep(r)]
+
+
+@app.route('/api/audit-log')
+def api_audit_log():
+    try:
+        rows = _filter_audit_rows(_load_audit_rows())
+        return jsonify({'rows': rows, 'count': len(rows)})
+    except Exception as e:
+        return jsonify({'rows': [], 'count': 0, 'error': str(e)})
+
+
+@app.route('/api/audit-log.csv')
+def api_audit_log_csv():
+    """CSV export — the artefact you actually hand to a payer or auditor."""
+    import csv
+    import io
+
+    try:
+        rows = _filter_audit_rows(_load_audit_rows())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([label for _, label in AUDIT_COLUMNS])
+    for r in rows:
+        writer.writerow([r.get(key, '') for key, _ in AUDIT_COLUMNS])
+
+    stamp = datetime.utcnow().strftime('%Y%m%d')
+    return app.response_class(
+        buf.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition':
+                 f'attachment; filename=helixona-submission-audit-{stamp}.csv'},
+    )
+
+
+AUDIT_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Submission Audit Log — Helixona</title>
+<style>
+  :root {
+    --bg: #faf8f4; --panel: #fff; --ink: #2b2b2b; --muted: #6f6a63;
+    --line: #e6e0d6; --accent: #b09968; --ok: #3f7d52; --bad: #b3452f;
+    --warn: #9a7b2e;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         font-size:14px; }
+  header { padding:22px 28px; border-bottom:1px solid var(--line); background:var(--panel); }
+  h1 { margin:0 0 4px; font-size:20px; font-weight:600; letter-spacing:-0.01em; }
+  .sub { color:var(--muted); font-size:13px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;
+         padding:16px 28px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field label { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+                 color:var(--muted); }
+  input, select { padding:7px 9px; border:1px solid var(--line); border-radius:6px;
+                  background:#fff; font-size:13px; font-family:inherit; color:var(--ink); }
+  button, .btn { padding:8px 14px; border-radius:6px; border:1px solid var(--accent);
+                 background:var(--accent); color:#fff; font-size:13px; cursor:pointer;
+                 text-decoration:none; display:inline-block; font-family:inherit; }
+  .btn.ghost { background:#fff; color:var(--accent); }
+  .wrap { padding:20px 28px 60px; }
+  .count { color:var(--muted); margin-bottom:10px; }
+  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:8px;
+            background:var(--panel); }
+  table { border-collapse:collapse; width:100%; min-width:1180px; }
+  th, td { padding:9px 12px; text-align:left; border-bottom:1px solid var(--line);
+           white-space:nowrap; vertical-align:top; }
+  th { background:#f3efe7; font-size:11px; text-transform:uppercase;
+       letter-spacing:.05em; color:var(--muted); position:sticky; top:0; }
+  tr:last-child td { border-bottom:none; }
+  td.docs { white-space:normal; min-width:210px; }
+  td.notes { white-space:normal; min-width:200px; color:var(--muted); font-size:12px; }
+  .pill { padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+  .pill.submitted { background:#e7f0e9; color:var(--ok); }
+  .pill.failed { background:#f8e7e3; color:var(--bad); }
+  .pill.blocked { background:#f7efdb; color:var(--warn); }
+  .mono { font-variant-numeric:tabular-nums; font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size:12.5px; }
+  .none { color:var(--muted); font-style:italic; }
+  .recon { font-size:11px; color:var(--warn); }
+  .empty { padding:40px; text-align:center; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Submission Audit Log</h1>
+  <div class="sub">Every documentation packet this system sent to a payer &mdash; date, time,
+  method, claim, date of service, patient and the documents included.</div>
+</header>
+
+<div class="bar">
+  <div class="field"><label>Claim #</label><input id="f-claim" placeholder="ECW or BS claim #"></div>
+  <div class="field"><label>Patient</label><input id="f-patient" placeholder="surname"></div>
+  <div class="field"><label>From</label><input id="f-from" type="date"></div>
+  <div class="field"><label>To</label><input id="f-to" type="date"></div>
+  <div class="field"><label>Outcome</label>
+    <select id="f-outcome">
+      <option value="">All</option>
+      <option value="submitted">Submitted</option>
+      <option value="failed">Failed</option>
+      <option value="blocked">Blocked</option>
+    </select>
+  </div>
+  <button onclick="load()">Apply</button>
+  <a class="btn ghost" id="csv" href="/api/audit-log.csv">Export CSV</a>
+</div>
+
+<div class="wrap">
+  <div class="count" id="count">Loading&hellip;</div>
+  <div class="scroll">
+    <table>
+      <thead><tr id="head"></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const COLS = __COLUMNS__;
+
+function qs() {
+  const p = new URLSearchParams();
+  const map = {claim:'f-claim', patient:'f-patient', from:'f-from', to:'f-to', outcome:'f-outcome'};
+  for (const [k, id] of Object.entries(map)) {
+    const v = document.getElementById(id).value.trim();
+    if (v) p.set(k, v);
+  }
+  return p.toString();
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function load() {
+  const q = qs();
+  document.getElementById('csv').href = '/api/audit-log.csv' + (q ? '?' + q : '');
+  document.getElementById('head').innerHTML = COLS.map(c => `<th>${esc(c[1])}</th>`).join('');
+
+  const res = await fetch('/api/audit-log' + (q ? '?' + q : ''));
+  const data = await res.json();
+  const rows = data.rows || [];
+  document.getElementById('count').textContent =
+    rows.length + ' submission' + (rows.length === 1 ? '' : 's') +
+    (data.error ? ' — error: ' + data.error : '');
+
+  if (!rows.length) {
+    document.getElementById('body').innerHTML =
+      '<tr><td colspan="' + COLS.length + '" class="empty">No submissions match these filters.</td></tr>';
+    return;
+  }
+
+  document.getElementById('body').innerHTML = rows.map(r => {
+    return '<tr>' + COLS.map(([key]) => {
+      let v = r[key];
+      if (key === 'outcome') {
+        return `<td><span class="pill ${esc(v)}">${esc(v)}</span></td>`;
+      }
+      if (key === 'documents_label') {
+        return `<td class="docs">${v ? esc(v) : '<span class="none">none</span>'}</td>`;
+      }
+      if (key === 'fln') {
+        return `<td class="mono">${v ? esc(v) : '<span class="none">not captured</span>'}</td>`;
+      }
+      if (key === 'notes') {
+        const recon = r.record_origin === 'reconstructed-from-claim-record'
+          ? '<div class="recon">reconstructed from claim record</div>' : '';
+        return `<td class="notes">${esc(v || '')}${recon}</td>`;
+      }
+      const mono = ['claim_id','blueshield_claim_number','dos','subscriber_id',
+                    'submitted_date_pt','submitted_time_pt'].includes(key);
+      return `<td${mono ? ' class="mono"' : ''}>${esc(v || '')}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+document.querySelectorAll('input').forEach(el =>
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') load(); }));
+load();
+</script>
+</body>
+</html>
+"""
+
+
+@app.route('/audit')
+def audit_page():
+    return AUDIT_HTML.replace('__COLUMNS__', json.dumps(AUDIT_COLUMNS))
+
+
 if __name__ == '__main__':
     print("\n" + "="*50)
     print("  Helixona Dashboard — http://localhost:5050")
+    print("  Audit log      — http://localhost:5050/audit")
     print("="*50 + "\n")
     app.run(host='0.0.0.0', port=5050, debug=True)
