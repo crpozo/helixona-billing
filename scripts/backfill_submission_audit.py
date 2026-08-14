@@ -66,11 +66,22 @@ def parse_submitted_at(raw):
 def main():
     apply = '--apply' in sys.argv
 
-    session = boto3.Session(
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-        region_name=os.environ.get('AWS_REGION', 'us-west-2'),
-    )
+    # Explicit keys when .env supplies them (how the EC2 agent is configured
+    # today), otherwise boto3's normal chain — which picks up AWS_PROFILE, a
+    # named profile, or the instance role. Keeps the script usable from a
+    # laptop without editing .env.
+    if os.environ.get('AWS_ACCESS_KEY_ID') and os.environ.get('AWS_SECRET_ACCESS_KEY'):
+        session = boto3.Session(
+            aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+            region_name=os.environ.get('AWS_REGION', 'us-west-2'),
+        )
+    else:
+        session = boto3.Session(
+            profile_name=os.environ.get('AWS_PROFILE') or None,
+            region_name=os.environ.get('AWS_REGION', 'us-west-2'),
+        )
+    print(f"Account: {session.client('sts').get_caller_identity()['Account']}")
     dynamodb = session.resource('dynamodb')
     claims_table = dynamodb.Table('helixona-claims')
     subs_table = dynamodb.Table('helixona-submissions')
