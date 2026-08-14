@@ -29,6 +29,12 @@ from src.ai.verification import IVVerificationService
 from src.documents.cover_letter import generate_cover_letter_pdf
 from src.symplisend.submission import SympliSendSubmission
 from src.rules.engine import RulesEngine
+from src.rules.submission_gate import (
+    OFFICE_VISIT_CPTS,
+    is_office_visit,
+    evaluate_claim,
+    ready_to_submit,
+)
 from src.adjudication.processor import process_adjudication
 from src.audit.submission_log import (
     record_submission,
@@ -1951,25 +1957,11 @@ def _close_all_hub_popups(page, preserve_claim_popup=True):
         logger.warning(f"Hub popup cleanup error: {e}")
 
 
-# Office-visit E/M CPT codes: new patient 99201-99205, established 99211-99215.
-# Claims billed with one of these need only HCFA + IV Note — no Progress Note
-# (encounter file). Anything else is treated as IV-therapy (Progress Note required).
-OFFICE_VISIT_CPTS = {
-    '99201', '99202', '99203', '99204', '99205',
-    '99211', '99212', '99213', '99214', '99215',
-}
-
-
-def is_office_visit(cpt_value) -> bool:
-    """True if the claim's CPT contains an office-visit E/M code.
-
-    `cpt_value` may be a single code, a comma/space separated list, or None.
-    """
-    if not cpt_value:
-        return False
-    import re as _re
-    codes = _re.findall(r'\d{5}', str(cpt_value))
-    return any(c in OFFICE_VISIT_CPTS for c in codes)
+# Office-visit E/M CPT codes and the office-visit test now live in
+# src/rules/submission_gate.py alongside the rest of the submission rule, and
+# are imported at the top of this module. Claims billed with one of these need
+# only HCFA + IV Note — no Progress Note (encounter file). Anything else is
+# treated as IV-therapy (Progress Note required).
 
 
 def _cpt_from_hcfa_pdf(pdf_path):
@@ -9791,50 +9783,10 @@ def process_message(message: dict, aws_client: AWSClient):
             logger.error(f"Failed to scan claims: {e}")
             return
         
-        ready_claims = []
-        for item in all_claims:
-            cid = item.get('claim_id', '')
-            has_hcfa = bool(item.get('hcfa_s3_path'))
-            has_prog_notes = bool(item.get('prog_notes_s3_path'))
-            has_enc_file = bool(item.get('encounter_file_s3_path'))
-            # Require a subscriber id that was CONFIRMED from the HCFA box 1a.
-            # A DOM-scrape-only value (subscriber_id_unverified=True) is held back
-            # so we never auto-submit an unconfirmed member number to the payer.
-            has_subscriber = bool(item.get('subscriber_id')) and not bool(item.get('subscriber_id_unverified'))
-            already_submitted = bool(item.get('symplisend_submitted'))
-            # Office visits need only HCFA + IV Note — Progress Note not required.
-            office = is_office_visit(item.get('cpt'))
-            # Manual override: reviewer flagged this claim as not needing a
-            # Progress Note (set via dashboard for diagnostic-only / mixed CPT
-            # claims that ECW has no encounter doc for). Treated like an office
-            # visit for the purposes of the submission filter.
-            no_prog_note_manual = bool(item.get('progress_note_not_required'))
-            # Reject claims with known document quality issues — even when paths
-            # are set, the content may be wrong-patient or stale.
-            iv_mismatch = bool(item.get('iv_note_patient_mismatch'))
-            enc_needs_review = bool(item.get('encounter_revision_needed'))
+        # The submission rule itself lives in src/rules/submission_gate.py so it
+        # is stated once and can be tested without a browser.
+        ready_claims = [item for item in all_claims if ready_to_submit(item)]
 
-            # Submission rule:
-            #   1. HCFA always required
-            #   2. IV Note (prog_notes_s3_path) required + verified (no mismatch)
-            #   3. Progress Note (encounter_file_s3_path) required for IV Therapy,
-            #      and the encounter must not be flagged for revision.
-            #      Office visits AND manually-flagged claims skip the Progress
-            #      Note requirement entirely.
-            #   4. Subscriber ID present
-            #   5. Not already submitted
-            if not (has_hcfa and has_prog_notes and has_subscriber and not already_submitted):
-                continue
-            if iv_mismatch:
-                continue  # IV Note content known-bad
-            if office or no_prog_note_manual:
-                # Office visit or manual override: HCFA + IV Note is enough.
-                ready_claims.append(item)
-            else:
-                # IV Therapy: must have a verified Progress Note.
-                if has_enc_file and not enc_needs_review:
-                    ready_claims.append(item)
-        
         logger.info(f"📋 {len(ready_claims)} claims ready for submission (out of {len(all_claims)} total)")
         
         # Filter to test claim if specified
@@ -9842,41 +9794,20 @@ def process_message(message: dict, aws_client: AWSClient):
             # For test mode: find the claim regardless of submitted status
             test_item = claims_table.get_item(Key={'claim_id': str(test_claim_id)}).get('Item', {})
             if test_item:
-                has_hcfa = bool(test_item.get('hcfa_s3_path'))
-                has_prog_notes = bool(test_item.get('prog_notes_s3_path'))
-                has_enc_file = bool(test_item.get('encounter_file_s3_path'))
-                has_subscriber = bool(test_item.get('subscriber_id')) and not bool(test_item.get('subscriber_id_unverified'))
-                office = is_office_visit(test_item.get('cpt'))
-                no_prog_note_manual = bool(test_item.get('progress_note_not_required'))
-                iv_mismatch = bool(test_item.get('iv_note_patient_mismatch'))
-                enc_needs_review = bool(test_item.get('encounter_revision_needed'))
-
-                # Same submission rule as the main loop above.
-                ok = has_hcfa and has_prog_notes and has_subscriber and not iv_mismatch
-                if office or no_prog_note_manual:
-                    ok = ok  # office / manual override: HCFA + IV Note enough
-                else:
-                    ok = ok and has_enc_file and not enc_needs_review
-
-                if ok:
-                    if test_item.get('symplisend_submitted'):
+                # Same rule as the batch path above — one implementation, so the
+                # two can no longer disagree about what is submittable.
+                verdict = evaluate_claim(test_item)
+                if verdict['ready']:
+                    if verdict['already_submitted']:
                         logger.info(f"🧪 Claim {test_claim_id} already submitted to SympliSend, skipping")
                         return
                     ready_claims = [test_item]
                     logger.info(f"🧪 Forced test claim {test_claim_id}")
                 else:
-                    missing = []
-                    if not has_hcfa: missing.append('HCFA')
-                    if not has_prog_notes: missing.append('IV Note')
-                    if iv_mismatch: missing.append('IV Note has patient mismatch')
-                    if not office and not has_enc_file: missing.append('Progress Note')
-                    if not office and enc_needs_review: missing.append('Progress Note needs review')
-                    if not has_subscriber:
-                        if test_item.get('subscriber_id') and test_item.get('subscriber_id_unverified'):
-                            missing.append('Subscriber ID UNVERIFIED (HCFA box 1a not read)')
-                        else:
-                            missing.append('Subscriber ID')
-                    logger.warning(f"🧪 Claim {test_claim_id} not submittable: {', '.join(missing)}")
+                    logger.warning(
+                        f"🧪 Claim {test_claim_id} not submittable: "
+                        f"{', '.join(verdict['blockers'])}"
+                    )
                     return
             else:
                 logger.warning(f"🧪 Claim {test_claim_id} not found in DynamoDB")
