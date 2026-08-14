@@ -236,6 +236,48 @@ class ThePage(AuditApiCase):
                       self.client.get('/audit').get_data(as_text=True))
 
 
+class ClaimsApiReturnsEverything(unittest.TestCase):
+    """A truncated claims list understates the backlog in the reassuring direction.
+
+    The dashboard was reporting 690 of 1198 claims and calling the queue "100%
+    complete" because a bare scan stops at DynamoDB's 1MB page.
+    """
+
+    PAGE_1 = [{'claim_id': str(i), 'symplisend_submitted': 1} for i in range(600)]
+    PAGE_2 = [{'claim_id': str(i), 'symplisend_submitted': 0} for i in range(600, 1198)]
+
+    def setUp(self):
+        outer = self
+
+        class PagedClaims:
+            def scan(self, **kw):
+                if 'ExclusiveStartKey' in kw:
+                    return {'Items': [dict(c) for c in outer.PAGE_2]}
+                return {'Items': [dict(c) for c in outer.PAGE_1],
+                        'LastEvaluatedKey': {'claim_id': '599'}}
+
+        class EmptyTasks:
+            def scan(self, **kw):
+                return {'Items': []}
+
+        class DDB:
+            def Table(self, name):
+                return PagedClaims() if name == 'helixona-claims' else EmptyTasks()
+
+        dashboard.dynamodb = DDB()
+        dashboard.app.config['TESTING'] = True
+        self.client = dashboard.app.test_client()
+
+    def test_every_page_is_returned(self):
+        data = self.client.get('/api/claims').get_json()
+        self.assertEqual(len(data['claims']), 1198)
+
+    def test_the_second_page_is_not_the_one_dropped(self):
+        data = self.client.get('/api/claims').get_json()
+        ids = {c['claim_id'] for c in data['claims']}
+        self.assertIn('1197', ids)
+
+
 class ApiFailsSoftly(unittest.TestCase):
     def test_a_dynamodb_error_returns_empty_rows_not_a_500(self):
         class Broken:
