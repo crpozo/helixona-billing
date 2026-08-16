@@ -2451,8 +2451,11 @@ def _filter_audit_rows(rows):
     date_to = (request.args.get('to') or '').strip()
     outcome = (request.args.get('outcome') or '').strip().lower()
     flag = (request.args.get('flag') or '').strip().lower()
+    sub_type = (request.args.get('type') or '').strip().lower()
 
     def keep(r):
+        if sub_type and sub_type not in str(r.get('claim_submission_type', '')).lower():
+            return False
         if q:
             haystack = ' '.join(str(r.get(k, '')) for k in (
                 'patient_name', 'claim_id', 'blueshield_claim_number',
@@ -2600,6 +2603,9 @@ tr.row.open{background:var(--card2)}
 .pill.submitted{background:rgba(16,185,129,.13);color:var(--success)}
 .pill.failed{background:rgba(239,68,68,.13);color:var(--bad)}
 .pill.blocked{background:rgba(245,158,11,.13);color:var(--warning)}
+.ty{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:600;white-space:nowrap}
+.ty.first{background:rgba(74,222,128,.12);color:#4ade80}
+.ty.resub{background:rgba(245,158,11,.13);color:var(--warning)}
 .flag{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:600;background:rgba(239,68,68,.11);color:var(--bad)}
 .caret{color:var(--text-dim);font-size:10px;transition:transform .15s;display:inline-block;width:11px}
 tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
@@ -2643,6 +2649,13 @@ tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
     </div>
     <div class="fld"><label>From</label><input id="from" type="date"></div>
     <div class="fld"><label>To</label><input id="to" type="date"></div>
+    <div class="fld"><label>Type</label>
+      <select id="type">
+        <option value="">All types</option>
+        <option value="first time">New submission</option>
+        <option value="resubmission">Resubmission</option>
+      </select>
+    </div>
     <div class="fld"><label>Outcome</label>
       <select id="outcome">
         <option value="">All</option>
@@ -2665,10 +2678,11 @@ tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
           <th>Patient</th>
           <th class="nowrap">Claim #</th>
           <th class="nowrap">Date of service</th>
+          <th class="nowrap">Type</th>
           <th>Documents</th>
           <th class="nowrap">Status</th>
         </tr></thead>
-        <tbody id="body"><tr><td colspan="7" class="loading">Loading submissions…</td></tr></tbody>
+        <tbody id="body"><tr><td colspan="8" class="loading">Loading submissions…</td></tr></tbody>
       </table>
     </div>
     <div class="more" id="more" style="display:none">
@@ -2688,9 +2702,9 @@ const DOCN = {hcfa:'HCFA-1500', prog_notes:'IV Note', encounter:'Progress Note'}
 
 function qs() {
   const p = new URLSearchParams();
-  for (const id of ['q','from','to','outcome']) {
+  for (const id of ['q','from','to','type','outcome']) {
     const v = document.getElementById(id).value.trim();
-    if (v) p.set(id === 'q' ? 'q' : id, v);
+    if (v) p.set(id, v);
   }
   if (flag) p.set('flag', flag);
   return p.toString();
@@ -2739,7 +2753,7 @@ function tiles() {
 
 function setFlag(f) { flag = (flag === f) ? '' : f; limit = PAGE; load(); }
 function reset() {
-  for (const id of ['q','from','to','outcome']) document.getElementById(id).value = '';
+  for (const id of ['q','from','to','type','outcome']) document.getElementById(id).value = '';
   flag = ''; limit = PAGE; load();
 }
 
@@ -2751,16 +2765,21 @@ function rowHtml(r, i) {
     ? '<div class="flag">! Sent as a new claim</div>' : '';
   const bs = r.blueshield_claim_number
     ? `<div class="dim mono" style="font-size:10.5px">BS ${esc(r.blueshield_claim_number)}</div>` : '';
+  const t = String(r.claim_submission_type || '');
+  const typeCell = /resub/i.test(t) ? '<span class="ty resub">Resubmission</span>'
+                 : /first/i.test(t) ? '<span class="ty first">New submission</span>'
+                 : '<span class="dim">—</span>';
   return `<tr class="row" data-i="${i}" onclick="toggle(${i})">
     <td><span class="caret">&#9654;</span></td>
     <td class="nowrap mono">${esc(r.submitted_date_pt)}<div class="dim" style="font-size:10.5px">${esc(r.submitted_time_pt)} PT</div></td>
     <td class="pt">${esc(r.patient_name) || '<span class="dim">—</span>'}</td>
     <td class="nowrap mono">${esc(r.claim_id)}${bs}</td>
     <td class="nowrap mono">${esc(r.dos) || '<span class="dim">—</span>'}</td>
+    <td class="nowrap">${typeCell}</td>
     <td class="docs">${docs}</td>
     <td><span class="pill ${esc(r.outcome)}">${esc(r.outcome)}</span>${flagHtml}</td>
   </tr>
-  <tr class="detail" id="d${i}" style="display:none"><td colspan="7"></td></tr>`;
+  <tr class="detail" id="d${i}" style="display:none"><td colspan="8"></td></tr>`;
 }
 
 function detailHtml(r) {
@@ -2825,7 +2844,7 @@ function toggle(i) {
 function render() {
   const body = document.getElementById('body');
   if (!SHOWN.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">
+    body.innerHTML = `<tr><td colspan="8" class="empty">
       <div class="big">No submissions match this search.</div>
       <div>Try a surname, a claim number, or a date of service like 07/23/2026.</div></td></tr>`;
     document.getElementById('more').style.display = 'none';
@@ -2856,7 +2875,7 @@ async function load() {
 }
 
 let t;
-for (const id of ['q','from','to','outcome']) {
+for (const id of ['q','from','to','type','outcome']) {
   document.getElementById(id).addEventListener('input', () => {
     clearTimeout(t); t = setTimeout(() => { limit = PAGE; load(); }, 250);
   });

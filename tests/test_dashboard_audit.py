@@ -172,6 +172,21 @@ class Filtering(AuditApiCase):
     def test_missing_acknowledgement_flag(self):
         self.assertEqual(self.get('/api/audit-log?flag=no-fln')['count'], 2)
 
+    def test_by_submission_type(self):
+        # New submissions and resubmissions are different processes; the log
+        # has to be readable one at a time, not only as one merged list.
+        self.assertEqual(self.get('/api/audit-log?type=resubmission')['count'], 2)
+        self.assertEqual(self.get('/api/audit-log?type=first time')['count'], 1)
+
+    def test_type_filter_is_case_insensitive(self):
+        self.assertEqual(self.get('/api/audit-log?type=RESUBMISSION')['count'], 2)
+
+    def test_type_combines_with_the_linkage_flag(self):
+        # The question worth asking: of the resubmissions, which went out
+        # unattached to their prior claim?
+        self.assertEqual(
+            self.get('/api/audit-log?type=resubmission&flag=unlinked')['count'], 1)
+
     def test_filters_combine(self):
         self.assertEqual(
             self.get('/api/audit-log?q=drannikov&flag=unlinked')['count'], 1)
@@ -234,6 +249,12 @@ class ThePage(AuditApiCase):
     def test_surfaces_the_linkage_count(self):
         self.assertIn('Not attached to prior claim',
                       self.client.get('/audit').get_data(as_text=True))
+
+    def test_offers_a_submission_type_filter(self):
+        html = self.client.get('/audit').get_data(as_text=True)
+        self.assertIn('id="type"', html)
+        self.assertIn('>Resubmission<', html)
+        self.assertIn('>New submission<', html)
 
 
 class ClaimsApiReturnsEverything(unittest.TestCase):
