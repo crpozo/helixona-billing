@@ -1,9 +1,25 @@
 import boto3
 import json
+import time
 from src.config import settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# BOT_ROLE → the queue that role consumes. Stated as data so adding a bot is a
+# one-line change and an unmapped role is impossible to miss.
+QUEUE_BY_ROLE = {
+    'submissions':    lambda s: s.sqs_queue_url,
+    'resubmissions':  lambda s: s.sqs_queue_url_resub,
+    'iv_corrections': lambda s: s.sqs_queue_url_iv,
+}
+
+ROLE_ENV_VAR = {
+    'submissions':    'SQS_QUEUE_URL',
+    'resubmissions':  'SQS_QUEUE_URL_RESUB',
+    'iv_corrections': 'SQS_QUEUE_URL_IV',
+}
+
 
 class AWSClient:
     def __init__(self):
@@ -24,15 +40,46 @@ class AWSClient:
             raise
 
     def _active_queue_url(self) -> str:
-        """Queue this process polls — determined by BOT_ROLE."""
-        if settings.bot_role == 'iv_corrections':
-            return settings.sqs_queue_url_iv
-        return settings.sqs_queue_url
+        """Queue this process polls — determined by BOT_ROLE.
+
+        Every role maps to its own queue explicitly. There is deliberately no
+        fallback: an unrecognised or unconfigured role polls NOTHING rather
+        than defaulting to the submissions queue.
+
+        The old code fell through to `sqs_queue_url` for anything that was not
+        'iv_corrections', so the resubmissions bot — which runs with
+        BOT_ROLE=resubmissions and its own display, browser profile and noVNC —
+        silently polled the submissions queue and competed with the submissions
+        bot for the same messages, while its own queue was never read by
+        anyone. Two bots racing for one queue is far worse than one bot idling.
+        """
+        queue = QUEUE_BY_ROLE.get(settings.bot_role)
+        if queue is None:
+            logger.error(
+                f"BOT_ROLE={settings.bot_role!r} is not a known role "
+                f"({', '.join(sorted(QUEUE_BY_ROLE))}). This process will not "
+                f"poll any queue."
+            )
+            return ''
+        url = queue(settings)
+        if not url:
+            logger.error(
+                f"BOT_ROLE={settings.bot_role!r} has no queue URL configured "
+                f"(expected {ROLE_ENV_VAR[settings.bot_role]} in .env). This "
+                f"process will not poll any queue."
+            )
+        return url
 
     def receive_sqs_messages(self, max_messages=10, wait_time=20):
+        url = self._active_queue_url()
+        if not url:
+            # Already logged by _active_queue_url. Idle rather than calling SQS
+            # with an empty URL and spinning on the resulting error.
+            time.sleep(wait_time)
+            return []
         try:
             response = self.sqs.receive_message(
-                QueueUrl=self._active_queue_url(),
+                QueueUrl=url,
                 MaxNumberOfMessages=max_messages,
                 WaitTimeSeconds=wait_time,
                 AttributeNames=['All']

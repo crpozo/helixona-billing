@@ -3,12 +3,39 @@ try:
 except ImportError:
     from playwright.sync_api import sync_playwright, Browser, Page, BrowserContext
 from src.utils.logger import get_logger
+from src.config import settings
 import os
 
 logger = get_logger(__name__)
 
-# Persistent profile directory — cookies & session survive between runs
-PROFILE_DIR = "/opt/helixona-agent/browser-profile"
+# Persistent profile directory — cookies & session survive between runs.
+#
+# One directory PER BOT. Chrome takes an exclusive lock on its user-data-dir,
+# so three concurrent bots pointed at one directory fight over the same
+# session: whichever starts second gets a corrupted or read-only profile, and
+# a re-login by one silently invalidates another's cookies.
+#
+# 'submissions' deliberately keeps the original unsuffixed path so the bot that
+# is running right now does not lose its logged-in session on deploy. The
+# other roles get their own; browser-profile-resubmissions already exists on
+# the host from when the resubmissions bot last ran.
+_PROFILE_BY_ROLE = {
+    'submissions':    '/opt/helixona-agent/browser-profile',
+    'resubmissions':  '/opt/helixona-agent/browser-profile-resubmissions',
+    'iv_corrections': '/opt/helixona-agent/browser-profile-iv',
+}
+
+
+def profile_dir_for(role: str) -> str:
+    """Profile path for a bot role, falling back to a role-named directory.
+
+    An unknown role gets its own directory rather than sharing another bot's —
+    the safe direction to be wrong in.
+    """
+    return _PROFILE_BY_ROLE.get(role, f'/opt/helixona-agent/browser-profile-{role}')
+
+
+PROFILE_DIR = profile_dir_for(settings.bot_role)
 
 # Stealth JS scripts to inject
 STEALTH_SCRIPTS = """

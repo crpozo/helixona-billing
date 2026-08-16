@@ -23,19 +23,33 @@ session = boto3.Session(
 dynamodb = session.resource('dynamodb')
 sqs = session.client('sqs')
 SQS_URL = os.environ['SQS_QUEUE_URL']
+SQS_URL_RESUB = os.environ.get('SQS_QUEUE_URL_RESUB', '')
 SQS_URL_IV = os.environ.get('SQS_QUEUE_URL_IV', '')
 EC2_IP = "54.189.175.233"
 KEY_FILE = "infra/helixona-agent-key.pem"
 
 # Per-bot routing: which SQS queue + systemd unit each tab targets.
+# Each bot is its own systemd unit with its own X display, noVNC port, SQS
+# queue and Chrome profile. Keep this table in step with QUEUE_BY_ROLE in
+# src/aws/clients.py — the agent side of the same mapping.
 BOT_ROUTING = {
     'submissions': {
         'queue_url': SQS_URL,
         'service': 'helixona-agent',
+        'label': 'Blue Shield Submissions',
+        'novnc_port': 6080,
+    },
+    'resubmissions': {
+        'queue_url': SQS_URL_RESUB,
+        'service': 'helixona-agent-resub',
+        'label': 'Blue Shield Resubmissions',
+        'novnc_port': 6081,
     },
     'iv_corrections': {
         'queue_url': SQS_URL_IV,
         'service': 'helixona-agent-iv',
+        'label': 'IV Fix Coding',
+        'novnc_port': 6082,
     },
 }
 
@@ -387,7 +401,7 @@ tbody tr:last-child td{border-bottom:none}
     <div class="tb">
       <div class="tb-l">
         <button id="stopBtn" class="stop-btn" onclick="stopAgent()">⛔ Stop Agent</button>
-        <a href="http://54.189.175.233:6080/vnc.html" target="_blank" class="novnc-link">🖥️ noVNC</a>
+        <a id="novnc-link" href="http://54.189.175.233:6080/vnc.html" target="_blank" class="novnc-link">🖥️ noVNC</a>
       </div>
       <div class="tb-r">
         <div class="status-badge"><div class="status-dot"></div>Agent Running · 54.189.175.233</div>
@@ -399,6 +413,7 @@ tbody tr:last-child td{border-bottom:none}
     <!-- BOT TABS -->
     <div class="subtabs" id="bot-tabs">
       <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">🛡️ Blue Shield Submissions</div>
+      <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">♻️ Blue Shield Resubmissions</div>
       <div class="subtab" data-bot="iv_corrections" onclick="setActiveBot('iv_corrections')">🩺 IV Fix Coding</div>
     </div>
 
@@ -838,9 +853,16 @@ window.scrollToEl = function(sel){
         // Active bot tab. Drives which SQS queue / systemd service the dashboard talks to.
         window.activeBot = 'submissions';
 
+        const BOT_NOVNC = {submissions: 6080, resubmissions: 6081, iv_corrections: 6082};
+
         function setActiveBot(bot) {
-            if (bot !== 'submissions' && bot !== 'iv_corrections') bot = 'submissions';
+            if (!(bot in BOT_NOVNC)) bot = 'submissions';
             window.activeBot = bot;
+            // Each bot runs on its own X display behind its own noVNC port —
+            // pointing every tab at 6080 would show the submissions bot's
+            // screen while claiming to show another's.
+            const vnc = document.getElementById('novnc-link');
+            if (vnc) vnc.href = `http://54.189.175.233:${BOT_NOVNC[bot]}/vnc.html`;
             // Tab styling
             document.querySelectorAll('#bot-tabs .subtab').forEach(el => {
                 el.classList.toggle('on', el.dataset.bot === bot);
@@ -854,7 +876,8 @@ window.scrollToEl = function(sel){
             const sel = document.getElementById('task-type');
             const firstVisible = Array.from(sel.options).find(o => !o.hidden);
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
-            // Toggle hero KPI + claims table per bot
+            // Toggle hero KPI + claims table per bot. Resubmissions reuse the
+            // submissions views — same claims table, filtered to its own work.
             const isIv = (bot === 'iv_corrections');
             const heroSub = document.getElementById('hero-submissions');
             const heroIv  = document.getElementById('hero-iv');
@@ -1096,13 +1119,25 @@ window.scrollToEl = function(sel){
             }
         }
 
+        // New submissions and resubmissions are separate bots with separate
+        // queues, displays and browser profiles, so each tab shows only its own
+        // claims. Anything not explicitly marked a resubmission counts as a new
+        // submission — an unclassified claim belongs with the first-time work.
+        function claimsForActiveBot(claims) {
+            const isResub = c => /resub/i.test(c.submission_type || '');
+            if (window.activeBot === 'resubmissions') return claims.filter(isResub);
+            if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
+            return claims;
+        }
+
         async function loadData() {
             try {
                 const res = await fetch('/api/claims');
                 const data = await res.json();
-                renderStats(data.claims);
-                renderPipeline(data.claims);
-                renderClaims(data.claims);
+                const claims = claimsForActiveBot(data.claims);
+                renderStats(claims);
+                renderPipeline(claims);
+                renderClaims(claims);
                 renderTasks(data.tasks);
             } catch (e) {
                 console.error('Failed to load data:', e);
