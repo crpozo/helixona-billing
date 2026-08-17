@@ -2660,8 +2660,6 @@ tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
 .doc{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 11px;margin-bottom:7px}
 .doc .dn{font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:3px}
 .doc .dm{font-size:10.5px;color:var(--text-muted);font-family:'JetBrains Mono','Monaco',monospace;word-break:break-all;line-height:1.5}
-.callout{grid-column:1/-1;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.28);border-radius:9px;padding:11px 14px;font-size:12px;color:var(--text-secondary);line-height:1.55}
-.callout b{color:var(--bad)}
 .empty{padding:52px 20px;text-align:center;color:var(--text-muted)}
 .empty .big{font-size:15px;color:var(--text-secondary);margin-bottom:6px}
 .more{padding:15px;text-align:center;border-top:1px solid var(--bdr)}
@@ -2815,14 +2813,6 @@ function detailHtml(r) {
       <div class="dm">${d.filename ? esc(d.filename) + (d.bytes ? ' · ' + Number(d.bytes).toLocaleString() + ' bytes' : '') + '<br>' : ''}${d.sha256 ? 'sha256 ' + esc(d.sha256).slice(0,32) + '…<br>' : ''}${esc(d.s3_path || '')}${d.note ? '<br>' + esc(d.note) : ''}</div>
     </div>`).join('') : '<div class="dim">No documents were attached to this attempt.</div>';
 
-  const warn = r.linkage_risk ? `<div class="callout">
-      <b>Not attached to the prior claim.</b> Our records classify this as a
-      <b>${esc(r.claim_submission_type)}</b>, but it went to the payer as
-      &ldquo;${esc(r.submission_form_type)}&rdquo;${r.blueshield_claim_number ? ' and the prior claim number (' + esc(r.blueshield_claim_number) + ') was never entered' : ''}.
-      The payer opens a new claim instead of adding these documents to the one under dispute —
-      which is how a packet we did send gets reported as never received.
-    </div>` : '';
-
   return `<div class="dwrap">
     <div class="dsec">
       <h4>Submission</h4>
@@ -2851,7 +2841,6 @@ function detailHtml(r) {
       <h4>Error</h4>
       <div class="dl"><span class="dd">${esc(r.error)}</span></div>
     </div>` : ''}
-    ${warn}
   </div>`;
 }
 
