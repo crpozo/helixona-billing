@@ -253,6 +253,18 @@ class ThePage(AuditApiCase):
         self.assertIn('color-scheme:dark', html)
         self.assertIn('showPicker', html)
 
+    def test_documents_link_to_the_pdf_endpoints_that_exist(self):
+        # The detail panel builds /api/hcfa_pdf, /api/prog_notes and
+        # /api/encounter_file URLs. If one of those routes is ever renamed the
+        # links go dead silently, so assert the app still serves all three.
+        html = self.client.get('/audit').get_data(as_text=True)
+        routes = {str(r) for r in dashboard.app.url_map.iter_rules()}
+        for path, rule in (('/api/hcfa_pdf/', '/api/hcfa_pdf/<claim_id>'),
+                           ('/api/prog_notes/', '/api/prog_notes/<claim_id>'),
+                           ('/api/encounter_file/', '/api/encounter_file/<claim_id>')):
+            self.assertIn(path, html, path)
+            self.assertIn(rule, routes, rule)
+
     def test_offers_a_submission_type_filter(self):
         html = self.client.get('/audit').get_data(as_text=True)
         self.assertIn('id="type"', html)

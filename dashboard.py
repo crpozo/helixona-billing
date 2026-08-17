@@ -2658,7 +2658,11 @@ tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
 .dl .dt{color:var(--text-muted);min-width:96px;flex:none}
 .dl .dd{color:var(--text-primary);word-break:break-word}
 .doc{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 11px;margin-bottom:7px}
-.doc .dn{font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:3px}
+.doc .dn{display:block;font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:3px}
+.doc a.dn{transition:color .15s}
+.doc a.dn:hover{color:var(--accent)}
+.doc a.dn .ext{font-weight:500;font-size:10.5px;color:var(--text-muted);margin-left:5px}
+.doc a.dn:hover .ext{color:var(--accent)}
 .doc .dm{font-size:10.5px;color:var(--text-muted);font-family:'JetBrains Mono','Monaco',monospace;word-break:break-all;line-height:1.5}
 .empty{padding:52px 20px;text-align:center;color:var(--text-muted)}
 .empty .big{font-size:15px;color:var(--text-secondary);margin-bottom:6px}
@@ -2807,11 +2811,25 @@ function rowHtml(r, i) {
 }
 
 function detailHtml(r) {
-  const docs = (r.documents || []).length ? (r.documents || []).map(d => `
-    <div class="doc">
-      <div class="dn">${esc(DOCN[d.document] || d.document)}</div>
-      <div class="dm">${d.filename ? esc(d.filename) + (d.bytes ? ' · ' + Number(d.bytes).toLocaleString() + ' bytes' : '') + '<br>' : ''}${d.sha256 ? 'sha256 ' + esc(d.sha256).slice(0,32) + '…<br>' : ''}${esc(d.s3_path || '')}${d.note ? '<br>' + esc(d.note) : ''}</div>
-    </div>`).join('') : '<div class="dim">No documents were attached to this attempt.</div>';
+  // Each document opens the PDF the dashboard already serves for that claim.
+  const DOC_URL = {
+    hcfa:       id => `/api/hcfa_pdf/${encodeURIComponent(id)}`,
+    prog_notes: id => `/api/prog_notes/${encodeURIComponent(id)}`,
+    encounter:  id => `/api/encounter_file/${encodeURIComponent(id)}`,
+  };
+  const docs = (r.documents || []).length ? (r.documents || []).map(d => {
+    const name = esc(DOCN[d.document] || d.document);
+    const url = DOC_URL[d.document] ? DOC_URL[d.document](r.claim_id) : '';
+    const title = url
+      ? `<a class="dn open" href="${url}" target="_blank" rel="noopener">${name} <span class="ext">open PDF &#8599;</span></a>`
+      : `<div class="dn">${name}</div>`;
+    const meta = [
+      d.filename ? esc(d.filename) + (d.bytes ? ' · ' + Number(d.bytes).toLocaleString() + ' bytes' : '') : '',
+      d.sha256 ? 'sha256 ' + esc(d.sha256).slice(0, 32) + '…' : '',
+      esc(d.s3_path || ''),
+    ].filter(Boolean).join('<br>');
+    return `<div class="doc">${title}<div class="dm">${meta}</div></div>`;
+  }).join('') : '<div class="dim">No documents were attached to this attempt.</div>';
 
   return `<div class="dwrap">
     <div class="dsec">
