@@ -2846,12 +2846,10 @@ function detailHtml(r) {
       <h4>Documents (${(r.documents || []).length})</h4>
       ${docs}
     </div>
-    ${(r.error || r.notes || r.record_origin === 'reconstructed-from-claim-record') ? `
+    ${r.error ? `
     <div class="dsec">
-      <h4>Notes</h4>
-      ${r.error ? `<div class="dl"><span class="dt">Error</span><span class="dd">${esc(r.error)}</span></div>` : ''}
-      ${r.notes ? `<div class="dl"><span class="dt">Note</span><span class="dd">${esc(r.notes)}</span></div>` : ''}
-      ${r.record_origin === 'reconstructed-from-claim-record' ? `<div class="dl"><span class="dt">Source</span><span class="dd">Reconstructed from the claim record — predates the audit log, so document sizes and hashes were not captured at send time.</span></div>` : ''}
+      <h4>Error</h4>
+      <div class="dl"><span class="dd">${esc(r.error)}</span></div>
     </div>` : ''}
     ${warn}
   </div>`;
