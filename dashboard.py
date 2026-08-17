@@ -2779,10 +2779,10 @@ function tiles() {
     </div>`;
 }
 
-function setFlag(f) { flag = (flag === f) ? '' : f; limit = PAGE; load(); }
+function setFlag(f) { flag = (flag === f) ? '' : f; limit = PAGE; apply(); }
 function reset() {
   for (const id of ['q','from','to','type','outcome']) document.getElementById(id).value = '';
-  flag = ''; limit = PAGE; load();
+  flag = ''; limit = PAGE; apply();
 }
 
 function rowHtml(r, i) {
@@ -2886,23 +2886,52 @@ function render() {
 
 function showMore() { limit += PAGE; render(); }
 
-async function load() {
+// Filtering happens in the browser over the rows already in memory.
+//
+// It used to re-query the server on every keystroke, which was both slow and
+// wrong. Slow because each keystroke re-scanned the whole table and shipped up
+// to 1.7MB back. Wrong because the responses could land out of order: clearing
+// the box asked for all 1188 rows while a one-row response for the text just
+// deleted was still in flight, and the small one arrived last and won — so an
+// empty search box showed a single result.
+//
+// The server-side filters stay exactly as they were; the CSV export and the
+// API still use them.
+function matches(r) {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  if (q) {
+    const hay = [r.patient_name, r.claim_id, r.blueshield_claim_number,
+                 r.dos, r.subscriber_id, r.fln].join(' ').toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  const from = document.getElementById('from').value.trim();
+  const to = document.getElementById('to').value.trim();
+  const d = r.submitted_date_pt || '';
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+
+  const ty = document.getElementById('type').value.trim().toLowerCase();
+  if (ty && !String(r.claim_submission_type || '').toLowerCase().includes(ty)) return false;
+
+  const oc = document.getElementById('outcome').value.trim().toLowerCase();
+  if (oc && String(r.outcome || '').toLowerCase() !== oc) return false;
+
+  if (flag === 'unlinked' && !r.linkage_risk) return false;
+  if (flag === 'no-fln' && r.fln) return false;
+  return true;
+}
+
+function apply() {
   const q = qs();
   document.getElementById('csv').href = '/api/audit-log.csv' + (q ? '?' + q : '');
-  const res = await fetch('/api/audit-log' + (q ? '?' + q : ''));
-  const data = await res.json();
-  SHOWN = data.rows || [];
+  SHOWN = ALL.filter(matches);
   limit = PAGE;
   tiles();
   render();
-  if (data.error) document.getElementById('count').innerHTML += ` — <span style="color:var(--bad)">${esc(data.error)}</span>`;
 }
 
-let t;
 for (const id of ['q','from','to','type','outcome']) {
-  document.getElementById(id).addEventListener('input', () => {
-    clearTimeout(t); t = setTimeout(() => { limit = PAGE; load(); }, 250);
-  });
+  document.getElementById(id).addEventListener('input', apply);
 }
 
 // Clicking a date field anywhere — not just the small calendar glyph — opens
@@ -2917,13 +2946,28 @@ for (const id of ['from','to']) {
   });
 }
 
+// One fetch of the whole log, then everything is local. Reload the page to
+// pick up submissions made since.
 (async function init() {
-  const res = await fetch('/api/audit-log');
-  const data = await res.json();
-  ALL = data.rows || [];
-  SHOWN = ALL;
-  tiles();
-  render();
+  try {
+    const res = await fetch('/api/audit-log');
+    const data = await res.json();
+    ALL = data.rows || [];
+    if (data.error) {
+      document.getElementById('body').innerHTML =
+        `<tr><td colspan="8" class="empty"><div class="big">Could not load the audit log.</div>
+         <div>${esc(data.error)}</div></td></tr>`;
+      document.getElementById('count').textContent = '';
+      return;
+    }
+  } catch (e) {
+    document.getElementById('body').innerHTML =
+      `<tr><td colspan="8" class="empty"><div class="big">Could not reach the server.</div>
+       <div>${esc(e.message || e)}</div></td></tr>`;
+    document.getElementById('count').textContent = '';
+    return;
+  }
+  apply();
 })();
 </script>
 </body>
