@@ -2608,6 +2608,12 @@ h1{font-family:'Playfair Display',serif;font-size:26px;font-weight:600;color:var
 .fld label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:600}
 .fld input,.fld select{background:var(--bg2);border:1px solid var(--bdr);color:var(--text-primary);padding:9px 11px;border-radius:8px;font-size:12.5px;outline:none;transition:border-color .15s}
 .fld input:focus,.fld select:focus{border-color:var(--accent)}
+/* Native date controls default to the light theme: a near-black calendar icon
+   on a near-black field, and a white popup. color-scheme:dark hands the whole
+   native widget — icon and calendar — to the browser's dark rendering. */
+.fld input[type=date]{color-scheme:dark;cursor:pointer}
+.fld input[type=date]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.65;transition:opacity .15s}
+.fld input[type=date]:hover::-webkit-calendar-picker-indicator{opacity:1}
 .fld.grow{flex:1;min-width:250px}
 .fld.grow input{width:100%}
 .fld input::placeholder{color:var(--text-dim)}
@@ -2641,7 +2647,6 @@ tr.row.open{background:var(--card2)}
 .ty{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:600;white-space:nowrap}
 .ty.first{background:rgba(74,222,128,.12);color:#4ade80}
 .ty.resub{background:rgba(245,158,11,.13);color:var(--warning)}
-.flag{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:600;background:rgba(239,68,68,.11);color:var(--bad)}
 .caret{color:var(--text-dim);font-size:10px;transition:transform .15s;display:inline-block;width:11px}
 tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
 
@@ -2752,8 +2757,6 @@ function tiles() {
   const view = SHOWN;
   const n = view.length;
   const filtered = n !== ALL.length;
-  const noFln = view.filter(r => !r.fln).length;
-  const unlinked = view.filter(r => r.linkage_risk).length;
   const bad = view.filter(r => r.outcome !== 'submitted').length;
   const dates = view.map(r => r.submitted_date_pt).filter(Boolean).sort();
   const range = dates.length ? dates[0] + ' → ' + dates[dates.length - 1] : '—';
@@ -2768,16 +2771,6 @@ function tiles() {
       <div class="k">Period covered</div>
       <div class="v sm">${esc(range)}</div>
       <div class="n">first to most recent</div>
-    </div>
-    <div class="tile crit act ${flag==='unlinked'?'on':''}" onclick="setFlag('unlinked')" title="Click to filter">
-      <div class="k"><span class="dot c"></span>Not attached to prior claim</div>
-      <div class="v">${unlinked.toLocaleString()}</div>
-      <div class="n">replacement claims sent as new ones${unlinked?' — click to filter':''}</div>
-    </div>
-    <div class="tile warn act ${flag==='no-fln'?'on':''}" onclick="setFlag('no-fln')" title="Click to filter">
-      <div class="k"><span class="dot w"></span>No payer acknowledgement</div>
-      <div class="v">${noFln.toLocaleString()}</div>
-      <div class="n">no FLN captured${noFln?' — click to filter':''}</div>
     </div>
     <div class="tile ${bad?'warn':''}">
       <div class="k"><span class="dot ${bad?'w':'g'}"></span>Failed or blocked</div>
@@ -2796,8 +2789,6 @@ function rowHtml(r, i) {
   const docs = (r.documents || []).length
     ? (r.documents || []).map(d => DOCN[d.document] || d.document).join(', ')
     : '<span class="dim">none</span>';
-  const flagHtml = r.linkage_risk
-    ? '<div class="flag">! Sent as a new claim</div>' : '';
   const bs = r.blueshield_claim_number
     ? `<div class="dim mono" style="font-size:10.5px">BS ${esc(r.blueshield_claim_number)}</div>` : '';
   const t = String(r.claim_submission_type || '');
@@ -2812,7 +2803,7 @@ function rowHtml(r, i) {
     <td class="nowrap mono">${esc(r.dos) || '<span class="dim">—</span>'}</td>
     <td class="nowrap">${typeCell}</td>
     <td class="docs">${docs}</td>
-    <td><span class="pill ${esc(r.outcome)}">${esc(r.outcome)}</span>${flagHtml}</td>
+    <td><span class="pill ${esc(r.outcome)}">${esc(r.outcome)}</span></td>
   </tr>
   <tr class="detail" id="d${i}" style="display:none"><td colspan="8"></td></tr>`;
 }
@@ -2913,6 +2904,18 @@ let t;
 for (const id of ['q','from','to','type','outcome']) {
   document.getElementById(id).addEventListener('input', () => {
     clearTimeout(t); t = setTimeout(() => { limit = PAGE; load(); }, 250);
+  });
+}
+
+// Clicking a date field anywhere — not just the small calendar glyph — opens
+// the picker. Typing dd.mm.yyyy by hand is the slow path; the calendar is the
+// one people actually want.
+for (const id of ['from','to']) {
+  const el = document.getElementById(id);
+  el.addEventListener('click', () => {
+    if (typeof el.showPicker === 'function') {
+      try { el.showPicker(); } catch (e) { /* not user-activated; ignore */ }
+    }
   });
 }
 

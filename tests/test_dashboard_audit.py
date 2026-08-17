@@ -246,9 +246,12 @@ class ThePage(AuditApiCase):
         html = self.client.get('/audit').get_data(as_text=True)
         self.assertEqual(html.count('id="q"'), 1)
 
-    def test_surfaces_the_linkage_count(self):
-        self.assertIn('Not attached to prior claim',
-                      self.client.get('/audit').get_data(as_text=True))
+    def test_date_fields_use_a_dark_native_picker(self):
+        # Without color-scheme:dark the browser renders a near-black calendar
+        # glyph on a near-black field, so the picker looks like it is missing.
+        html = self.client.get('/audit').get_data(as_text=True)
+        self.assertIn('color-scheme:dark', html)
+        self.assertIn('showPicker', html)
 
     def test_offers_a_submission_type_filter(self):
         html = self.client.get('/audit').get_data(as_text=True)
