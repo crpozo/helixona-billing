@@ -510,10 +510,10 @@ tbody tr:last-child td{border-bottom:none}
           <h3>⚡ Send Task to Agent</h3>
           <label>Task Type</label>
           <select id="task-type" onchange="updateTaskTemplate()">
-            <optgroup label="🛡️ Blue Shield Claims Bot" data-bot="submissions">
-              <option value="bs_missing_docs" data-bot="submissions">📋 ECW Obtain Claims Documentation</option>
-              <option value="blueshield_submissions" data-bot="submissions">📤 Blue Shield Submissions</option>
-              <option value="ecw_status_update" data-bot="submissions">📝 ECW Status Update</option>
+            <optgroup label="🛡️ Blue Shield Claims Bot" data-bot="submissions resubmissions">
+              <option value="bs_missing_docs" data-bot="submissions resubmissions">📋 ECW Obtain Claims Documentation</option>
+              <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
+              <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
             </optgroup>
             <optgroup label="🩺 IV Fix Coding Bot" data-bot="iv_corrections">
               <option value="fix_coding_ivs__all" data-bot="iv_corrections">🔄 All Stages</option>
@@ -869,8 +869,10 @@ window.scrollToEl = function(sel){
             });
             // Show/hide task-type optgroups + options
             document.querySelectorAll('#task-type [data-bot]').forEach(el => {
-                el.hidden = (el.dataset.bot !== bot);
-                el.disabled = (el.dataset.bot !== bot);
+                const owners = (el.dataset.bot || '').split(/\s+/).filter(Boolean);
+                const mine = owners.includes(bot);
+                el.hidden = !mine;
+                el.disabled = !mine;
             });
             // Pick the first visible option for this bot
             const sel = document.getElementById('task-type');

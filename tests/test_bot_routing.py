@@ -112,6 +112,32 @@ class DashboardAgreesWithTheAgent(unittest.TestCase):
         self.assertEqual(len(set(services)), len(services), services)
         self.assertEqual(len(set(ports)), len(ports), ports)
 
+    def test_every_tab_has_at_least_one_task_option(self):
+        """A tab whose options are all hidden leaves an unopenable dropdown.
+
+        setActiveBot hides every task option not owned by the active bot. When
+        the resubmissions tab was added without tagging any option for it, all
+        of them were hidden at once and the Send Task dropdown could not be
+        opened from that tab.
+        """
+        import re
+        import dashboard
+        html = dashboard.DASHBOARD_HTML
+        owners = re.findall(r'<option [^>]*data-bot="([^"]+)"', html)
+        for bot in dashboard.BOT_ROUTING:
+            available = [o for o in owners if bot in o.split()]
+            self.assertTrue(available, f'no task option is available for tab {bot!r}')
+
+    def test_blue_shield_tasks_are_offered_to_both_blue_shield_bots(self):
+        # Same dispatcher, same task types; only the queue differs.
+        import re
+        import dashboard
+        for value in ('bs_missing_docs', 'blueshield_submissions', 'ecw_status_update'):
+            m = re.search(r'<option value="%s" data-bot="([^"]+)"' % value,
+                          dashboard.DASHBOARD_HTML)
+            self.assertIsNotNone(m, value)
+            self.assertEqual(set(m.group(1).split()), {'submissions', 'resubmissions'}, value)
+
     def test_resubmissions_points_at_its_own_unit(self):
         import dashboard
         self.assertEqual(dashboard.BOT_ROUTING['resubmissions']['service'],
