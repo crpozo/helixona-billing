@@ -28,6 +28,7 @@ from src.blueshield.portal import BlueShieldPortal
 from src.ai.verification import IVVerificationService
 from src.documents.cover_letter import generate_cover_letter_pdf
 from src.symplisend.submission import SympliSendSubmission
+from src.ecw.claim_status import ecw_status_for
 from src.rules.engine import RulesEngine
 from src.rules.submission_gate import (
     OFFICE_VISIT_CPTS,
@@ -2249,8 +2250,8 @@ def process_message(message: dict, aws_client: AWSClient):
     if _settings.bot_role == 'iv_corrections' and task_type not in IV_CORRECTIONS_TASKS:
         logger.warning(f"BOT_ROLE=iv_corrections refused task_type={task_type}")
         return
-    if _settings.bot_role == 'submissions' and task_type in IV_CORRECTIONS_TASKS:
-        logger.warning(f"BOT_ROLE=submissions refused task_type={task_type}")
+    if _settings.bot_role != 'iv_corrections' and task_type in IV_CORRECTIONS_TASKS:
+        logger.warning(f"BOT_ROLE={_settings.bot_role} refused task_type={task_type}")
         return
 
     # ──────────────────────────────────────
@@ -4060,8 +4061,14 @@ def process_message(message: dict, aws_client: AWSClient):
                 pass
             time.sleep(0.5)
 
-            # Set claim status filter
-            logger.info("Setting claim status filter...")
+            # Set claim status filter.
+            # Which status depends on the bot: the submissions bot works
+            # "Ready to Submit to Symplisend", the resubmissions bot works
+            # "Ready to Bill - Symplisend CC". Hardcoding the first one meant
+            # every claim in the second was invisible to the extractor.
+            target_status = ecw_status_for(_settings.bot_role)
+            logger.info(f"Setting claim status filter to '{target_status}'...")
+            status_filter_set = False
             try:
                 selects = page.locator('select:visible').all()
                 for sel in selects:
@@ -4070,23 +4077,41 @@ def process_message(message: dict, aws_client: AWSClient):
                         options_text = sel.evaluate('''el => {
                             return Array.from(el.options).map(o => o.text.trim()).join('|');
                         }''')
-                        if 'Ready to Submit' in options_text or 'Symplisend' in options_text or 'claimStatus' in ng_model.lower():
-                            target_value = sel.evaluate('''el => {
-                                for (const opt of el.options) {
-                                    if (opt.text.includes('Ready to Submit to Symplisend')) return opt.value;
-                                }
-                                return null;
-                            }''')
+                        if 'Ready to' in options_text or 'Symplisend' in options_text or 'claimStatus' in ng_model.lower():
+                            target_value = sel.evaluate(
+                                '''(el, target) => {
+                                    for (const opt of el.options) {
+                                        if ((opt.text || '').trim() === target) return opt.value;
+                                    }
+                                    for (const opt of el.options) {
+                                        if ((opt.text || '').includes(target)) return opt.value;
+                                    }
+                                    return null;
+                                }''', target_status)
                             if target_value:
                                 sel.select_option(value=target_value)
                                 time.sleep(0.3)
                                 sel.dispatch_event('change')
-                                logger.info(f"✅ Status set to 'Ready to Submit to Symplisend'")
+                                logger.info(f"✅ Status set to '{target_status}'")
+                                status_filter_set = True
                                 break
+                            else:
+                                logger.warning(
+                                    f"⚠️ '{target_status}' is not an option in this dropdown. "
+                                    f"Available: {options_text[:300]}")
                     except Exception:
                         continue
             except Exception as e:
                 logger.warning(f"Status filter failed: {e}")
+
+            if not status_filter_set:
+                # Without the filter ECW returns its own default set, which is
+                # not this bot's work. Better to stop than to extract and
+                # process the wrong claims.
+                logger.error(
+                    f"❌ Could not set the claim status filter to '{target_status}' — "
+                    f"aborting so we do not pull the wrong claims.")
+                return
 
             time.sleep(1)
 
