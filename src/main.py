@@ -16,6 +16,7 @@ Task Types:
 import time
 import json
 import uuid
+from urllib.parse import urlparse
 import random
 import os
 import subprocess
@@ -1705,6 +1706,44 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
 
     logger.warning("Login may have failed — still on login page")
     return False
+
+
+def _find_symplisend_page(context, timeout_s=45):
+    """Return the open tab that is actually SympliSend.
+
+    Clicking the SympliSend link opens more than one tab — a blank one, the
+    Blue Shield SSO bridge, and the real destination — in an order that is not
+    guaranteed. `expect_page` hands back whichever opened first, which is how
+    the bot ended up driving an about:blank or an externalSSO page and timing
+    out on "New Submission" for every claim.
+
+    So ignore arrival order: look at every tab and take the one whose hostname
+    says SympliSend. Polling also covers the SSO bridge, which redirects there
+    on its own a few seconds later.
+    """
+    deadline = time.time() + timeout_s
+    announced = set()
+    while time.time() < deadline:
+        for pg in list(context.pages):
+            try:
+                url = pg.url or ''
+            except Exception:
+                continue
+            if 'symplisend' in urlparse(url).netloc.lower():
+                logger.info(f"✅ SympliSend tab: {url[:100]}")
+                return pg
+            if url and url not in announced:
+                announced.add(url)
+                logger.info(f"  (ignoring tab: {url[:80]})")
+            try:
+                _dismiss_third_party_interstitial(pg, timeout_ms=600)
+            except Exception:
+                pass
+        time.sleep(1.5)
+    logger.error(
+        f"❌ No SympliSend tab appeared within {timeout_s}s. Open tabs: "
+        + ', '.join((p.url or '?')[:70] for p in context.pages))
+    return None
 
 
 def _dismiss_third_party_interstitial(page, timeout_ms=9000):
@@ -10187,7 +10226,10 @@ def process_message(message: dict, aws_client: AWSClient):
                     # The new tab only opens once this is accepted.
                     _dismiss_third_party_interstitial(page)
 
-                symplisend_page = new_page_info.value
+                # Not new_page_info.value — that is whichever tab opened
+                # first, which is often a blank one.
+                found = _find_symplisend_page(page.context, timeout_s=45)
+                symplisend_page = found or new_page_info.value
                 symplisend_page.wait_for_load_state('domcontentloaded', timeout=60000)
                 symplisend_clicked = True
             except Exception as e:
@@ -10333,28 +10375,6 @@ def process_message(message: dict, aws_client: AWSClient):
                         )
                         continue
                     
-                    # Click "New Submission"
-                    try:
-                        symplisend_page.click('button[name="addNewSubmission"], button:has-text("New Submission")', timeout=10000)
-                        logger.info("✅ Clicked 'New Submission'")
-                    except Exception as e:
-                        logger.error(f"❌ Could not click New Submission: {e}")
-                        try:
-                            symplisend_page.screenshot(path=f'/tmp/symplisend_no_btn_{claim_id}.png')
-                        except Exception:
-                            pass
-                        record_submission(
-                            aws_client, claim_item,
-                            outcome=OUTCOME_FAILED,
-                            documents=describe_documents(audit_docs),
-                            error=f'could not open New Submission form: {e}',
-                            notes='nothing was uploaded to the payer',
-                        )
-                        continue
-                    
-                    # Wait for Angular to finish re-rendering the form after New Submission
-                    time.sleep(3)
-
                     # ─── Choose the right SympliSend form for this claim ───
                     # A resubmission belongs on the prior-claim form, which has
                     # a required Claim Number field. Sending it through the
@@ -10417,30 +10437,100 @@ def process_message(message: dict, aws_client: AWSClient):
                     except Exception as e:
                         logger.warning(f"Form type selection failed: {e}")
 
+                    # Click "New Submission"
+                    try:
+                        symplisend_page.click('button[name="addNewSubmission"], button:has-text("New Submission")', timeout=10000)
+                        logger.info("✅ Clicked 'New Submission'")
+                    except Exception as e:
+                        logger.error(f"❌ Could not click New Submission: {e}")
+                        try:
+                            symplisend_page.screenshot(path=f'/tmp/symplisend_no_btn_{claim_id}.png')
+                        except Exception:
+                            pass
+                        record_submission(
+                            aws_client, claim_item,
+                            outcome=OUTCOME_FAILED,
+                            documents=describe_documents(audit_docs),
+                            error=f'could not open New Submission form: {e}',
+                            notes='nothing was uploaded to the payer',
+                        )
+                        continue
+                    
+                    # Wait for Angular to finish re-rendering the form after New Submission
+                    time.sleep(3)
+
                     # ─── Prior-claim form: the Claim Number is the whole point ───
                     if target_form == form_types.PRIOR_CLAIM:
+                        # The form renders after New Submission, so wait for the
+                        # field rather than assuming it is already there.
+                        FIND_CLAIM_INPUT = """() => {
+                            const norm = t => (t || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                            const wanted = /claim\\s*(number|no\\b|#)/;
+                            const inputs = Array.from(document.querySelectorAll(
+                                'input:not([type=hidden]):not([type=radio]):not([type=checkbox]):not([type=file])'));
+
+                            // 1. A <label for=...> naming the field. This is how
+                            //    the form actually presents it.
+                            for (const lab of document.querySelectorAll('label')) {
+                                if (!wanted.test(norm(lab.textContent))) continue;
+                                const id = lab.getAttribute('for');
+                                if (id) {
+                                    const el = document.getElementById(id);
+                                    if (el && inputs.includes(el)) return el;
+                                }
+                                const inside = lab.querySelector('input');
+                                if (inside) return inside;
+                                // 2. Label and input as siblings in one field group.
+                                let box = lab.parentElement;
+                                for (let up = 0; box && up < 3; up++, box = box.parentElement) {
+                                    const el = box.querySelector(
+                                        'input:not([type=hidden]):not([type=radio]):not([type=checkbox]):not([type=file])');
+                                    if (el) return el;
+                                }
+                            }
+                            // 3. Fall back to the input's own attributes.
+                            for (const el of inputs) {
+                                const hay = [el.name, el.id, el.getAttribute('formcontrolname'),
+                                             el.getAttribute('ng-model'), el.getAttribute('ng-reflect-name'),
+                                             el.getAttribute('placeholder'), el.getAttribute('aria-label')]
+                                            .join(' ').toLowerCase();
+                                if (wanted.test(hay)) return el;
+                            }
+                            return null;
+                        }"""
+
+                        appeared = False
+                        for _try in range(20):
+                            try:
+                                if symplisend_page.evaluate(f"() => !!({FIND_CLAIM_INPUT})()"):
+                                    appeared = True
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(1)
+
                         filled = False
-                        try:
-                            filled = symplisend_page.evaluate("""(num) => {
-                                const inputs = Array.from(document.querySelectorAll('input'));
-                                const labelled = inputs.filter(el => {
-                                    const hay = [el.name, el.id, el.getAttribute('formcontrolname'),
-                                                 el.getAttribute('ng-model'), el.getAttribute('placeholder'),
-                                                 el.getAttribute('aria-label')].join(' ').toLowerCase();
-                                    return /claim\s*(number|no|#)|claimnumber|claimno/.test(hay);
-                                });
-                                const target = labelled[0];
-                                if (!target) return false;
-                                const setter = Object.getOwnPropertyDescriptor(
-                                    window.HTMLInputElement.prototype, 'value').set;
-                                setter.call(target, num);
-                                target.dispatchEvent(new Event('input', { bubbles: true }));
-                                target.dispatchEvent(new Event('change', { bubbles: true }));
-                                target.dispatchEvent(new Event('blur', { bubbles: true }));
-                                return target.value === num;
-                            }""", plan['claim_number'])
-                        except Exception as e:
-                            logger.error(f"❌ Claim Number entry failed for {claim_id}: {e}")
+                        if appeared:
+                            try:
+                                filled = symplisend_page.evaluate("""(args) => {
+                                    const [num, finderSrc] = args;
+                                    const el = eval('(' + finderSrc + ')')();
+                                    if (!el) return false;
+                                    const setter = Object.getOwnPropertyDescriptor(
+                                        window.HTMLInputElement.prototype, 'value').set;
+                                    el.focus();
+                                    setter.call(el, num);
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    return el.value === num;
+                                }""", [plan['claim_number'], FIND_CLAIM_INPUT])
+                            except Exception as e:
+                                logger.error(f"❌ Claim Number entry failed for {claim_id}: {e}")
+                        else:
+                            logger.error(
+                                f"❌ The Claim Number field never appeared on the "
+                                f"{target_form} form for claim {claim_id}.")
 
                         if not filled:
                             # Submitting here would produce exactly the defect
@@ -10448,6 +10538,13 @@ def process_message(message: dict, aws_client: AWSClient):
                             # arriving as a brand-new one.
                             try:
                                 symplisend_page.screenshot(path=f'/tmp/symplisend_no_claimno_{claim_id}.png')
+                                fields = symplisend_page.evaluate("""() => Array.from(
+                                    document.querySelectorAll('input:not([type=hidden])')).map(el => ({
+                                        name: el.name || '', id: el.id || '',
+                                        ph: el.getAttribute('placeholder') || '',
+                                        fc: el.getAttribute('formcontrolname') || '',
+                                        type: el.type || ''}))""")
+                                logger.error(f"   inputs on the page: {fields}")
                             except Exception:
                                 pass
                             logger.error(

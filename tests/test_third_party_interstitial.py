@@ -145,6 +145,56 @@ class ReachingSympliSendIsJudgedByHostname(unittest.TestCase):
         self.assertNotIn("'dashboard' in symplisend_page.url", src)
 
 
+class TheRightTabIsPickedByHostname(unittest.TestCase):
+    """Clicking the link opens several tabs, in no guaranteed order."""
+
+    def test_the_helper_exists(self):
+        self.assertIn('def _find_symplisend_page(', _read(MAIN))
+
+    def test_it_scans_every_tab_rather_than_the_first(self):
+        src = _read(MAIN)
+        i = src.index('def _find_symplisend_page(')
+        block = src[i:i + 1800]
+        self.assertIn('context.pages', block)
+        self.assertIn('urlparse', block)
+
+    def test_navigation_no_longer_trusts_the_first_tab_alone(self):
+        # about:blank opening first is what sent the bot to the wrong page.
+        src = _read(MAIN)
+        self.assertIn('_find_symplisend_page(page.context', src)
+        i = src.index('_find_symplisend_page(page.context')
+        self.assertIn('found or new_page_info.value', src[i:i + 300])
+
+
+class TheFormTypeIsChosenBeforeOpeningTheForm(unittest.TestCase):
+    """New Submission opens whichever type the nav is on."""
+
+    def test_form_selection_comes_first(self):
+        src = _read(MAIN)
+        pick = src.index('Choose the right SympliSend form')
+        open_form = src.index('# Click "New Submission"')
+        self.assertLess(pick, open_form,
+                        'the form type must be set before New Submission opens a form')
+
+    def test_the_claim_number_is_filled_after_the_form_opens(self):
+        src = _read(MAIN)
+        open_form = src.index('# Click "New Submission"')
+        fill = src.index('Prior-claim form: the Claim Number is the whole point')
+        self.assertLess(open_form, fill)
+
+    def test_it_waits_for_the_field_instead_of_assuming_it_is_there(self):
+        src = _read(MAIN)
+        self.assertIn('never appeared on the', src)
+
+    def test_it_finds_the_field_by_its_label(self):
+        # The input carries no useful name; the form labels it "Claim Number".
+        src = _read(MAIN)
+        i = src.index('FIND_CLAIM_INPUT')
+        block = src[i:i + 2200]
+        self.assertIn("querySelectorAll('label')", block)
+        self.assertIn("getAttribute('for')", block)
+
+
 class NotReachingSympliSendAborts(unittest.TestCase):
     def test_the_run_stops_instead_of_failing_every_claim(self):
         # Sixty 10-second timeouts and sixty misleading audit rows is a worse
