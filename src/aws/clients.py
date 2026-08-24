@@ -19,6 +19,23 @@ ROLE_ENV_VAR = {
 }
 
 
+def scan_all(table, **kwargs):
+    """Every item in a DynamoDB table, following pagination.
+
+    A bare `table.scan()` returns at most 1MB and stops there without saying
+    so. On the claims table that was half the rows: the submission step saw
+    706 of 1477 claims and reported "0 ready" while 87 waited on pages it never
+    asked for. Silent truncation in the reassuring direction.
+    """
+    items, page_kwargs = [], dict(kwargs)
+    while True:
+        resp = table.scan(**page_kwargs)
+        items.extend(resp.get('Items', []))
+        if 'LastEvaluatedKey' not in resp:
+            return items
+        page_kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+
+
 class AWSClient:
     def __init__(self):
         self.region = settings.aws_region

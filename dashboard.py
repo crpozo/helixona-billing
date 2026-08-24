@@ -8,6 +8,7 @@ from datetime import datetime
 from flask import Flask, render_template_string, jsonify, request, send_file
 import boto3
 import os
+from src.aws.clients import scan_all
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -1577,31 +1578,14 @@ def client_dashboard():
     return html
 
 
-def _scan_all(table):
-    """Every item in a table, following DynamoDB's pagination.
-
-    A bare `table.scan()` returns at most 1MB and silently stops there. On the
-    claims table that was cutting the dashboard off at roughly half the data —
-    it reported 690 of 1198 claims and called the backlog "100% complete", so
-    the headline number was wrong in the reassuring direction.
-    """
-    items, kwargs = [], {}
-    while True:
-        resp = table.scan(**kwargs)
-        items.extend(resp.get('Items', []))
-        if 'LastEvaluatedKey' not in resp:
-            return items
-        kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
-
-
 @app.route('/api/claims')
 def api_claims():
     try:
         claims_table = dynamodb.Table('helixona-claims')
         tasks_table = dynamodb.Table('helixona-tasks')
 
-        claims = _scan_all(claims_table)
-        tasks = [t for t in _scan_all(tasks_table) if t.get('status') == 'Open']
+        claims = scan_all(claims_table)
+        tasks = [t for t in scan_all(tasks_table) if t.get('status') == 'Open']
 
         # Convert Decimal to int/float for JSON
         for c in claims:
@@ -2122,7 +2106,7 @@ def _linkage_risk(row):
 
 def _load_audit_rows():
     """Fetch and normalise every audit row, newest first."""
-    rows = _scan_all(dynamodb.Table('helixona-submissions'))
+    rows = scan_all(dynamodb.Table('helixona-submissions'))
 
     out = []
     for r in rows:

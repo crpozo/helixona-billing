@@ -21,7 +21,7 @@ import random
 import os
 import subprocess
 from src.utils.logger import get_logger
-from src.aws.clients import AWSClient
+from src.aws.clients import AWSClient, scan_all
 from src.ecw.browser import BrowserManager
 from src.ecw.login import perform_ecw_login
 from src.ecw.claims import process_nightly_bulk_claims
@@ -3806,8 +3806,7 @@ def process_message(message: dict, aws_client: AWSClient):
             if not body.get('skip_auto_chain'):
                 try:
                     claims_table = aws_client.dynamodb.Table('helixona-claims')
-                    scan_result = claims_table.scan()
-                    state1_count = sum(1 for c in scan_result.get('Items', []) if int(c.get('state', 0)) == 1)
+                    state1_count = sum(1 for c in scan_all(claims_table) if int(c.get('state', 0)) == 1)
                     if state1_count > 0:
                         import json as _json
                         aws_client.sqs.send_message(
@@ -9920,8 +9919,7 @@ def process_message(message: dict, aws_client: AWSClient):
         # Step 1: Find claims ready for submission
         claims_table = aws_client.dynamodb.Table('helixona-claims')
         try:
-            scan_result = claims_table.scan()
-            all_claims = scan_result.get('Items', [])
+            all_claims = scan_all(claims_table)
         except Exception as e:
             logger.error(f"Failed to scan claims: {e}")
             return
@@ -10908,9 +10906,8 @@ def process_message(message: dict, aws_client: AWSClient):
             
             # Re-scan for claims that need ECW status update
             try:
-                scan_result = claims_table.scan()
                 submitted_claims = [
-                    item for item in scan_result.get('Items', [])
+                    item for item in scan_all(claims_table)
                     if item.get('symplisend_submitted') and not item.get('ecw_status_updated')
                 ]
                 if test_claim_id:
@@ -10982,9 +10979,8 @@ def process_message(message: dict, aws_client: AWSClient):
         claims_table = aws_client.dynamodb.Table('helixona-claims')
         
         try:
-            scan_result = claims_table.scan()
             submitted_claims = [
-                item for item in scan_result.get('Items', [])
+                item for item in scan_all(claims_table)
                 if item.get('symplisend_submitted') and not item.get('ecw_status_updated')
             ]
             if test_claim_id:
