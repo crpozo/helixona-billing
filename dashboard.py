@@ -2534,7 +2534,35 @@ def _load_audit_rows():
         out.append(r)
 
     out.sort(key=lambda r: r.get('submitted_at_utc', ''), reverse=True)
+    _mark_superseded(out)
     return out
+
+
+def _mark_superseded(rows):
+    """Flag failed attempts that a later successful submission resolved.
+
+    A claim that failed at 15:24 and went out cleanly at 15:49 does not have a
+    problem, and showing the failure alongside the success reads as though it
+    does. The row is kept — an append-only log that quietly drops evidence is
+    not an audit log — but it is marked so the default view can leave it out.
+
+    Only *earlier* failures count. A failure after the last success is a live
+    problem and stays visible.
+    """
+    latest_success = {}
+    for r in rows:
+        if r.get('outcome') == 'submitted':
+            cid = str(r.get('claim_id', ''))
+            when = r.get('submitted_at_utc', '')
+            if when > latest_success.get(cid, ''):
+                latest_success[cid] = when
+
+    for r in rows:
+        r['superseded'] = bool(
+            r.get('outcome') != 'submitted'
+            and r.get('submitted_at_utc', '')
+            < latest_success.get(str(r.get('claim_id', '')), '')
+        )
 
 
 def _filter_audit_rows(rows):
@@ -2553,8 +2581,12 @@ def _filter_audit_rows(rows):
     outcome = (request.args.get('outcome') or '').strip().lower()
     flag = (request.args.get('flag') or '').strip().lower()
     sub_type = (request.args.get('type') or '').strip().lower()
+    # A failed attempt that a later submission resolved is hidden by default.
+    show_superseded = (request.args.get('superseded') or '').strip() in ('1', 'true', 'yes')
 
     def keep(r):
+        if r.get('superseded') and not show_superseded:
+            return False
         if sub_type and sub_type not in str(r.get('claim_submission_type', '')).lower():
             return False
         if q:
@@ -2801,7 +2833,7 @@ tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
 
 <script>
 const PAGE = 60;
-let ALL = [], SHOWN = [], limit = PAGE, flag = '';
+let ALL = [], SHOWN = [], limit = PAGE, flag = '', showSuperseded = false;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -2815,6 +2847,7 @@ function qs() {
     if (v) p.set(id, v);
   }
   if (flag) p.set('flag', flag);
+  if (showSuperseded) p.set('superseded', '1');
   return p.toString();
 }
 
@@ -2848,9 +2881,10 @@ function tiles() {
 }
 
 function setFlag(f) { flag = (flag === f) ? '' : f; limit = PAGE; apply(); }
+function toggleSuperseded() { showSuperseded = !showSuperseded; limit = PAGE; apply(); }
 function reset() {
   for (const id of ['q','from','to','type','outcome']) document.getElementById(id).value = '';
-  flag = ''; limit = PAGE; apply();
+  flag = ''; showSuperseded = false; limit = PAGE; apply();
 }
 
 function rowHtml(r, i) {
@@ -2953,8 +2987,13 @@ function render() {
 
   const active = flag === 'unlinked' ? ' <span class="chip" onclick="setFlag(\\'unlinked\\')">not attached to prior claim &times;</span>'
               : flag === 'no-fln' ? ' <span class="chip" onclick="setFlag(\\'no-fln\\')">no payer acknowledgement &times;</span>' : '';
+  // Never hide rows silently — an audit log has to say what it is leaving out.
+  const hidden = showSuperseded ? 0 : ALL.filter(r => r.superseded).length;
+  const supLabel = showSuperseded
+    ? ` <span class="chip" onclick="toggleSuperseded()">including retried attempts &times;</span>`
+    : (hidden ? ` <span class="chip" onclick="toggleSuperseded()">${hidden} retried attempt${hidden === 1 ? '' : 's'} hidden — show</span>` : '');
   document.getElementById('count').innerHTML =
-    `Showing <b>${slice.length.toLocaleString()}</b> of <b>${SHOWN.length.toLocaleString()}</b> submissions${active}`;
+    `Showing <b>${slice.length.toLocaleString()}</b> of <b>${SHOWN.length.toLocaleString()}</b> submissions${active}${supLabel}`;
 }
 
 function showMore() { limit += PAGE; render(); }
@@ -2971,6 +3010,8 @@ function showMore() { limit += PAGE; render(); }
 // The server-side filters stay exactly as they were; the CSV export and the
 // API still use them.
 function matches(r) {
+  // A failure a later submission already resolved is not a problem to show.
+  if (r.superseded && !showSuperseded) return false;
   const q = document.getElementById('q').value.trim().toLowerCase();
   if (q) {
     const hay = [r.patient_name, r.claim_id, r.blueshield_claim_number,
@@ -3023,7 +3064,7 @@ for (const id of ['from','to']) {
 // pick up submissions made since.
 (async function init() {
   try {
-    const res = await fetch('/api/audit-log');
+    const res = await fetch('/api/audit-log?superseded=1');
     const data = await res.json();
     ALL = data.rows || [];
     if (data.error) {
