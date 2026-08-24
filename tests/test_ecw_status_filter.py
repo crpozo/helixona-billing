@@ -42,6 +42,7 @@ class EachBotExtractsItsOwnStatus(unittest.TestCase):
     def test_an_unknown_role_falls_back_to_first_time(self):
         # Conservative: no new class of claim enters the pipeline by surprise.
         self.assertEqual(ecw_status_for('typo_role'), DEFAULT_ECW_STATUS)
+        self.assertEqual(ecw_status_for('iv_corrections'), DEFAULT_ECW_STATUS)
         self.assertEqual(DEFAULT_ECW_STATUS, 'Ready to Submit to Symplisend')
 
     def test_statuses_are_exact_ecw_labels(self):

@@ -45,13 +45,8 @@ BOT_ROUTING = {
         'label': 'Blue Shield Resubmissions',
         'novnc_port': 6081,
     },
-    'iv_corrections': {
-        'queue_url': SQS_URL_IV,
-        'service': 'helixona-agent-iv',
-        'label': 'IV Fix Coding',
-        'novnc_port': 6082,
-    },
 }
+
 
 
 def _bot_from_request():
@@ -306,12 +301,6 @@ tbody tr:last-child td{border-bottom:none}
 .log-line.error{color:var(--bad)}
 
 /* fix coding ivs files */
-.fix-ivs-run{background:var(--card);border:1px solid var(--bdr);border-radius:11px;padding:10px 12px;margin-bottom:8px;transition:all .15s}
-.fix-ivs-run:hover{border-color:var(--bdr2)}
-.fix-ivs-run-id{font-size:10px;color:var(--text-muted);margin-bottom:7px;display:flex;align-items:center;gap:5px}
-.fix-ivs-file{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;margin-top:5px;border-radius:7px;color:var(--text-primary);font-size:11px;border:1px solid var(--bdr);background:var(--bg2);transition:all .15s}
-.fix-ivs-file:hover{border-color:var(--accent);background:var(--card2)}
-.fix-ivs-size{color:var(--text-muted);font-family:monospace;font-size:10px}
 
 /* toast */
 .toast{position:fixed;bottom:30px;right:30px;background:var(--card);border:1px solid var(--bdr);padding:13px 22px;border-radius:11px;font-size:12px;font-weight:500;color:var(--text-primary);opacity:0;transform:translateY(20px);transition:all .3s;pointer-events:none;z-index:1000;box-shadow:0 10px 30px rgba(0,0,0,.5)}
@@ -406,7 +395,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="tb-r">
         <div class="status-badge"><div class="status-dot"></div>Agent Running · 54.189.175.233</div>
         <span style="font-size:10px;color:var(--text-muted)" id="ts">—</span>
-        <div class="icbtn" onclick="loadData();loadLogs();loadFixIvsFiles()" title="Refresh">↻</div>
+        <div class="icbtn" onclick="loadData();loadLogs()" title="Refresh">↻</div>
       </div>
     </div>
 
@@ -414,7 +403,6 @@ tbody tr:last-child td{border-bottom:none}
     <div class="subtabs" id="bot-tabs">
       <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">🛡️ Blue Shield Submissions</div>
       <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">♻️ Blue Shield Resubmissions</div>
-      <div class="subtab" data-bot="iv_corrections" onclick="setActiveBot('iv_corrections')">🩺 IV Fix Coding</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -429,22 +417,6 @@ tbody tr:last-child td{border-bottom:none}
       <div class="hero-progress"><div class="hero-progress-fill" id="hero-progress-fill"></div></div>
     </div>
 
-    <!-- HERO KPI: IV Fix Coding progress (Bot 2) -->
-    <div class="hero-kpi" id="hero-iv" style="display:none">
-      <div class="hero-kpi-top">
-        <div class="hero-kpi-headline">
-          <span class="hero-num" id="iv-hero-total">—</span>
-          <span class="hero-denom"> IVs pending fixing</span>
-          <span id="iv-not-enriched" style="display:none;margin-left:10px;font-size:11px;padding:3px 8px;border-radius:12px;background:rgba(239,68,68,.15);color:var(--bad);border:1px solid rgba(239,68,68,.3)">⚠ Latest run not enriched — showing all pending claims</span>
-        </div>
-        <div class="hero-kpi-pct">
-          <strong id="iv-hero-pending">—</strong> Pending ·
-          <strong id="iv-hero-errors">—</strong> Pending With Errors ·
-          <span id="iv-hero-run" style="color:var(--text-muted)">Last run: —</span>
-        </div>
-      </div>
-      <div class="hero-progress"><div class="hero-progress-fill" id="iv-hero-progress-fill" style="background:linear-gradient(90deg,var(--accent),var(--bad))"></div></div>
-    </div>
 
     <!-- MAIN: claims + admin rail -->
     <div class="main">
@@ -472,24 +444,6 @@ tbody tr:last-child td{border-bottom:none}
       </div>
 
       <!-- IV CLAIMS TABLE (Bot 2 — Fix Coding IVs) -->
-      <div class="claims-section" id="claims-section-iv" style="display:none">
-        <div class="section-title">
-          🩺 IV Claims to Fix
-          <span id="iv-claims-run" style="font-weight:500;color:var(--text-muted);margin-left:8px;font-size:12px;"></span>
-          <button class="btn btn-refresh" onclick="loadIvClaims()">↻ Refresh</button>
-          <span id="iv-claims-meta" style="font-size:11px;color:var(--text-muted);margin-left:auto"></span>
-        </div>
-        <div class="claims-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Claim #</th><th>Patient</th><th>DOS</th><th>Payer</th><th>Charges</th><th>Balance</th><th>Status</th><th>Provider</th>
-              </tr>
-            </thead>
-            <tbody id="iv-claims-body"><tr><td colspan="8" class="empty-state">Loading IV claims…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
 
       <!-- RIGHT RAIL -->
       <div class="task-panel">
@@ -515,12 +469,6 @@ tbody tr:last-child td{border-bottom:none}
               <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
               <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
             </optgroup>
-            <optgroup label="🩺 IV Fix Coding Bot" data-bot="iv_corrections">
-              <option value="fix_coding_ivs__all" data-bot="iv_corrections">🔄 All Stages</option>
-              <option value="fix_coding_ivs__1" data-bot="iv_corrections">1️⃣ Create Encounter Claims</option>
-              <option value="fix_coding_ivs__2" data-bot="iv_corrections">2️⃣ Delete Test Claims</option>
-              <option value="fix_coding_ivs__3" data-bot="iv_corrections">3️⃣ Generate Excel Documentation</option>
-            </optgroup>
           </select>
 
           <div id="task-steps" class="task-steps"></div>
@@ -542,10 +490,7 @@ tbody tr:last-child td{border-bottom:none}
         <!-- REPORTS -->
         <div class="task-card" id="reports-card">
           <h3>📊 Fix Coding IVs — Saved Reports
-            <button class="btn btn-refresh" style="float:right;margin-top:-2px" onclick="loadFixIvsFiles()">↻</button>
-          </h3>
-          <div id="fix-ivs-files">
-            <div class="empty-state" style="padding:14px">Loading…</div>
+                      </h3>
           </div>
           <button class="btn" style="background:rgba(239,68,68,.1);color:var(--bad);border:1px solid rgba(239,68,68,.3);margin-top:8px;width:100%;padding:10px;border-radius:8px;font-weight:600;font-size:11.5px;cursor:pointer" onclick="deleteAllFixIvsFiles()">🗑️ Eliminar todos los saved reports</button>
         </div>
@@ -597,7 +542,7 @@ tbody tr:last-child td{border-bottom:none}
 
 <script>
 // ═══════════════ Augmentations on top of the original dashboard JS ═══════════════
-// Wraps loadData/loadFixIvsFiles to also render hero cards, sidebar list,
+// Wraps loadData to also render hero cards, sidebar list,
 // nav counts and refreshed timestamp.
 window.scrollToEl = function(sel){
   const el = document.querySelector(sel);
@@ -753,293 +698,6 @@ window.scrollToEl = function(sel){
             ecw_status_update: JSON.stringify({
                 note: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims."
             }, null, 2),
-            fix_coding_ivs__all: JSON.stringify({
-                note: "Runs Stage 1 (create encounter claims) → Stage 2 (delete test claims) → Stage 3 (generate Excel)."
-            }, null, 2),
-            fix_coding_ivs__1: JSON.stringify({
-                note: "Stage 1 — Encounters page: filter Progress Notes Done/Locked, click Claims IPE All to create encounter claims."
-            }, null, 2),
-            fix_coding_ivs__2: JSON.stringify({
-                note: "Stage 2 — Find claims whose patient name contains 'test' and delete them from ECW."
-            }, null, 2),
-            fix_coding_ivs__3: JSON.stringify({
-                note: "Stage 3 — Pull Pending and Pending With Errors claims from ECW, combine into a single Excel, upload to S3."
-            }, null, 2)
-        };
-
-        // Maps the dropdown value into the actual SQS payload {task_type, stage?}
-        const TASK_DISPATCH = {
-            fix_coding_ivs__all: { task_type: 'fix_coding_ivs', stage: 'all' },
-            fix_coding_ivs__1:   { task_type: 'fix_coding_ivs', stage: '1' },
-            fix_coding_ivs__2:   { task_type: 'fix_coding_ivs', stage: '2' },
-            fix_coding_ivs__3:   { task_type: 'fix_coding_ivs', stage: '3' }
-        };
-
-        const TASK_DESCRIPTIONS = {
-            bs_missing_docs: {
-                title: 'ECW obtain claims documentation',
-                desc: 'Runs the full pipeline: extract claims from ECW, generate HCFA forms, capture Progress Notes and submit Missing Documentation cases to Blue Shield.',
-                steps: []
-            },
-            blueshield_submissions: {
-                title: 'Blueshield Submissions',
-                desc: 'Uploads claim documentation (HCFA, Progress Notes, Encounter File) to Blue Shield via SympliSend.',
-                steps: []
-            },
-            ecw_status_update: {
-                title: 'ECW Status Update',
-                desc: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims.",
-                steps: []
-            },
-            fix_coding_ivs__all: {
-                title: 'Fix Coding IVs — All Stages',
-                desc: 'Runs <strong>Stage 1</strong> (create encounter claims) → <strong>Stage 2</strong> (delete test claims) → <strong>Stage 3</strong> (generate Excel) in a single session.',
-                steps: [
-                    '<strong>Stage 1</strong>: Encounters → <em>Progress Notes Done/Locked</em> → <strong>Claims IPE All</strong> to create encounter claims.',
-                    '<strong>Stage 2</strong>: scan the Claims table and delete every claim whose patient name contains <code>test</code>.',
-                    '<strong>Stage 3</strong>: pull <em>Pending</em> + <em>Pending With Errors</em> Excels (now clean of test claims), combine, upload to S3.'
-                ]
-            },
-            fix_coding_ivs__1: {
-                title: 'Fix Coding IVs — Stage 1: Create Encounter Claims',
-                desc: 'On the Encounters page, run <strong>Claims IPE All</strong> to create encounter claims for all Progress Notes that are Done/Locked.',
-                steps: [
-                    'Login to ECW.',
-                    'Billing → <strong>Encounters</strong>: dates <code>07/01/2025</code> → today, select <em>Progress Notes Done/Locked</em>, click <code>#btnFilter</code>.',
-                    'Click <strong>Claims IPE All</strong> (<code>#btnClaimIPEAll</code>). Click <em>Yes</em> on the confirm dialog, then close the result modal with the X (<code>#ClaimIPEBtn1</code>). If "No encounters selected" appears, click OK and continue.'
-                ]
-            },
-            fix_coding_ivs__2: {
-                title: 'Fix Coding IVs — Stage 2: Delete Test Claims',
-                desc: 'Scan the Claims table for entries whose patient name contains <code>test</code> and delete them.',
-                steps: [
-                    'Navigate to Billing → Claims.',
-                    'For each status in [<em>Pending With Errors</em>, <em>Pending</em>]: set status filter + dates <code>07/01/2025</code> → today, click <code>#btnclaimlookup</code>.',
-                    'For every row whose patient name contains <code>test</code>: select the row checkbox → Claims dropdown (<code>#claimLookupBtn10</code>) → <strong>Delete Claim</strong> → confirm <strong>Yes</strong>.',
-                    'Repeat until no more test claims appear in the table.'
-                ]
-            },
-            fix_coding_ivs__3: {
-                title: 'Fix Coding IVs — Stage 3: Generate Excel Documentation',
-                desc: 'Pull <strong>Pending</strong> and <strong>Pending With Errors</strong> claims from ECW and combine them into a single Excel.',
-                steps: [
-                    'Billing → <strong>Claims</strong>: filter <em>Pending With Errors</em>, dates <code>07/01/2025</code> → today, click <code>#btnclaimlookup</code>. Then Billing dropdown → <strong>View Claims Report → EXCEL</strong>.',
-                    'Repeat the previous step for <em>Pending</em> status.',
-                    'Combine the two Excels and upload to S3 under <code>fix_coding_ivs/&lt;timestamp&gt;/</code>.'
-                ]
-            }
-        };
-
-        function updateTaskTemplate() {
-            const type = document.getElementById('task-type').value;
-            document.getElementById('task-payload').value = TASK_TEMPLATES[type] || '{}';
-            renderTaskSteps(type);
-        }
-
-        function renderTaskSteps(type) {
-            const el = document.getElementById('task-steps');
-            const info = TASK_DESCRIPTIONS[type];
-            if (!el || !info) { if (el) el.innerHTML = ''; return; }
-            const stepsHtml = (info.steps && info.steps.length)
-                ? `<ol>${info.steps.map(s => `<li>${s}</li>`).join('')}</ol>`
-                : '';
-            el.innerHTML = `
-                <div class="task-steps-title">📋 ${info.title}</div>
-                <div class="task-steps-desc">${info.desc}</div>
-                ${stepsHtml}
-            `;
-        }
-
-        // Active bot tab. Drives which SQS queue / systemd service the dashboard talks to.
-        window.activeBot = 'submissions';
-
-        const BOT_NOVNC = {submissions: 6080, resubmissions: 6081, iv_corrections: 6082};
-
-        function setActiveBot(bot) {
-            if (!(bot in BOT_NOVNC)) bot = 'submissions';
-            window.activeBot = bot;
-            // Each bot runs on its own X display behind its own noVNC port —
-            // pointing every tab at 6080 would show the submissions bot's
-            // screen while claiming to show another's.
-            const vnc = document.getElementById('novnc-link');
-            if (vnc) vnc.href = `http://54.189.175.233:${BOT_NOVNC[bot]}/vnc.html`;
-            // Tab styling
-            document.querySelectorAll('#bot-tabs .subtab').forEach(el => {
-                el.classList.toggle('on', el.dataset.bot === bot);
-            });
-            // Show/hide task-type optgroups + options
-            document.querySelectorAll('#task-type [data-bot]').forEach(el => {
-                const owners = (el.dataset.bot || '').split(/\s+/).filter(Boolean);
-                const mine = owners.includes(bot);
-                el.hidden = !mine;
-                el.disabled = !mine;
-            });
-            // Pick the first visible option for this bot
-            const sel = document.getElementById('task-type');
-            const firstVisible = Array.from(sel.options).find(o => !o.hidden);
-            if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
-            // Toggle hero KPI + claims table per bot. Resubmissions reuse the
-            // submissions views — same claims table, filtered to its own work.
-            const isIv = (bot === 'iv_corrections');
-            const heroSub = document.getElementById('hero-submissions');
-            const heroIv  = document.getElementById('hero-iv');
-            const tblSub  = document.getElementById('claims-section-submissions');
-            const tblIv   = document.getElementById('claims-section-iv');
-            if (heroSub) heroSub.style.display = isIv ? 'none' : '';
-            if (heroIv)  heroIv.style.display  = isIv ? '' : 'none';
-            if (tblSub)  tblSub.style.display  = isIv ? 'none' : '';
-            if (tblIv)   tblIv.style.display   = isIv ? '' : 'none';
-            // Load the right data set
-            if (isIv) loadIvClaims();
-            else {
-                if (typeof loadCounts === 'function') loadCounts();
-                if (typeof loadData === 'function') loadData();
-            }
-            // Refresh logs for the new service
-            clearLogs('switched to ' + bot);
-            loadLogs();
-        }
-
-        // Pulls latest fix_coding_ivs run from S3 and renders the IV claims table + KPI.
-        async function loadIvClaims() {
-            try {
-                const res = await fetch('/api/iv-claims');
-                const data = await res.json();
-                const body = document.getElementById('iv-claims-body');
-                const k = data.kpi || {total:0, pending:0, pending_with_errors:0};
-                // KPI
-                const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-                setText('iv-hero-total', k.total);
-                setText('iv-hero-pending', k.pending);
-                setText('iv-hero-errors', k.pending_with_errors);
-                const warn = document.getElementById('iv-not-enriched');
-                if (warn) warn.style.display = (data.enriched === false) ? 'inline-block' : 'none';
-                const fill = document.getElementById('iv-hero-progress-fill');
-                if (fill) fill.style.width = (k.total === 0 ? '0' : '100') + '%';
-                // Section subtitle
-                const runEl = document.getElementById('iv-claims-run');
-                const runHero = document.getElementById('iv-hero-run');
-                if (data.run) {
-                    const t = data.run; // YYYYMMDD_HHMMSS
-                    const human = `${t.slice(0,4)}-${t.slice(4,6)}-${t.slice(6,8)} ${t.slice(9,11)}:${t.slice(11,13)}`;
-                    if (runEl)   runEl.textContent   = '· Run ' + human;
-                    if (runHero) runHero.textContent = 'Last run: ' + human;
-                } else {
-                    if (runEl)   runEl.textContent   = '· No runs yet';
-                    if (runHero) runHero.textContent = 'Last run: —';
-                }
-                const meta = document.getElementById('iv-claims-meta');
-                if (meta) meta.textContent = `${(data.claims||[]).length} claims`;
-                // Table
-                if (!body) return;
-                if (!data.claims || data.claims.length === 0) {
-                    body.innerHTML = '<tr><td colspan="8" class="empty-state">No IV claims found. Run Stage 3 to generate the latest Excel.</td></tr>';
-                    return;
-                }
-                const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-                const rows = data.claims.map(c => {
-                    const statusClass = (c.status === 'Pending With Errors') ? 'revision' : 'ready';
-                    return `<tr>
-                        <td>${esc(c.claim_no)}</td>
-                        <td>${esc(c.patient)}</td>
-                        <td>${esc(c.dos)}</td>
-                        <td>${esc(c.payer)}</td>
-                        <td>${esc(c.charges)}</td>
-                        <td>${esc(c.balance)}</td>
-                        <td><span class="state-pill ${statusClass}">${esc(c.status)}</span></td>
-                        <td>${esc(c.provider)}</td>
-                    </tr>`;
-                }).join('');
-                body.innerHTML = rows;
-            } catch (e) {
-                const body = document.getElementById('iv-claims-body');
-                if (body) body.innerHTML = `<tr><td colspan="8" class="empty-state">Failed to load IV claims: ${e.message}</td></tr>`;
-            }
-        }
-
-        async function sendTask() {
-            const selected = document.getElementById('task-type').value;
-            let payload;
-            try {
-                payload = JSON.parse(document.getElementById('task-payload').value);
-            } catch (e) {
-                showToast('Invalid JSON payload', 'error');
-                return;
-            }
-            // Translate the dropdown value into {task_type, stage?} via TASK_DISPATCH if mapped,
-            // otherwise the dropdown value IS the task_type.
-            const dispatch = TASK_DISPATCH[selected];
-            if (dispatch) {
-                payload.task_type = dispatch.task_type;
-                if (dispatch.stage !== undefined) payload.stage = dispatch.stage;
-            } else {
-                payload.task_type = selected;
-            }
-            // Add test claim ID if specified
-            const testClaimId = (document.getElementById('test-claim-id').value || '').trim();
-            if (testClaimId) {
-                payload.test_claim_id = testClaimId;
-                payload.testing_mode = true;
-            }
-            payload.bot = window.activeBot;
-
-            const res = await fetch('/api/send-task', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-            if (data.success) {
-                showToast('Task sent to SQS ✓', 'success');
-                // New run starting — wipe the panel so this run's logs are not
-                // visually mixed with the previous run's output.
-                clearLogs('new ' + (payload.task_type || 'task') + ' run');
-                setTimeout(loadLogs, 3000);
-            } else {
-                showToast('Failed: ' + data.error, 'error');
-            }
-        }
-
-        async function deleteAllClaims() {
-            if (!confirm('⚠️ DELETE all claims from the database? This cannot be undone. The next pipeline run will rediscover claims from ECW.')) return;
-            try {
-                const res = await fetch('/api/delete-all-claims', { method: 'POST' });
-                const data = await res.json();
-                if (data.success) {
-                    showToast(data.message + ' \\u2713', 'success');
-                    setTimeout(loadData, 500);
-                } else {
-                    showToast('Delete failed: ' + data.error, 'error');
-                }
-            } catch (e) {
-                showToast('Delete failed: ' + e.message, 'error');
-            }
-        }
-
-        // ── Stage classification for each claim ──
-        function getStageKey(state) {
-            for (const [key, stage] of Object.entries(PIPELINE_STAGES)) {
-                if (stage.states.includes(state)) return key;
-            }
-            return 'documentation';
-        }
-
-        function getStagePill(state) {
-            const key = getStageKey(state);
-            const label = PIPELINE_STAGES[key]?.label || 'Unknown';
-            return `<span class="state-pill ${key}">${label}</span>`;
-        }
-
-        // Manual override: flag a claim as not needing a Progress Note (e.g.,
-        // diagnostic-only CPT mix). Posts to /api/claim/<cid>/skip_progress_note.
-        async function skipProgressNote(claimId, skip) {
-            const action = skip ? 'mark as NOT needing a Progress Note' : 'undo the override';
-            if (!confirm(`Claim ${claimId}: ${action}?`)) return;
-            try {
-                const res = await fetch(`/api/claim/${claimId}/skip_progress_note`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ skip: skip }),
                 });
                 const data = await res.json();
                 if (!res.ok) { alert('Failed: ' + (data.error || res.status)); return; }
@@ -1136,7 +794,6 @@ window.scrollToEl = function(sel){
         }
 
         async function loadCounts() {
-            if (window.activeBot === 'iv_corrections') return;  // its own KPI
             try {
                 const res = await fetch('/api/claim-counts');
                 const data = await res.json();
@@ -1732,7 +1389,6 @@ window.scrollToEl = function(sel){
                 const data = await res.json();
                 if (data.success) {
                     showToast(`🗑️ ${data.deleted} archivo(s) eliminado(s)`, 'success');
-                    loadFixIvsFiles();
                 } else {
                     showToast(`Error: ${data.error || 'unknown'}`, 'error');
                 }
@@ -1741,44 +1397,13 @@ window.scrollToEl = function(sel){
             }
         }
 
-        async function loadFixIvsFiles() {
-            const wrap = document.getElementById('fix-ivs-files');
-            if (!wrap) return;
-            try {
-                const res = await fetch('/api/fix-coding-ivs-files');
-                const data = await res.json();
-                if (!data.success) {
-                    wrap.innerHTML = `<div class="empty-state" style="padding:16px;">${data.error || 'Failed to load'}</div>`;
-                    return;
-                }
-                if (!data.runs || data.runs.length === 0) {
-                    wrap.innerHTML = `<div class="empty-state" style="padding:16px;">No reports yet. Run the "Fix Coding IVs" task to generate Excel files.</div>`;
-                    return;
-                }
-                const html = data.runs.slice(0, 8).map(run => {
-                    const files = run.files.map(f => `
-                        <a href="${f.url}" target="_blank" class="fix-ivs-file" download>
-                            <span>📄 ${f.name}</span>
-                            <span class="fix-ivs-size">${_fmtBytes(f.size)}</span>
-                        </a>`).join('');
-                    return `
-                        <div class="fix-ivs-run">
-                            <div class="fix-ivs-run-id">🕒 ${_fmtRunId(run.run_id)}</div>
-                            ${files}
-                        </div>`;
-                }).join('');
-                wrap.innerHTML = html;
-            } catch (e) {
-                wrap.innerHTML = `<div class="empty-state" style="padding:16px;">Error: ${e.message}</div>`;
-            }
-        }
+        
 
         // Auto-refresh
         updateTaskTemplate();
         loadData();
         loadLogs();
         loadBSClaims();
-        loadFixIvsFiles();
         // The headline counter polls a counts-only endpoint so it keeps up with
         // the bot; the full claims table costs ~3MB a call, so it refreshes on
         // a slower beat.
@@ -1786,7 +1411,6 @@ window.scrollToEl = function(sel){
         setInterval(loadData, 15000);
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
-        setInterval(loadFixIvsFiles, 30000);
     </script>
 </body>
 </html>
@@ -2286,166 +1910,6 @@ def api_stop_agent():
             'message': 'Agent stopped. SQS queue purged.',
             'output': result.stdout + result.stderr
         })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-
-@app.route('/api/fix-coding-ivs-files')
-def api_fix_coding_ivs_files():
-    """List Excel files saved under fix_coding_ivs/ in S3, grouped by run timestamp."""
-    try:
-        s3 = boto3.client('s3', region_name='us-west-2')
-        bucket = 'helixona-claims-docs-eb2f8e3c'
-        prefix = 'fix_coding_ivs/'
-        paginator = s3.get_paginator('list_objects_v2')
-        runs = {}
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for obj in page.get('Contents', []):
-                key = obj['Key']
-                parts = key[len(prefix):].split('/', 1)
-                if len(parts) != 2 or not parts[1]:
-                    continue
-                run_id, filename = parts
-                presigned = s3.generate_presigned_url(
-                    'get_object',
-                    Params={'Bucket': bucket, 'Key': key, 'ResponseContentDisposition': f'attachment; filename="{filename}"'},
-                    ExpiresIn=3600
-                )
-                runs.setdefault(run_id, []).append({
-                    'name': filename,
-                    'key': key,
-                    'size': obj['Size'],
-                    'last_modified': obj['LastModified'].isoformat(),
-                    'url': presigned,
-                })
-        # Sort runs newest-first by run_id (which is a timestamp like YYYYMMDD_HHMMSS)
-        ordered = sorted(runs.items(), key=lambda kv: kv[0], reverse=True)
-        return jsonify({
-            'success': True,
-            'runs': [{'run_id': rid, 'files': sorted(files, key=lambda f: f['name'])} for rid, files in ordered]
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'runs': []})
-
-
-@app.route('/api/iv-claims')
-def api_iv_claims():
-    """Parses the most recent fix_coding_ivs combined.xlsx in S3 and returns
-    each claim plus headline KPIs for the IV Fix Coding tab."""
-    try:
-        import io
-        from openpyxl import load_workbook
-        s3 = boto3.client('s3', region_name='us-west-2')
-        bucket = 'helixona-claims-docs-eb2f8e3c'
-        prefix = 'fix_coding_ivs/'
-        paginator = s3.get_paginator('list_objects_v2')
-        latest_run = None
-        latest_combined_key = None
-        latest_modified = None
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for obj in page.get('Contents', []):
-                key = obj['Key']
-                if not key.endswith('/combined.xlsx'):
-                    continue
-                parts = key[len(prefix):].split('/', 1)
-                if len(parts) != 2:
-                    continue
-                run_id = parts[0]
-                if latest_run is None or run_id > latest_run:
-                    latest_run = run_id
-                    latest_combined_key = key
-                    latest_modified = obj['LastModified']
-        if not latest_combined_key:
-            return jsonify({'success': True, 'run': None, 'kpi': {'total': 0, 'pending': 0, 'pending_with_errors': 0}, 'claims': []})
-
-        obj = s3.get_object(Bucket=bucket, Key=latest_combined_key)
-        wb = load_workbook(io.BytesIO(obj['Body'].read()), data_only=True)
-        ws = wb[wb.sheetnames[0]]
-        headers = [c.value for c in ws[1]]
-        # Build header → column index (Excel has a leading None column; skip Nones)
-        idx = {h: i for i, h in enumerate(headers) if h}
-
-        def cell(row, key):
-            i = idx.get(key)
-            return row[i] if i is not None and i < len(row) else None
-
-        # CLAIM_TYPE column is added by Stage 3's enrichment step. If present we
-        # filter to IVs only; if absent (older runs) we return all rows with an
-        # `enriched: false` flag so the UI can warn the user.
-        enriched = 'CLAIM_TYPE' in idx
-
-        claims = []
-        pending = 0
-        pending_with_errors = 0
-        unknown_count = 0
-        other_count = 0
-        for r in range(2, ws.max_row + 1):
-            row = [c.value for c in ws[r]]
-            claim_no = cell(row, 'CLAIMS#')
-            if claim_no is None:
-                continue
-            ctype = (cell(row, 'CLAIM_TYPE') or '').strip() if enriched else ''
-            if enriched:
-                if ctype == 'IV':
-                    pass  # keep
-                else:
-                    if ctype == 'Unknown':
-                        unknown_count += 1
-                    else:
-                        other_count += 1
-                    continue
-            status = cell(row, 'STATUS') or ''
-            if status == 'Pending With Errors':
-                pending_with_errors += 1
-            elif status == 'Pending':
-                pending += 1
-            claims.append({
-                'claim_no': str(claim_no),
-                'patient': cell(row, 'PATIENT') or '',
-                'dos': cell(row, 'SERVICE DATE') or '',
-                'charges': cell(row, 'CHARGES') or '',
-                'payer': cell(row, 'PAYER') or '',
-                'status': status,
-                'balance': cell(row, 'Balance') or '',
-                'provider': cell(row, 'Provider Name') or '',
-            })
-        return jsonify({
-            'success': True,
-            'run': latest_run,
-            'run_at': latest_modified.isoformat() if latest_modified else None,
-            'enriched': enriched,
-            'kpi': {
-                'total': len(claims),
-                'pending': pending,
-                'pending_with_errors': pending_with_errors,
-                'excluded_other': other_count,
-                'excluded_unknown': unknown_count,
-            },
-            'claims': claims,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'claims': []})
-
-
-@app.route('/api/delete-fix-coding-ivs-files', methods=['POST'])
-def api_delete_fix_coding_ivs_files():
-    """Delete all objects under fix_coding_ivs/ in S3."""
-    try:
-        s3 = boto3.client('s3', region_name='us-west-2')
-        bucket = 'helixona-claims-docs-eb2f8e3c'
-        prefix = 'fix_coding_ivs/'
-        paginator = s3.get_paginator('list_objects_v2')
-        deleted = 0
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            keys = [{'Key': obj['Key']} for obj in page.get('Contents', [])]
-            if not keys:
-                continue
-            # delete_objects accepts up to 1000 keys per call
-            for i in range(0, len(keys), 1000):
-                batch = keys[i:i+1000]
-                s3.delete_objects(Bucket=bucket, Delete={'Objects': batch, 'Quiet': True})
-                deleted += len(batch)
-        return jsonify({'success': True, 'deleted': deleted})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 

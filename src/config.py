@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     #   role             unit                   display  noVNC  queue
     #   submissions      helixona-agent         :99      6080   sqs_queue_url
     #   resubmissions    helixona-agent-resub   :100     6081   sqs_queue_url_resub
-    #   iv_corrections   helixona-agent-iv      :101     6082   sqs_queue_url_iv
     bot_role: str = "submissions"
 
     # Browser config

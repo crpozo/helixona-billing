@@ -20,9 +20,8 @@ logger = get_logger(__name__)
 # other roles get their own; browser-profile-resubmissions already exists on
 # the host from when the resubmissions bot last ran.
 _PROFILE_BY_ROLE = {
-    'submissions':    '/opt/helixona-agent/browser-profile',
-    'resubmissions':  '/opt/helixona-agent/browser-profile-resubmissions',
-    'iv_corrections': '/opt/helixona-agent/browser-profile-iv',
+    'submissions':   '/opt/helixona-agent/browser-profile',
+    'resubmissions': '/opt/helixona-agent/browser-profile-resubmissions',
 }
 
 

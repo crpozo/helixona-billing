@@ -1,11 +1,11 @@
 """Each bot must consume its own queue and drive its own browser.
 
-Three bots run side by side — submissions, resubmissions and IV fix coding —
-each with its own systemd unit, X display, noVNC port, SQS queue and Chrome
-profile. The routing used to have a fallback: anything that was not
-'iv_corrections' polled the submissions queue, so the resubmissions bot
-silently competed with the submissions bot for the same messages while its own
-queue was never read. These tests exist so that cannot come back.
+Two bots run side by side — submissions and resubmissions — each with its own
+systemd unit, X display, noVNC port, SQS queue and Chrome profile. The routing
+used to have a fallback: anything that was not 'iv_corrections' polled the
+submissions queue, so the resubmissions bot silently competed with the
+submissions bot for the same messages while its own queue was never read.
+These tests exist so that cannot come back.
 """
 import unittest
 
@@ -13,12 +13,11 @@ from src.aws.clients import QUEUE_BY_ROLE, ROLE_ENV_VAR
 from src.config import Settings
 from src.ecw.browser import profile_dir_for
 
-ROLES = ('submissions', 'resubmissions', 'iv_corrections')
+ROLES = ('submissions', 'resubmissions')
 
 QUEUES = dict(
     sqs_queue_url='https://sqs/helixona-agent-tasks',
     sqs_queue_url_resub='https://sqs/helixona-agent-tasks-resub',
-    sqs_queue_url_iv='https://sqs/helixona-agent-iv-tasks',
 )
 
 

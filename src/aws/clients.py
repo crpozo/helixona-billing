@@ -9,15 +9,13 @@ logger = get_logger(__name__)
 # BOT_ROLE → the queue that role consumes. Stated as data so adding a bot is a
 # one-line change and an unmapped role is impossible to miss.
 QUEUE_BY_ROLE = {
-    'submissions':    lambda s: s.sqs_queue_url,
-    'resubmissions':  lambda s: s.sqs_queue_url_resub,
-    'iv_corrections': lambda s: s.sqs_queue_url_iv,
+    'submissions':   lambda s: s.sqs_queue_url,
+    'resubmissions': lambda s: s.sqs_queue_url_resub,
 }
 
 ROLE_ENV_VAR = {
-    'submissions':    'SQS_QUEUE_URL',
-    'resubmissions':  'SQS_QUEUE_URL_RESUB',
-    'iv_corrections': 'SQS_QUEUE_URL_IV',
+    'submissions':   'SQS_QUEUE_URL',
+    'resubmissions': 'SQS_QUEUE_URL_RESUB',
 }
 
 
