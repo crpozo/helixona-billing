@@ -51,11 +51,6 @@ class MissingDocumentsBlock(unittest.TestCase):
         self.assertFalse(v['ready'])
         self.assertIn('IV Note', v['blockers'])
 
-    def test_iv_therapy_without_progress_note_blocks(self):
-        v = evaluate_claim(claim(encounter_file_s3_path=''))
-        self.assertFalse(v['ready'])
-        self.assertIn('Progress Note', v['blockers'])
-
     def test_missing_field_entirely_is_same_as_empty(self):
         c = claim()
         del c['hcfa_s3_path']
@@ -69,11 +64,6 @@ class QualityFlagsBlock(unittest.TestCase):
         v = evaluate_claim(claim(iv_note_patient_mismatch=1))
         self.assertFalse(v['ready'])
         self.assertIn('IV Note has patient mismatch', v['blockers'])
-
-    def test_progress_note_flagged_for_revision_blocks(self):
-        v = evaluate_claim(claim(encounter_revision_needed=1))
-        self.assertFalse(v['ready'])
-        self.assertIn('Progress Note needs review', v['blockers'])
 
     def test_mismatch_blocks_even_for_an_office_visit(self):
         # The Progress Note exemption must never leak into the patient-identity
@@ -103,6 +93,59 @@ class SubscriberIdMustBeConfirmed(unittest.TestCase):
         self.assertNotEqual(absent, unverified)
 
 
+class TheProgressNoteDoesNotBlock(unittest.TestCase):
+    """It used to, and that held 114 claims out of every run.
+
+    112 of them because the note could not be pulled from ECW at all. The
+    payer does not need it, so it is a bonus attachment now, never a gate.
+    """
+
+    def test_a_claim_with_no_progress_note_is_ready(self):
+        v = evaluate_claim(claim(encounter_file_s3_path=''))
+        self.assertTrue(v['ready'])
+        self.assertEqual(v['blockers'], [])
+
+    def test_a_progress_note_flagged_for_revision_does_not_block(self):
+        self.assertTrue(evaluate_claim(claim(encounter_revision_needed=1))['ready'])
+
+    def test_but_a_flagged_note_is_not_attached(self):
+        # Not blocking is not the same as sending a document we distrust.
+        self.assertFalse(
+            evaluate_claim(claim(encounter_revision_needed=1))['attach_progress_note'])
+
+    def test_a_good_note_is_attached(self):
+        self.assertTrue(evaluate_claim(claim())['attach_progress_note'])
+
+    def test_a_missing_note_is_not_attached(self):
+        self.assertFalse(evaluate_claim(claim(encounter_file_s3_path=''))['attach_progress_note'])
+
+    def test_the_other_documents_still_gate(self):
+        # Dropping this requirement must not loosen the rest.
+        self.assertFalse(evaluate_claim(claim(hcfa_s3_path=''))['ready'])
+        self.assertFalse(evaluate_claim(claim(prog_notes_s3_path=''))['ready'])
+        self.assertFalse(evaluate_claim(claim(subscriber_id=''))['ready'])
+        self.assertFalse(evaluate_claim(claim(iv_note_patient_mismatch=1))['ready'])
+
+
+class TheSubmissionStepHonoursIt(unittest.TestCase):
+    def test_it_only_attaches_a_note_the_gate_approves(self):
+        import os
+        main = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'src', 'main.py')
+        with open(main, encoding='utf-8') as fh:
+            src = fh.read()
+        self.assertIn("evaluate_claim(claim_item)['attach_progress_note']", src)
+
+    def test_two_documents_are_enough(self):
+        import os
+        main = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'src', 'main.py')
+        with open(main, encoding='utf-8') as fh:
+            src = fh.read()
+        self.assertIn('_min_files = 2', src)
+        self.assertNotIn('_min_files = 2 if', src)
+
+
 class ProgressNoteExemptions(unittest.TestCase):
     def test_office_visit_needs_no_progress_note(self):
         v = evaluate_claim(claim(cpt='99213', encounter_file_s3_path=''))
@@ -115,15 +158,13 @@ class ProgressNoteExemptions(unittest.TestCase):
         self.assertTrue(v['ready'])
         self.assertEqual(v['progress_note_exempt'], 'reviewer override')
 
-    def test_override_also_waives_the_revision_flag(self):
-        # This is the case the two old copies of the rule disagreed on: the
-        # batch loop let it through, the single-claim path reported a missing
-        # Progress Note for a claim that did not need one.
+    def test_the_override_is_now_moot_but_still_reported(self):
+        # Nothing needs waiving any more; the flag is kept because reviewers
+        # set it and the reason is worth showing.
         v = evaluate_claim(claim(progress_note_not_required=1,
-                                 encounter_revision_needed=1,
                                  encounter_file_s3_path=''))
         self.assertTrue(v['ready'])
-        self.assertEqual(v['blockers'], [])
+        self.assertEqual(v['progress_note_exempt'], 'reviewer override')
 
     def test_iv_therapy_is_not_exempt(self):
         self.assertEqual(evaluate_claim(claim())['progress_note_exempt'], '')
@@ -174,12 +215,13 @@ class BlockersAreComplete(unittest.TestCase):
     def test_a_claim_with_nothing_lists_every_reason(self):
         v = evaluate_claim({'claim_id': '1'})
         self.assertFalse(v['ready'])
-        for expected in ('HCFA', 'IV Note', 'Progress Note', 'Subscriber ID'):
+        for expected in ('HCFA', 'IV Note', 'Subscriber ID'):
             self.assertIn(expected, v['blockers'])
+        self.assertNotIn('Progress Note', v['blockers'])
 
     def test_ready_is_exactly_the_absence_of_blockers(self):
         for c in (claim(), claim(hcfa_s3_path=''), claim(subscriber_id=''),
-                  claim(cpt='99213', encounter_file_s3_path=''), {'claim_id': 'x'}):
+                  claim(encounter_file_s3_path=''), {'claim_id': 'x'}):
             self.assertEqual(evaluate_claim(c)['ready'],
                              not evaluate_claim(c)['blockers'])
 

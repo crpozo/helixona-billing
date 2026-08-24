@@ -15,8 +15,12 @@ The rule
 1. HCFA is always required.
 2. The IV Note is always required, and must not be flagged as belonging to a
    different patient.
-3. The Progress Note is required for IV Therapy, and must not be flagged for
-   revision. Office visits and claims a reviewer manually exempted skip it.
+3. The Progress Note is NOT required. It used to be, for IV Therapy, and that
+   held 114 claims out of every run — 112 of them because the note could not
+   be pulled from ECW at all. The practice's position is that the payer does
+   not need it, so it no longer gates a submission. It is still attached when
+   there is a good one; see submit_documents in main.py, which leaves out a
+   note flagged for revision rather than sending a known-bad document.
 4. A subscriber ID is required, and must have been confirmed from HCFA box 1a
    — a DOM-scraped value alone is held back so an unconfirmed member number is
    never auto-submitted to a payer.
@@ -78,11 +82,9 @@ def evaluate_claim(claim: dict) -> dict:
         blockers.append('IV Note')
     if iv_note_mismatch:
         blockers.append('IV Note has patient mismatch')
-    if not pn_exempt:
-        if not has_progress_note:
-            blockers.append('Progress Note')
-        if progress_note_needs_review:
-            blockers.append('Progress Note needs review')
+    # The Progress Note no longer blocks. `progress_note_needs_review` still
+    # matters, but as an instruction not to ATTACH that file — not as a reason
+    # to hold the whole packet.
     if not has_subscriber:
         if subscriber and subscriber_unverified:
             blockers.append('Subscriber ID UNVERIFIED (HCFA box 1a not read)')
@@ -96,6 +98,7 @@ def evaluate_claim(claim: dict) -> dict:
         'progress_note_exempt': (
             'office visit' if office else 'reviewer override' if manual_exempt else ''
         ),
+        'attach_progress_note': bool(has_progress_note and not progress_note_needs_review),
     }
 
 

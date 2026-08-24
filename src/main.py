@@ -10372,9 +10372,17 @@ def process_message(message: dict, aws_client: AWSClient):
                         ('hcfa', claim_item.get('hcfa_s3_path', '')),
                         ('prog_notes', claim_item.get('prog_notes_s3_path', '')),
                     ]
+                    # The Progress Note rides along when there is a good one.
+                    # A note flagged for revision is left out rather than sent:
+                    # it may be the wrong patient or stale, and the packet no
+                    # longer depends on it.
                     single_enc = claim_item.get('encounter_file_s3_path', '')
-                    if single_enc:
+                    if single_enc and evaluate_claim(claim_item)['attach_progress_note']:
                         docs_to_download.append(('encounter', single_enc))
+                    elif single_enc:
+                        logger.info(
+                            f"  Progress Note for {claim_id} is flagged for revision — "
+                            f"sending without it")
 
                     for doc_name, s3_path in docs_to_download:
                         if not s3_path:
@@ -10398,9 +10406,9 @@ def process_message(message: dict, aws_client: AWSClient):
                     # 2 files (HCFA + IV Note) is enough for office visits AND
                     # for claims the reviewer manually flagged as not needing a
                     # Progress Note. Otherwise the encounter PDF is required.
-                    _no_pn_required = is_office_visit(claim_item.get('cpt')) \
-                                      or bool(claim_item.get('progress_note_not_required'))
-                    _min_files = 2 if _no_pn_required else 3
+                    # HCFA + IV Note is the packet. The Progress Note is a
+                    # bonus, so it never sets the bar.
+                    _min_files = 2
                     if len(files_to_upload) < _min_files:
                         logger.warning(f"  Only {len(files_to_upload)}/{_min_files} files downloaded, skipping submission")
                         record_submission(
