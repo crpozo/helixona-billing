@@ -24,7 +24,6 @@ dynamodb = session.resource('dynamodb')
 sqs = session.client('sqs')
 SQS_URL = os.environ['SQS_QUEUE_URL']
 SQS_URL_RESUB = os.environ.get('SQS_QUEUE_URL_RESUB', '')
-SQS_URL_IV = os.environ.get('SQS_QUEUE_URL_IV', '')
 EC2_IP = "54.189.175.233"
 KEY_FILE = "infra/helixona-agent-key.pem"
 
@@ -46,7 +45,6 @@ BOT_ROUTING = {
         'novnc_port': 6081,
     },
 }
-
 
 
 def _bot_from_request():
@@ -443,7 +441,6 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
-      <!-- IV CLAIMS TABLE (Bot 2 — Fix Coding IVs) -->
 
       <!-- RIGHT RAIL -->
       <div class="task-panel">
@@ -487,13 +484,6 @@ tbody tr:last-child td{border-bottom:none}
           <button class="btn" style="background:rgba(239,68,68,.1);color:var(--bad);border:1px solid rgba(239,68,68,.3);margin-top:8px;width:100%;padding:10px;border-radius:8px;font-weight:600;font-size:11.5px;cursor:pointer" onclick="deleteAllClaims()">🗑️ Delete All Claims &amp; Start Over</button>
         </div>
 
-        <!-- REPORTS -->
-        <div class="task-card" id="reports-card">
-          <h3>📊 Fix Coding IVs — Saved Reports
-                      </h3>
-          </div>
-          <button class="btn" style="background:rgba(239,68,68,.1);color:var(--bad);border:1px solid rgba(239,68,68,.3);margin-top:8px;width:100%;padding:10px;border-radius:8px;font-weight:600;font-size:11.5px;cursor:pointer" onclick="deleteAllFixIvsFiles()">🗑️ Eliminar todos los saved reports</button>
-        </div>
 
         <!-- OPEN TASKS -->
         <div class="task-card" id="tasks-card">
@@ -697,7 +687,174 @@ window.scrollToEl = function(sel){
             }, null, 2),
             ecw_status_update: JSON.stringify({
                 note: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims."
-            }, null, 2),
+            }, null, 2)
+        };
+
+        // Maps a dropdown value into a different SQS payload {task_type, stage?}.
+        // Empty today: every remaining task sends its own value as the task_type.
+        const TASK_DISPATCH = {};
+
+        const TASK_DESCRIPTIONS = {
+            bs_missing_docs: {
+                title: 'ECW obtain claims documentation',
+                desc: 'Runs the full pipeline: extract claims from ECW, generate HCFA forms, capture Progress Notes and submit Missing Documentation cases to Blue Shield.',
+                steps: []
+            },
+            blueshield_submissions: {
+                title: 'Blueshield Submissions',
+                desc: 'Uploads claim documentation (HCFA, Progress Notes, Encounter File) to Blue Shield via SympliSend.',
+                steps: []
+            },
+            ecw_status_update: {
+                title: 'ECW Status Update',
+                desc: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims.",
+                steps: []
+            }
+        };
+
+
+        function updateTaskTemplate() {
+            const type = document.getElementById('task-type').value;
+            document.getElementById('task-payload').value = TASK_TEMPLATES[type] || '{}';
+            renderTaskSteps(type);
+        }
+
+        function renderTaskSteps(type) {
+            const el = document.getElementById('task-steps');
+            const info = TASK_DESCRIPTIONS[type];
+            if (!el || !info) { if (el) el.innerHTML = ''; return; }
+            const stepsHtml = (info.steps && info.steps.length)
+                ? `<ol>${info.steps.map(s => `<li>${s}</li>`).join('')}</ol>`
+                : '';
+            el.innerHTML = `
+                <div class="task-steps-title">📋 ${info.title}</div>
+                <div class="task-steps-desc">${info.desc}</div>
+                ${stepsHtml}
+            `;
+        }
+
+        // Active bot tab. Drives which SQS queue / systemd service the dashboard talks to.
+        window.activeBot = 'submissions';
+
+        const BOT_NOVNC = {submissions: 6080, resubmissions: 6081};
+
+        function setActiveBot(bot) {
+            if (!(bot in BOT_NOVNC)) bot = 'submissions';
+            window.activeBot = bot;
+            // Each bot runs on its own X display behind its own noVNC port —
+            // pointing every tab at 6080 would show the submissions bot's
+            // screen while claiming to show another's.
+            const vnc = document.getElementById('novnc-link');
+            if (vnc) vnc.href = `http://54.189.175.233:${BOT_NOVNC[bot]}/vnc.html`;
+            // Tab styling
+            document.querySelectorAll('#bot-tabs .subtab').forEach(el => {
+                el.classList.toggle('on', el.dataset.bot === bot);
+            });
+            // Show/hide task-type optgroups + options
+            document.querySelectorAll('#task-type [data-bot]').forEach(el => {
+                const owners = (el.dataset.bot || '').split(/\s+/).filter(Boolean);
+                const mine = owners.includes(bot);
+                el.hidden = !mine;
+                el.disabled = !mine;
+            });
+            // Pick the first visible option for this bot
+            const sel = document.getElementById('task-type');
+            const firstVisible = Array.from(sel.options).find(o => !o.hidden);
+            if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
+            // Both Blue Shield bots share the claims table, each filtered to
+            // its own work.
+            if (typeof loadCounts === 'function') loadCounts();
+            if (typeof loadData === 'function') loadData();
+            // Refresh logs for the new service
+            clearLogs('switched to ' + bot);
+            loadLogs();
+        }
+
+        
+
+        async function sendTask() {
+            const selected = document.getElementById('task-type').value;
+            let payload;
+            try {
+                payload = JSON.parse(document.getElementById('task-payload').value);
+            } catch (e) {
+                showToast('Invalid JSON payload', 'error');
+                return;
+            }
+            // Translate the dropdown value into {task_type, stage?} via TASK_DISPATCH if mapped,
+            // otherwise the dropdown value IS the task_type.
+            const dispatch = TASK_DISPATCH[selected];
+            if (dispatch) {
+                payload.task_type = dispatch.task_type;
+                if (dispatch.stage !== undefined) payload.stage = dispatch.stage;
+            } else {
+                payload.task_type = selected;
+            }
+            // Add test claim ID if specified
+            const testClaimId = (document.getElementById('test-claim-id').value || '').trim();
+            if (testClaimId) {
+                payload.test_claim_id = testClaimId;
+                payload.testing_mode = true;
+            }
+            payload.bot = window.activeBot;
+
+            const res = await fetch('/api/send-task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast('Task sent to SQS ✓', 'success');
+                // New run starting — wipe the panel so this run's logs are not
+                // visually mixed with the previous run's output.
+                clearLogs('new ' + (payload.task_type || 'task') + ' run');
+                setTimeout(loadLogs, 3000);
+            } else {
+                showToast('Failed: ' + data.error, 'error');
+            }
+        }
+
+        async function deleteAllClaims() {
+            if (!confirm('⚠️ DELETE all claims from the database? This cannot be undone. The next pipeline run will rediscover claims from ECW.')) return;
+            try {
+                const res = await fetch('/api/delete-all-claims', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(data.message + ' \\u2713', 'success');
+                    setTimeout(loadData, 500);
+                } else {
+                    showToast('Delete failed: ' + data.error, 'error');
+                }
+            } catch (e) {
+                showToast('Delete failed: ' + e.message, 'error');
+            }
+        }
+
+        // ── Stage classification for each claim ──
+        function getStageKey(state) {
+            for (const [key, stage] of Object.entries(PIPELINE_STAGES)) {
+                if (stage.states.includes(state)) return key;
+            }
+            return 'documentation';
+        }
+
+        function getStagePill(state) {
+            const key = getStageKey(state);
+            const label = PIPELINE_STAGES[key]?.label || 'Unknown';
+            return `<span class="state-pill ${key}">${label}</span>`;
+        }
+
+        // Manual override: flag a claim as not needing a Progress Note (e.g.,
+        // diagnostic-only CPT mix). Posts to /api/claim/<cid>/skip_progress_note.
+        async function skipProgressNote(claimId, skip) {
+            const action = skip ? 'mark as NOT needing a Progress Note' : 'undo the override';
+            if (!confirm(`Claim ${claimId}: ${action}?`)) return;
+            try {
+                const res = await fetch(`/api/claim/${claimId}/skip_progress_note`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ skip: skip }),
                 });
                 const data = await res.json();
                 if (!res.ok) { alert('Failed: ' + (data.error || res.status)); return; }
@@ -1382,20 +1539,7 @@ window.scrollToEl = function(sel){
             if (!m) return rid;
             return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
         }
-        async function deleteAllFixIvsFiles() {
-            if (!confirm('⚠️ Borrar TODOS los saved reports de Fix Coding IVs en S3? Esto no se puede deshacer.')) return;
-            try {
-                const res = await fetch('/api/delete-fix-coding-ivs-files', { method: 'POST' });
-                const data = await res.json();
-                if (data.success) {
-                    showToast(`🗑️ ${data.deleted} archivo(s) eliminado(s)`, 'success');
-                } else {
-                    showToast(`Error: ${data.error || 'unknown'}`, 'error');
-                }
-            } catch (e) {
-                showToast(`Error: ${e.message}`, 'error');
-            }
-        }
+        
 
         
 
