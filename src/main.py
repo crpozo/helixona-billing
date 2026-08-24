@@ -28,6 +28,7 @@ from src.blueshield.portal import BlueShieldPortal
 from src.ai.verification import IVVerificationService
 from src.documents.cover_letter import generate_cover_letter_pdf
 from src.symplisend.submission import SympliSendSubmission
+from src.symplisend import form_types
 from src.ecw.claim_status import ecw_status_for
 from src.rules.engine import RulesEngine
 from src.rules.submission_gate import (
@@ -10342,56 +10343,140 @@ def process_message(message: dict, aws_client: AWSClient):
                     # Wait for Angular to finish re-rendering the form after New Submission
                     time.sleep(3)
 
-                    # ─── Set Submission Type dropdown to "Provider First Submission Claim" ───
+                    # ─── Choose the right SympliSend form for this claim ───
+                    # A resubmission belongs on the prior-claim form, which has
+                    # a required Claim Number field. Sending it through the
+                    # first-submission form makes the payer open a new claim
+                    # instead of attaching the documents to the one in dispute.
+                    plan = form_types.describe(claim_item)
+                    target_form = plan['form']
+                    if plan['downgraded']:
+                        logger.warning(
+                            f"⚠️ Claim {claim_id} is a Resubmission but has no prior claim "
+                            f"number on file — falling back to a first submission.")
+
                     try:
-                        sel_result = symplisend_page.evaluate('''() => {
-                            const target = 'Provider First Submission Claim';
-                            const selects = document.querySelectorAll('select');
-                            for (const sel of selects) {
-                                let matchOpt = null;
+                        sel_result = symplisend_page.evaluate("""(target) => {
+                            const norm = t => (t || '').trim().toLowerCase();
+                            // The form type lives in a <select> on some builds
+                            // and in the top-nav dropdown on others; try both.
+                            for (const sel of document.querySelectorAll('select')) {
                                 for (const opt of sel.options) {
-                                    if ((opt.text || '').trim().toLowerCase() === target.toLowerCase()) {
-                                        matchOpt = opt;
-                                        break;
+                                    if (norm(opt.text) === norm(target)) {
+                                        sel.value = opt.value;
+                                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                                        sel.dispatchEvent(new Event('input', { bubbles: true }));
+                                        if (window.angular) {
+                                            try {
+                                                const $scope = window.angular.element(sel).scope();
+                                                const ngModel = sel.getAttribute('ng-model');
+                                                if ($scope && ngModel) {
+                                                    $scope.$apply(() => { $scope[ngModel.split('.').pop()] = opt.value; });
+                                                }
+                                            } catch (e) {}
+                                        }
+                                        return { ok: true, how: 'select', text: opt.text };
                                     }
                                 }
-                                if (matchOpt) {
-                                    sel.value = matchOpt.value;
-                                    sel.dispatchEvent(new Event('change', { bubbles: true }));
-                                    sel.dispatchEvent(new Event('input', { bubbles: true }));
-                                    // Angular ng-model sync
-                                    if (window.angular) {
-                                        try {
-                                            const $scope = window.angular.element(sel).scope();
-                                            const ngModel = sel.getAttribute('ng-model');
-                                            if ($scope && ngModel) {
-                                                $scope.$apply(() => { $scope[ngModel.split('.').pop()] = matchOpt.value; });
-                                            }
-                                        } catch (e) {}
-                                    }
-                                    return { ok: true, value: matchOpt.value, text: matchOpt.text };
+                            }
+                            for (const el of document.querySelectorAll('a, button, li, .dropdown-item')) {
+                                if (norm(el.innerText) === norm(target)) {
+                                    el.click();
+                                    return { ok: true, how: 'nav', text: el.innerText.trim() };
                                 }
                             }
                             return { ok: false };
-                        }''')
+                        }""", target_form)
                         if sel_result and sel_result.get('ok'):
-                            form_type_selected = (sel_result.get('text') or 'Provider First Submission Claim').strip()
-                            logger.info(f"✅ Submission Type set to 'Provider First Submission Claim' (value={sel_result.get('value')})")
+                            form_type_selected = (sel_result.get('text') or target_form).strip()
+                            logger.info(f"✅ Form set to '{form_type_selected}' (via {sel_result.get('how')})")
                         else:
-                            # Fallback: Playwright's select_option by visible label
                             try:
-                                symplisend_page.select_option('select', label='Provider First Submission Claim', timeout=5000)
-                                form_type_selected = 'Provider First Submission Claim'
-                                logger.info("✅ Submission Type set via select_option(label=...)")
+                                symplisend_page.select_option('select', label=target_form, timeout=5000)
+                                form_type_selected = target_form
+                                logger.info(f"✅ Form set to '{target_form}' via select_option(label=...)")
                             except Exception as e_sel:
-                                logger.warning(f"⚠️ Could not set Submission Type dropdown: {e_sel}")
+                                logger.warning(f"⚠️ Could not select the '{target_form}' form: {e_sel}")
                                 try:
                                     symplisend_page.screenshot(path=f'/tmp/symplisend_no_subtype_{claim_id}.png')
                                 except Exception:
                                     pass
-                        time.sleep(1)
+                        time.sleep(1.5)
                     except Exception as e:
-                        logger.warning(f"Submission Type dropdown set failed: {e}")
+                        logger.warning(f"Form type selection failed: {e}")
+
+                    # ─── Prior-claim form: the Claim Number is the whole point ───
+                    if target_form == form_types.PRIOR_CLAIM:
+                        filled = False
+                        try:
+                            filled = symplisend_page.evaluate("""(num) => {
+                                const inputs = Array.from(document.querySelectorAll('input'));
+                                const labelled = inputs.filter(el => {
+                                    const hay = [el.name, el.id, el.getAttribute('formcontrolname'),
+                                                 el.getAttribute('ng-model'), el.getAttribute('placeholder'),
+                                                 el.getAttribute('aria-label')].join(' ').toLowerCase();
+                                    return /claim\s*(number|no|#)|claimnumber|claimno/.test(hay);
+                                });
+                                const target = labelled[0];
+                                if (!target) return false;
+                                const setter = Object.getOwnPropertyDescriptor(
+                                    window.HTMLInputElement.prototype, 'value').set;
+                                setter.call(target, num);
+                                target.dispatchEvent(new Event('input', { bubbles: true }));
+                                target.dispatchEvent(new Event('change', { bubbles: true }));
+                                target.dispatchEvent(new Event('blur', { bubbles: true }));
+                                return target.value === num;
+                            }""", plan['claim_number'])
+                        except Exception as e:
+                            logger.error(f"❌ Claim Number entry failed for {claim_id}: {e}")
+
+                        if not filled:
+                            # Submitting here would produce exactly the defect
+                            # this branch exists to prevent: a replacement claim
+                            # arriving as a brand-new one.
+                            try:
+                                symplisend_page.screenshot(path=f'/tmp/symplisend_no_claimno_{claim_id}.png')
+                            except Exception:
+                                pass
+                            logger.error(
+                                f"❌ Could not enter prior claim # {plan['claim_number']} for claim "
+                                f"{claim_id} — skipping rather than sending it as a new claim.")
+                            record_submission(
+                                aws_client, claim_item,
+                                outcome=OUTCOME_BLOCKED,
+                                documents=describe_documents(audit_docs),
+                                submission_form_type=form_type_selected,
+                                error=f"prior claim number field not found on the {target_form} form",
+                                notes='nothing was uploaded to the payer',
+                            )
+                            continue
+                        logger.info(f"✅ Prior claim # entered: {plan['claim_number']}")
+
+                        # Type of Attachment — what the payer asked us for.
+                        try:
+                            att = symplisend_page.evaluate("""(want) => {
+                                const norm = t => (t || '').trim().toLowerCase();
+                                for (const sel of document.querySelectorAll('select')) {
+                                    for (const opt of sel.options) {
+                                        if (norm(opt.text) === norm(want)) {
+                                            sel.value = opt.value;
+                                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                                            sel.dispatchEvent(new Event('input', { bubbles: true }));
+                                            return opt.text.trim();
+                                        }
+                                    }
+                                }
+                                return null;
+                            }""", plan['attachment_type'])
+                            if att:
+                                logger.info(f"✅ Type of Attachment set to '{att}'")
+                            else:
+                                logger.warning(
+                                    f"⚠️ '{plan['attachment_type']}' not offered; leaving the "
+                                    f"form's default Type of Attachment.")
+                        except Exception as e:
+                            logger.warning(f"Type of Attachment not set: {e}")
+                        time.sleep(0.5)
 
                     # Enter Subscriber ID using page-level methods (avoids stale element references)
                     try:

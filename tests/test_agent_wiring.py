@@ -69,7 +69,10 @@ class EverySubmissionExitIsAudited(unittest.TestCase):
     that would put us back where we started.
     """
 
-    EXPECTED_CALL_SITES = 6
+    # 7: success, the two post-submit failures, the New Submission open
+    # failure, the insufficient-documents block, the unhandled-error handler,
+    # and the prior-claim-number block added with the resubmission form.
+    EXPECTED_CALL_SITES = 7
 
     def _submission_calls(self):
         tree = ast.parse(_read(MAIN))
