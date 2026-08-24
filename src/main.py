@@ -1706,6 +1706,52 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
     return False
 
 
+def _dismiss_third_party_interstitial(page, timeout_ms=9000):
+    """Click through Blue Shield's "you're leaving our site" modal.
+
+    Blue Shield puts an interstitial between the SympliSend link and SympliSend
+    itself — "You're leaving Blue Shield of California and going to a
+    third-party site", with Cancel and Continue. The new tab only opens after
+    Continue, so anything waiting for a popup waits forever and then falls
+    through to a page that is not SympliSend.
+
+    Returns True if a Continue was clicked. A missing modal is not a failure —
+    Blue Shield may drop it again, and the flow works either way.
+    """
+    deadline = time.time() + (timeout_ms / 1000.0)
+    while time.time() < deadline:
+        try:
+            # Scope to the dialog by its own wording first, so we never click
+            # some unrelated "Continue" (a cookie banner, say) on the page.
+            clicked = page.evaluate("""() => {
+                const wanted = /continue/i;
+                const marker = /leaving blue shield|third-party site|redirecting you to/i;
+                const scopes = Array.from(document.querySelectorAll(
+                    '[role="dialog"], [aria-modal="true"], .modal, .modal-content'))
+                    .filter(el => marker.test(el.innerText || ''));
+                const pools = scopes.length ? scopes : (
+                    marker.test(document.body.innerText || '') ? [document.body] : []);
+                for (const scope of pools) {
+                    const btns = scope.querySelectorAll('button, a, input[type=button], input[type=submit]');
+                    for (const b of btns) {
+                        const label = (b.innerText || b.value || '').trim();
+                        if (wanted.test(label) && !/cancel/i.test(label)) {
+                            b.click();
+                            return label;
+                        }
+                    }
+                }
+                return null;
+            }""")
+            if clicked:
+                logger.info(f"✅ Dismissed Blue Shield third-party interstitial ('{clicked}')")
+                return True
+        except Exception:
+            pass
+        time.sleep(0.4)
+    return False
+
+
 def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
     """Open (or re-open) the ECW claim detail popup via the Claim Lookup input.
     Returns (popup_found, best_frame) where best_frame is the iframe whose body
@@ -10134,10 +10180,12 @@ def process_message(message: dict, aws_client: AWSClient):
             symplisend_clicked = False
             try:
                 # Listen for new tab/popup (the link has target="_blank")
-                with page.context.expect_page(timeout=30000) as new_page_info:
+                with page.context.expect_page(timeout=45000) as new_page_info:
                     page.click('a[title="SympliSend tool"], a:has-text("SympliSend")', timeout=10000)
                     logger.info("✅ Clicked SympliSend link")
-                
+                    # The new tab only opens once this is accepted.
+                    _dismiss_third_party_interstitial(page)
+
                 symplisend_page = new_page_info.value
                 symplisend_page.wait_for_load_state('domcontentloaded', timeout=60000)
                 symplisend_clicked = True
@@ -10147,6 +10195,8 @@ def process_message(message: dict, aws_client: AWSClient):
                 try:
                     page.goto("https://www.blueshieldca.com/providerwebapp/externalSSO?partnerId=FirstSource&parentPage=howtoSubmit&tab=same",
                              wait_until="domcontentloaded", timeout=60000)
+                    # The direct SSO entry can raise the same interstitial.
+                    _dismiss_third_party_interstitial(page)
                     symplisend_page = page
                     symplisend_clicked = True
                 except Exception as e2:
@@ -10158,12 +10208,30 @@ def process_message(message: dict, aws_client: AWSClient):
             time.sleep(5)
             
             # Wait for the dashboard to appear
+            on_symplisend = False
             for _wait in range(10):
                 if 'symplisendbscprovider' in symplisend_page.url or 'dashboard' in symplisend_page.url:
+                    on_symplisend = True
                     break
+                # A late interstitial can still be sitting on the page.
+                _dismiss_third_party_interstitial(symplisend_page, timeout_ms=1500)
                 time.sleep(3)
                 logger.info(f"  Waiting for SympliSend redirect... URL: {symplisend_page.url[:80]}")
-            
+
+            if not on_symplisend:
+                # Landing anywhere else means every claim below would fail on a
+                # 10s "New Submission" timeout and write a misleading audit row
+                # each. One clear error beats dozens of vague ones.
+                try:
+                    symplisend_page.screenshot(path='/tmp/symplisend_not_reached.png')
+                except Exception:
+                    pass
+                logger.error(
+                    f"❌ Never reached the SympliSend dashboard — stopped at "
+                    f"{symplisend_page.url[:160]}. No claims were attempted. "
+                    f"Screenshot: /tmp/symplisend_not_reached.png")
+                return
+
             logger.info(f"✅ SympliSend Dashboard: {symplisend_page.url[:100]}")
             
             try:
