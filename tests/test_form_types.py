@@ -142,6 +142,39 @@ class EachBotSendsOnlyItsOwnLane(unittest.TestCase):
         self.assertFalse(belongs_to_bot(claim, 'submissions'))
 
 
+class TheNavIsOnlyTouchedWhenItMustBe(unittest.TestCase):
+    """Clicking the nav toggle opens a menu that covers New Submission.
+
+    The selector matched any element whose text equalled the target form — and
+    for a first submission that is the toggle itself, already reading
+    "Provider First Submission Claim". Clicking it opened the dropdown, the
+    open menu sat over the New Submission button, and every first submission
+    timed out.
+    """
+
+    def test_the_current_form_is_read_first(self):
+        self.assertIn('def _current_form():', _read(MAIN))
+
+    def test_a_matching_form_leaves_the_nav_alone(self):
+        src = _read(MAIN)
+        self.assertIn("nav left alone", src)
+
+    def test_the_toggle_is_excluded_from_the_items(self):
+        src = _read(MAIN)
+        self.assertIn('isToggle', src)
+        self.assertIn('!isToggle(el)', src)
+
+    def test_menus_are_closed_before_clicking_new_submission(self):
+        src = _read(MAIN)
+        i = src.index("keyboard.press('Escape')")
+        j = src.index('# Click "New Submission"')
+        self.assertLess(i, j, 'Escape must come before the click')
+
+    def test_the_button_is_waited_for(self):
+        src = _read(MAIN)
+        self.assertIn("state='visible', timeout=20000", src)
+
+
 class TheSubmissionStepUsesIt(unittest.TestCase):
     def test_main_asks_the_mapping_which_form_to_open(self):
         src = _read(MAIN)

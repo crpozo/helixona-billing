@@ -10432,59 +10432,101 @@ def process_message(message: dict, aws_client: AWSClient):
                             f"⚠️ Claim {claim_id} is a Resubmission but has no prior claim "
                             f"number on file — falling back to a first submission.")
 
-                    try:
-                        sel_result = symplisend_page.evaluate("""(target) => {
-                            const norm = t => (t || '').trim().toLowerCase();
-                            // The form type lives in a <select> on some builds
-                            // and in the top-nav dropdown on others; try both.
-                            for (const sel of document.querySelectorAll('select')) {
-                                for (const opt of sel.options) {
-                                    if (norm(opt.text) === norm(target)) {
-                                        sel.value = opt.value;
-                                        sel.dispatchEvent(new Event('change', { bubbles: true }));
-                                        sel.dispatchEvent(new Event('input', { bubbles: true }));
-                                        if (window.angular) {
-                                            try {
-                                                const $scope = window.angular.element(sel).scope();
-                                                const ngModel = sel.getAttribute('ng-model');
-                                                if ($scope && ngModel) {
-                                                    $scope.$apply(() => { $scope[ngModel.split('.').pop()] = opt.value; });
-                                                }
-                                            } catch (e) {}
+                    # What form is the page on right now? The nav's own
+                    # toggle carries the current type as its label.
+                    def _current_form():
+                        try:
+                            return symplisend_page.evaluate("""() => {
+                                const known = ['Provider Prior Claim Submission',
+                                               'Provider First Submission Claim',
+                                               'Provider Itemization'];
+                                for (const el of document.querySelectorAll(
+                                        '[data-toggle="dropdown"], .dropdown-toggle, nav a, nav button')) {
+                                    const t = (el.innerText || '').trim();
+                                    if (known.includes(t)) return t;
+                                }
+                                return '';
+                            }""") or ''
+                        except Exception:
+                            return ''
+
+                    current = _current_form()
+                    if current and current.strip().lower() == target_form.strip().lower():
+                        # Already here. Clicking the nav toggle would only open
+                        # its menu, and an open menu covers the New Submission
+                        # button — which is exactly how every first submission
+                        # started timing out.
+                        form_type_selected = current
+                        logger.info(f"✅ Already on '{target_form}' — nav left alone")
+                    else:
+                        try:
+                            sel_result = symplisend_page.evaluate("""(args) => {
+                                const [target, current] = args;
+                                const norm = t => (t || '').trim().toLowerCase();
+
+                                // A real <select>, on builds that use one.
+                                for (const sel of document.querySelectorAll('select')) {
+                                    for (const opt of sel.options) {
+                                        if (norm(opt.text) === norm(target)) {
+                                            sel.value = opt.value;
+                                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                                            sel.dispatchEvent(new Event('input', { bubbles: true }));
+                                            return { ok: true, how: 'select', text: opt.text };
                                         }
-                                        return { ok: true, how: 'select', text: opt.text };
                                     }
                                 }
-                            }
-                            for (const el of document.querySelectorAll('a, button, li, .dropdown-item')) {
-                                if (norm(el.innerText) === norm(target)) {
-                                    el.click();
-                                    return { ok: true, how: 'nav', text: el.innerText.trim() };
+
+                                // Otherwise the top-nav menu. Open it, then pick
+                                // the ITEM — never the toggle, whose label is the
+                                // form we are already on.
+                                const isToggle = el =>
+                                    el.matches('[data-toggle="dropdown"], .dropdown-toggle')
+                                    || norm(el.innerText) === norm(current);
+
+                                for (const el of document.querySelectorAll(
+                                        '[data-toggle="dropdown"], .dropdown-toggle')) {
+                                    if (norm(el.innerText) === norm(current)) { el.click(); break; }
                                 }
-                            }
-                            return { ok: false };
-                        }""", target_form)
-                        if sel_result and sel_result.get('ok'):
-                            form_type_selected = (sel_result.get('text') or target_form).strip()
-                            logger.info(f"✅ Form set to '{form_type_selected}' (via {sel_result.get('how')})")
-                        else:
-                            try:
-                                symplisend_page.select_option('select', label=target_form, timeout=5000)
-                                form_type_selected = target_form
-                                logger.info(f"✅ Form set to '{target_form}' via select_option(label=...)")
-                            except Exception as e_sel:
-                                logger.warning(f"⚠️ Could not select the '{target_form}' form: {e_sel}")
+                                const items = Array.from(document.querySelectorAll(
+                                    '.dropdown-menu a, .dropdown-menu button, .dropdown-item, li a, menu a'));
+                                for (const el of items) {
+                                    if (norm(el.innerText) === norm(target) && !isToggle(el)) {
+                                        el.click();
+                                        return { ok: true, how: 'nav', text: el.innerText.trim() };
+                                    }
+                                }
+                                return { ok: false };
+                            }""", [target_form, current])
+                            if sel_result and sel_result.get('ok'):
+                                form_type_selected = (sel_result.get('text') or target_form).strip()
+                                logger.info(
+                                    f"✅ Form set to '{target_form}' (via {sel_result.get('how')})")
+                            else:
+                                logger.warning(f"⚠️ Could not select the '{target_form}' form")
                                 try:
                                     symplisend_page.screenshot(path=f'/tmp/symplisend_no_subtype_{claim_id}.png')
                                 except Exception:
                                     pass
-                        time.sleep(1.5)
-                    except Exception as e:
-                        logger.warning(f"Form type selection failed: {e}")
+                            time.sleep(1.5)
+                        except Exception as e:
+                            logger.warning(f"Form type selection failed: {e}")
+
+                    # Close any menu that is still open — it would sit over the
+                    # New Submission button.
+                    try:
+                        symplisend_page.keyboard.press('Escape')
+                        time.sleep(0.3)
+                    except Exception:
+                        pass
 
                     # Click "New Submission"
                     try:
-                        symplisend_page.click('button[name="addNewSubmission"], button:has-text("New Submission")', timeout=10000)
+                        symplisend_page.wait_for_selector(
+                            'button[name="addNewSubmission"], button:has-text("New Submission")',
+                            state='visible', timeout=20000)
+                        symplisend_page.click(
+                            'button[name="addNewSubmission"], button:has-text("New Submission")',
+                            timeout=10000)
                         logger.info("✅ Clicked 'New Submission'")
                     except Exception as e:
                         logger.error(f"❌ Could not click New Submission: {e}")
