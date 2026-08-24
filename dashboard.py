@@ -891,7 +891,10 @@ window.scrollToEl = function(sel){
             if (tblIv)   tblIv.style.display   = isIv ? '' : 'none';
             // Load the right data set
             if (isIv) loadIvClaims();
-            else if (typeof loadData === 'function') loadData();
+            else {
+                if (typeof loadCounts === 'function') loadCounts();
+                if (typeof loadData === 'function') loadData();
+            }
             // Refresh logs for the new service
             clearLogs('switched to ' + bot);
             loadLogs();
@@ -1130,6 +1133,22 @@ window.scrollToEl = function(sel){
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
             return claims;
+        }
+
+        async function loadCounts() {
+            if (window.activeBot === 'iv_corrections') return;  // its own KPI
+            try {
+                const res = await fetch('/api/claim-counts');
+                const data = await res.json();
+                const c = data[window.activeBot];
+                if (!c || !c.total) return;
+                const pct = Math.round((c.submitted / c.total) * 100);
+                document.getElementById('hero-submitted').textContent = c.submitted;
+                document.getElementById('hero-total').textContent = c.total;
+                document.getElementById('hero-pct').textContent = pct + '%';
+                document.getElementById('hero-remaining').textContent = c.total - c.submitted;
+                document.getElementById('hero-progress-fill').style.width = pct + '%';
+            } catch (e) { /* the next tick will retry */ }
         }
 
         async function loadData() {
@@ -1760,7 +1779,11 @@ window.scrollToEl = function(sel){
         loadLogs();
         loadBSClaims();
         loadFixIvsFiles();
-        setInterval(loadData, 4000);  // 4s — fast enough for live "processing" row updates
+        // The headline counter polls a counts-only endpoint so it keeps up with
+        // the bot; the full claims table costs ~3MB a call, so it refreshes on
+        // a slower beat.
+        setInterval(loadCounts, 4000);
+        setInterval(loadData, 15000);
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
         setInterval(loadFixIvsFiles, 30000);
@@ -1821,6 +1844,47 @@ def api_claims():
         return jsonify({'claims': claims, 'tasks': tasks})
     except Exception as e:
         return jsonify({'claims': [], 'tasks': [], 'error': str(e)})
+
+
+@app.route('/api/claim-counts')
+def api_claim_counts():
+    """Just the hero numbers, per bot.
+
+    /api/claims returns every field of every claim — around 3MB and 2-3
+    seconds once the table passed a thousand rows. Polling that every 4s to
+    move one counter meant the number lagged behind the bot that was updating
+    it. This projects only what the counter needs, so the headline can refresh
+    quickly while the full table refreshes on its own slower schedule.
+    """
+    try:
+        table = dynamodb.Table('helixona-claims')
+        items, kwargs = [], {
+            'ProjectionExpression': '#st, submission_type, symplisend_submitted',
+            'ExpressionAttributeNames': {'#st': 'state'},
+        }
+        while True:
+            resp = table.scan(**kwargs)
+            items.extend(resp.get('Items', []))
+            if 'LastEvaluatedKey' not in resp:
+                break
+            kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+
+        submitted_states = set(PIPELINE_STAGES['submitted']['states'])
+
+        def tally(rows):
+            total = len(rows)
+            done = sum(1 for r in rows
+                       if int(r.get('state') or 0) in submitted_states)
+            return {'submitted': done, 'total': total}
+
+        is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
+        return jsonify({
+            'submissions': tally([r for r in items if not is_resub(r)]),
+            'resubmissions': tally([r for r in items if is_resub(r)]),
+            'all': tally(items),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 @app.route('/api/logs')
