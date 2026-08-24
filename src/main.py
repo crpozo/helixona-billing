@@ -1708,56 +1708,38 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
     return False
 
 
-def _find_symplisend_page(context, timeout_s=45):
-    """Return the open tab that is actually SympliSend.
+def _find_symplisend_page(context, timeout_s=60):
+    """Wait for a tab whose hostname is SympliSend, without touching anything.
 
-    Clicking the SympliSend link opens more than one tab — a blank one, the
-    Blue Shield SSO bridge, and the real destination — in an order that is not
-    guaranteed. `expect_page` hands back whichever opened first, which is how
-    the bot ended up driving an about:blank and timing out on "New Submission"
-    for every claim.
+    This function deliberately does NOT click. Blue Shield's SSO bridge
+    redirects to SympliSend on its own; clicking a "Continue" on that bridge
+    interrupts the redirect and spawns a blank tab, which is how a run ended
+    up with four tabs and no SympliSend. The interstitial is handled once, on
+    the page where the link was clicked, and nowhere else.
 
-    So ignore arrival order: look at every tab and take the one whose hostname
-    says SympliSend. Polling also covers the SSO bridge, which redirects there
-    on its own a few seconds later.
-
-    The interstitial is dismissed at most ONCE per tab. Retrying it every pass
-    kept re-clicking Continue on the Blue Shield page, and each click opens
-    another tab — nine of them in one run, which is the pile of about:blanks
-    this loop was supposed to see past rather than create.
+    A blank tab is not skipped — the destination sometimes opens blank and
+    navigates a moment later.
     """
     deadline = time.time() + timeout_s
-    dismissed = set()
     announced = set()
-
     while time.time() < deadline:
         for pg in list(context.pages):
             try:
                 url = pg.url or ''
             except Exception:
                 continue
-
             if 'symplisend' in urlparse(url).netloc.lower():
                 logger.info(f"✅ SympliSend tab: {url[:100]}")
                 _close_blank_tabs(context, keep=pg)
                 return pg
-
             if url and url not in announced:
                 announced.add(url)
-                logger.info(f"  (ignoring tab: {url[:80]})")
-
-            key = id(pg)
-            if key not in dismissed:
-                dismissed.add(key)
-                try:
-                    _dismiss_third_party_interstitial(pg, timeout_ms=600)
-                except Exception:
-                    pass
-        time.sleep(1.5)
+                logger.info(f"  (waiting; tab is {url[:80]})")
+        time.sleep(1.0)
 
     logger.error(
         f"❌ No SympliSend tab appeared within {timeout_s}s. Open tabs: "
-        + ', '.join((p.url or '?')[:70] for p in context.pages))
+        + ', '.join((p.url or 'about:blank')[:70] for p in context.pages))
     return None
 
 
@@ -9927,9 +9909,18 @@ def process_message(message: dict, aws_client: AWSClient):
         
         # The submission rule itself lives in src/rules/submission_gate.py so it
         # is stated once and can be tested without a browser.
-        ready_claims = [item for item in all_claims if ready_to_submit(item)]
-
-        logger.info(f"📋 {len(ready_claims)} claims ready for submission (out of {len(all_claims)} total)")
+        # Each bot sends only its own lane's claims. Without this both bots
+        # scanned the whole table, so running them together had two browsers
+        # racing for the same work.
+        _role = _settings.bot_role
+        ready_claims = [
+            item for item in all_claims
+            if ready_to_submit(item) and form_types.belongs_to_bot(item, _role)
+        ]
+        _ready_any = sum(1 for item in all_claims if ready_to_submit(item))
+        logger.info(
+            f"📋 {len(ready_claims)} claims ready for this bot ({_role}) — "
+            f"{_ready_any} ready overall, out of {len(all_claims)} total")
         
         # Filter to test claim if specified
         if test_claim_id:
@@ -10259,7 +10250,7 @@ def process_message(message: dict, aws_client: AWSClient):
 
                 # Not new_page_info.value — that is whichever tab opened
                 # first, which is often a blank one.
-                found = _find_symplisend_page(page.context, timeout_s=45)
+                found = _find_symplisend_page(page.context, timeout_s=60)
                 symplisend_page = found or new_page_info.value
                 symplisend_page.wait_for_load_state('domcontentloaded', timeout=60000)
                 symplisend_clicked = True
@@ -10299,8 +10290,6 @@ def process_message(message: dict, aws_client: AWSClient):
                 if _on_symplisend_host(symplisend_page.url):
                     on_symplisend = True
                     break
-                # A late interstitial can still be sitting on the page.
-                _dismiss_third_party_interstitial(symplisend_page, timeout_ms=1500)
                 time.sleep(3)
                 logger.info(f"  Waiting for SympliSend redirect... URL: {symplisend_page.url[:80]}")
 

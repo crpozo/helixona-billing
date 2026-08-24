@@ -11,6 +11,7 @@ import unittest
 
 from src.symplisend.form_types import (
     ATTACHMENT_BS_REQUESTED,
+    belongs_to_bot,
     FIRST_SUBMISSION,
     PRIOR_CLAIM,
     describe,
@@ -102,6 +103,45 @@ class AResubmissionWithoutItsNumber(unittest.TestCase):
         self.assertFalse(describe(RESUB)['downgraded'])
 
 
+class EachBotSendsOnlyItsOwnLane(unittest.TestCase):
+    """Both bots used to scan the whole table, so they raced for the same claims."""
+
+    def test_the_resubmissions_bot_takes_resubmissions(self):
+        self.assertTrue(belongs_to_bot(RESUB, 'resubmissions'))
+
+    def test_the_resubmissions_bot_leaves_first_time_claims_alone(self):
+        self.assertFalse(belongs_to_bot(FIRST, 'resubmissions'))
+
+    def test_the_submissions_bot_takes_first_time_claims(self):
+        self.assertTrue(belongs_to_bot(FIRST, 'submissions'))
+
+    def test_the_submissions_bot_leaves_resubmissions_alone(self):
+        self.assertFalse(belongs_to_bot(RESUB, 'submissions'))
+
+    def test_every_claim_belongs_to_exactly_one_bot(self):
+        # No claim may be picked up twice, and none may be stranded.
+        for claim in (RESUB, FIRST, {}, {'submission_type': ''},
+                      {'submission_type': 'Resubmission', 'original_ref_no': ''}):
+            owners = [r for r in ('submissions', 'resubmissions')
+                      if belongs_to_bot(claim, r)]
+            self.assertEqual(len(owners), 1, f'{claim} -> {owners}')
+
+    def test_an_unclassified_claim_goes_to_the_submissions_bot(self):
+        self.assertTrue(belongs_to_bot({}, 'submissions'))
+
+    def test_an_unknown_role_owns_nothing(self):
+        # Same principle as queue routing: idling beats taking another lane's work.
+        self.assertFalse(belongs_to_bot(RESUB, 'iv_corrections'))
+        self.assertFalse(belongs_to_bot(FIRST, 'typo_role'))
+
+    def test_a_downgraded_resubmission_still_belongs_to_the_resub_bot(self):
+        # It falls back to the first-submission *form*, but it is still
+        # resubmission work and must not be double-handled.
+        claim = {'submission_type': 'Resubmission', 'original_ref_no': ''}
+        self.assertTrue(belongs_to_bot(claim, 'resubmissions'))
+        self.assertFalse(belongs_to_bot(claim, 'submissions'))
+
+
 class TheSubmissionStepUsesIt(unittest.TestCase):
     def test_main_asks_the_mapping_which_form_to_open(self):
         src = _read(MAIN)
@@ -118,6 +158,10 @@ class TheSubmissionStepUsesIt(unittest.TestCase):
         src = _read(MAIN)
         self.assertIn('skipping rather than sending it as a new claim', src)
         self.assertIn('OUTCOME_BLOCKED', src)
+
+    def test_the_batch_is_scoped_to_the_bot(self):
+        src = _read(MAIN)
+        self.assertIn('form_types.belongs_to_bot(item, _role)', src)
 
     def test_it_still_parses(self):
         ast.parse(_read(MAIN))

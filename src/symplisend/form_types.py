@@ -65,3 +65,26 @@ def describe(claim: dict) -> dict:
         # that should stop the send, but it must not pass unrecorded.
         'downgraded': is_resubmission(claim) and not prior_claim_number(claim),
     }
+
+
+# ── Which bot owns which claims ────────────────────────────────────────────
+#
+# The two bots are separate lanes: their own queue, browser profile, display
+# and noVNC. The submission step, though, used to scan every claim in the table
+# regardless of type, so either bot would send anything that was ready — the
+# tab picked who did the work, not what work got done. Running both at once
+# meant two browsers racing for the same claims.
+_ROLE_OWNS = {
+    'submissions': lambda c: not is_resubmission(c),
+    'resubmissions': is_resubmission,
+}
+
+
+def belongs_to_bot(claim: dict, role: str) -> bool:
+    """True if this claim is the given bot's work.
+
+    An unrecognised role owns nothing. That matches how queues are routed:
+    idling is safe, and picking up another lane's claims is not.
+    """
+    owns = _ROLE_OWNS.get(role)
+    return bool(owns(claim)) if owns else False

@@ -174,11 +174,25 @@ class TheScanDoesNotCreateTheTabsItLooksPast(unittest.TestCase):
         i = src.index('def _find_symplisend_page(')
         return src[i:src.index('\ndef ', i + 10)]
 
-    def test_each_tab_is_dismissed_at_most_once(self):
+    def test_the_scan_never_clicks(self):
+        # Clicking a "Continue" on the SSO bridge interrupts its redirect and
+        # spawns a blank tab — the run that ended with four tabs and no
+        # SympliSend. Waiting is the whole job.
         block = self._finder()
-        self.assertIn('dismissed', block)
-        self.assertIn('id(pg)', block)
-        self.assertIn('dismissed.add', block)
+        self.assertNotIn('_dismiss_third_party_interstitial', block)
+        self.assertNotIn('.click(', block)
+
+    def test_the_interstitial_is_handled_only_where_the_link_was_clicked(self):
+        src = _read(MAIN)
+        # Exact call form, so the def line does not count as a call.
+        calls = src.count('_dismiss_third_party_interstitial(page)')
+        self.assertEqual(calls, 2, 'only the click site and the SSO fallback')
+        self.assertNotIn('_dismiss_third_party_interstitial(symplisend_page', src)
+
+    def test_blank_tabs_are_not_skipped_while_waiting(self):
+        # The destination sometimes opens blank and navigates a moment later.
+        block = self._finder()
+        self.assertNotIn("== 'about:blank'", block)
 
     def test_blank_tabs_are_cleaned_up(self):
         src = _read(MAIN)
