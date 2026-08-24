@@ -118,6 +118,33 @@ class TheFlowUsesIt(unittest.TestCase):
         self.assertIn('leaving blue shield', js.lower())
 
 
+class ReachingSympliSendIsJudgedByHostname(unittest.TestCase):
+    """A substring match let a blueshieldca.com URL pass as the dashboard."""
+
+    @staticmethod
+    def _on_host(url):
+        from urllib.parse import urlparse
+        return 'symplisend' in urlparse(url).netloc.lower()
+
+    def test_the_sso_page_we_got_stuck_on_is_rejected(self):
+        self.assertFalse(self._on_host(
+            'https://www.blueshieldca.com/providerwebapp/externalSSO'
+            '?partnerId=FirstSource&parentPage=howtoSubmit&tab=same'))
+
+    def test_a_blue_shield_url_containing_dashboard_is_rejected(self):
+        # The exact hole: the old check accepted 'dashboard' anywhere in the URL.
+        self.assertFalse(self._on_host('https://www.blueshieldca.com/providerwebapp/dashboard'))
+
+    def test_the_real_symplisend_host_is_accepted(self):
+        self.assertTrue(self._on_host(
+            'https://symplisendbscprovider-prod.azurewebsites.net/#/autologin?userid=x'))
+
+    def test_main_checks_the_hostname_not_a_substring(self):
+        src = _read(MAIN)
+        self.assertIn('_on_symplisend_host', src)
+        self.assertNotIn("'dashboard' in symplisend_page.url", src)
+
+
 class NotReachingSympliSendAborts(unittest.TestCase):
     def test_the_run_stops_instead_of_failing_every_claim(self):
         # Sixty 10-second timeouts and sixty misleading audit rows is a worse

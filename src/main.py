@@ -10208,10 +10208,22 @@ def process_message(message: dict, aws_client: AWSClient):
             logger.info(f"📂 SympliSend page: {symplisend_page.url[:100]}")
             time.sleep(5)
             
-            # Wait for the dashboard to appear
+            # Wait for the dashboard to appear.
+            #
+            # Judged by HOSTNAME, not by a substring anywhere in the URL. The
+            # old test also accepted any URL containing 'dashboard', which a
+            # blueshieldca.com page can satisfy while being nowhere near
+            # SympliSend — the run then worked through the whole claim list
+            # against the wrong page.
+            def _on_symplisend_host(url):
+                try:
+                    return 'symplisend' in urlparse(url).netloc.lower()
+                except Exception:
+                    return False
+
             on_symplisend = False
             for _wait in range(10):
-                if 'symplisendbscprovider' in symplisend_page.url or 'dashboard' in symplisend_page.url:
+                if _on_symplisend_host(symplisend_page.url):
                     on_symplisend = True
                     break
                 # A late interstitial can still be sitting on the page.
