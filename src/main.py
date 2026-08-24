@@ -1714,36 +1714,67 @@ def _find_symplisend_page(context, timeout_s=45):
     Clicking the SympliSend link opens more than one tab — a blank one, the
     Blue Shield SSO bridge, and the real destination — in an order that is not
     guaranteed. `expect_page` hands back whichever opened first, which is how
-    the bot ended up driving an about:blank or an externalSSO page and timing
-    out on "New Submission" for every claim.
+    the bot ended up driving an about:blank and timing out on "New Submission"
+    for every claim.
 
     So ignore arrival order: look at every tab and take the one whose hostname
     says SympliSend. Polling also covers the SSO bridge, which redirects there
     on its own a few seconds later.
+
+    The interstitial is dismissed at most ONCE per tab. Retrying it every pass
+    kept re-clicking Continue on the Blue Shield page, and each click opens
+    another tab — nine of them in one run, which is the pile of about:blanks
+    this loop was supposed to see past rather than create.
     """
     deadline = time.time() + timeout_s
+    dismissed = set()
     announced = set()
+
     while time.time() < deadline:
         for pg in list(context.pages):
             try:
                 url = pg.url or ''
             except Exception:
                 continue
+
             if 'symplisend' in urlparse(url).netloc.lower():
                 logger.info(f"✅ SympliSend tab: {url[:100]}")
+                _close_blank_tabs(context, keep=pg)
                 return pg
+
             if url and url not in announced:
                 announced.add(url)
                 logger.info(f"  (ignoring tab: {url[:80]})")
-            try:
-                _dismiss_third_party_interstitial(pg, timeout_ms=600)
-            except Exception:
-                pass
+
+            key = id(pg)
+            if key not in dismissed:
+                dismissed.add(key)
+                try:
+                    _dismiss_third_party_interstitial(pg, timeout_ms=600)
+                except Exception:
+                    pass
         time.sleep(1.5)
+
     logger.error(
         f"❌ No SympliSend tab appeared within {timeout_s}s. Open tabs: "
         + ', '.join((p.url or '?')[:70] for p in context.pages))
     return None
+
+
+def _close_blank_tabs(context, keep=None):
+    """Close leftover about:blank tabs so they do not pile up across claims."""
+    closed = 0
+    for pg in list(context.pages):
+        if pg is keep:
+            continue
+        try:
+            if (pg.url or '') in ('about:blank', ''):
+                pg.close()
+                closed += 1
+        except Exception:
+            pass
+    if closed:
+        logger.info(f"🧹 Closed {closed} blank tab(s)")
 
 
 def _dismiss_third_party_interstitial(page, timeout_ms=9000):

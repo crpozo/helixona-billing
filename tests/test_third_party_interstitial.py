@@ -166,6 +166,38 @@ class TheRightTabIsPickedByHostname(unittest.TestCase):
         self.assertIn('found or new_page_info.value', src[i:i + 300])
 
 
+class TheScanDoesNotCreateTheTabsItLooksPast(unittest.TestCase):
+    """Dismissing on every pass re-clicked Continue, and each click opens a tab."""
+
+    def _finder(self):
+        src = _read(MAIN)
+        i = src.index('def _find_symplisend_page(')
+        return src[i:src.index('\ndef ', i + 10)]
+
+    def test_each_tab_is_dismissed_at_most_once(self):
+        block = self._finder()
+        self.assertIn('dismissed', block)
+        self.assertIn('id(pg)', block)
+        self.assertIn('dismissed.add', block)
+
+    def test_blank_tabs_are_cleaned_up(self):
+        src = _read(MAIN)
+        self.assertIn('def _close_blank_tabs(', src)
+        self.assertIn('_close_blank_tabs(context, keep=pg)', src)
+
+    def test_the_found_tab_is_never_closed(self):
+        src = _read(MAIN)
+        i = src.index('def _close_blank_tabs(')
+        block = src[i:i + 700]
+        self.assertIn('if pg is keep', block)
+
+    def test_only_blank_urls_are_closed(self):
+        src = _read(MAIN)
+        i = src.index('def _close_blank_tabs(')
+        block = src[i:i + 700]
+        self.assertIn("('about:blank', '')", block)
+
+
 class TheFormTypeIsChosenBeforeOpeningTheForm(unittest.TestCase):
     """New Submission opens whichever type the nav is on."""
 
