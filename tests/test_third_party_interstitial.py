@@ -109,13 +109,24 @@ class TheFlowUsesIt(unittest.TestCase):
         i = src.index('externalSSO?partnerId=FirstSource')
         self.assertIn('_dismiss_third_party_interstitial', src[i:i + 600])
 
-    def test_cancel_is_never_clicked(self):
-        self.assertIn('!/cancel/i.test(label)', _selector_js())
+    def test_only_an_exact_continue_is_clicked(self):
+        # "Continue reading" and friends are not this button.
+        self.assertIn('/^continue$/i', _selector_js())
 
-    def test_it_scopes_to_the_dialog_before_the_whole_page(self):
+    def test_there_is_no_whole_page_fallback(self):
+        # Scanning document.body whenever the marker words appeared anywhere is
+        # what made it click Blue Shield's own links and spawn blank tabs.
+        self.assertNotIn('document.body', _selector_js())
+
+    def test_it_requires_a_real_dialog(self):
         js = _selector_js()
         self.assertIn('role="dialog"', js)
         self.assertIn('leaving blue shield', js.lower())
+
+    def test_the_dialog_and_button_must_be_visible(self):
+        js = _selector_js()
+        self.assertIn('isVisible', js)
+        self.assertIn('getBoundingClientRect', js)
 
 
 class ReachingSympliSendIsJudgedByHostname(unittest.TestCase):
@@ -174,25 +185,21 @@ class TheScanDoesNotCreateTheTabsItLooksPast(unittest.TestCase):
         i = src.index('def _find_symplisend_page(')
         return src[i:src.index('\ndef ', i + 10)]
 
-    def test_the_scan_never_clicks(self):
-        # Clicking a "Continue" on the SSO bridge interrupts its redirect and
-        # spawns a blank tab — the run that ended with four tabs and no
-        # SympliSend. Waiting is the whole job.
+    def test_the_modal_is_still_clicked_while_waiting(self):
+        # It is what opens SympliSend, and it can surface a little late.
         block = self._finder()
-        self.assertNotIn('_dismiss_third_party_interstitial', block)
-        self.assertNotIn('.click(', block)
+        self.assertIn('_dismiss_third_party_interstitial', block)
 
-    def test_the_interstitial_is_handled_only_where_the_link_was_clicked(self):
-        src = _read(MAIN)
-        # Exact call form, so the def line does not count as a call.
-        calls = src.count('_dismiss_third_party_interstitial(page)')
-        self.assertEqual(calls, 2, 'only the click site and the SSO fallback')
-        self.assertNotIn('_dismiss_third_party_interstitial(symplisend_page', src)
-
-    def test_blank_tabs_are_not_skipped_while_waiting(self):
-        # The destination sometimes opens blank and navigates a moment later.
+    def test_blank_tabs_are_not_clicked(self):
         block = self._finder()
-        self.assertNotIn("== 'about:blank'", block)
+        self.assertIn("url != 'about:blank'", block)
+
+    def test_blank_tabs_are_still_watched(self):
+        # The destination sometimes opens blank and navigates a moment later,
+        # so skipping them entirely would miss it.
+        block = self._finder()
+        i = block.index('symplisend')
+        self.assertNotIn('continue', block[:i].lower().split('def ')[-1][:400])
 
     def test_blank_tabs_are_cleaned_up(self):
         src = _read(MAIN)

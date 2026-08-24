@@ -1709,32 +1709,43 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
 
 
 def _find_symplisend_page(context, timeout_s=60):
-    """Wait for a tab whose hostname is SympliSend, without touching anything.
+    """Wait for the SympliSend tab, clicking the redirect modal if it appears.
 
-    This function deliberately does NOT click. Blue Shield's SSO bridge
-    redirects to SympliSend on its own; clicking a "Continue" on that bridge
-    interrupts the redirect and spawns a blank tab, which is how a run ended
-    up with four tabs and no SympliSend. The interstitial is handled once, on
-    the page where the link was clicked, and nowhere else.
+    The modal is what opens SympliSend, so it has to be clicked — but it can
+    surface on any of the Blue Shield tabs, and a little later than the link
+    click. Each tab is therefore re-checked, using the strict detector that
+    only fires on a visible dialog carrying the modal's own wording.
 
-    A blank tab is not skipped — the destination sometimes opens blank and
-    navigates a moment later.
+    Blank tabs are skipped for clicking (there is nothing on them) but still
+    watched, because the destination sometimes opens blank and navigates a
+    moment later.
     """
     deadline = time.time() + timeout_s
     announced = set()
+
     while time.time() < deadline:
         for pg in list(context.pages):
             try:
                 url = pg.url or ''
             except Exception:
                 continue
+
             if 'symplisend' in urlparse(url).netloc.lower():
                 logger.info(f"✅ SympliSend tab: {url[:100]}")
                 _close_blank_tabs(context, keep=pg)
                 return pg
+
             if url and url not in announced:
                 announced.add(url)
                 logger.info(f"  (waiting; tab is {url[:80]})")
+
+            # Nothing to click on a blank tab, and the SSO bridge redirects on
+            # its own — the strict detector no-ops on both.
+            if url and url != 'about:blank':
+                try:
+                    _dismiss_third_party_interstitial(pg, timeout_ms=400)
+                except Exception:
+                    pass
         time.sleep(1.0)
 
     logger.error(
@@ -1760,35 +1771,44 @@ def _close_blank_tabs(context, keep=None):
 
 
 def _dismiss_third_party_interstitial(page, timeout_ms=9000):
-    """Click through Blue Shield's "you're leaving our site" modal.
+    """Click Continue on Blue Shield's "you're leaving our site" modal.
 
     Blue Shield puts an interstitial between the SympliSend link and SympliSend
     itself — "You're leaving Blue Shield of California and going to a
-    third-party site", with Cancel and Continue. The new tab only opens after
-    Continue, so anything waiting for a popup waits forever and then falls
-    through to a page that is not SympliSend.
+    third-party site", with Cancel and Continue. The destination tab only opens
+    once Continue is clicked, so this has to happen; it is not optional.
 
-    Returns True if a Continue was clicked. A missing modal is not a failure —
-    Blue Shield may drop it again, and the flow works either way.
+    What it must NOT do is click anything else. An earlier version fell back to
+    scanning the whole body whenever the marker words appeared anywhere on the
+    page, and then clicked the first "Continue" it found — on Blue Shield's own
+    pages that meant clicking links that navigated away and spawned blank tabs.
+
+    So: a real, VISIBLE dialog element carrying the modal's own wording, and a
+    button whose label is exactly "Continue". No body fallback, no partial
+    label match. If that is not on screen, this does nothing and says so by
+    returning False.
     """
     deadline = time.time() + (timeout_ms / 1000.0)
     while time.time() < deadline:
         try:
-            # Scope to the dialog by its own wording first, so we never click
-            # some unrelated "Continue" (a cookie banner, say) on the page.
             clicked = page.evaluate("""() => {
-                const wanted = /continue/i;
                 const marker = /leaving blue shield|third-party site|redirecting you to/i;
-                const scopes = Array.from(document.querySelectorAll(
-                    '[role="dialog"], [aria-modal="true"], .modal, .modal-content'))
-                    .filter(el => marker.test(el.innerText || ''));
-                const pools = scopes.length ? scopes : (
-                    marker.test(document.body.innerText || '') ? [document.body] : []);
-                for (const scope of pools) {
-                    const btns = scope.querySelectorAll('button, a, input[type=button], input[type=submit]');
-                    for (const b of btns) {
+                const isVisible = el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.width <= 0 || r.height <= 0) return false;
+                    const cs = getComputedStyle(el);
+                    return cs.visibility !== 'hidden' && cs.display !== 'none'
+                           && cs.opacity !== '0';
+                };
+                const dialogs = Array.from(document.querySelectorAll(
+                    '[role="dialog"], [aria-modal="true"], .modal, .modal-content, .modal-dialog'))
+                    .filter(el => isVisible(el) && marker.test(el.innerText || ''));
+                for (const d of dialogs) {
+                    for (const b of d.querySelectorAll(
+                            'button, a, input[type=button], input[type=submit]')) {
                         const label = (b.innerText || b.value || '').trim();
-                        if (wanted.test(label) && !/cancel/i.test(label)) {
+                        // Exact label only: "Continue reading" is not this button.
+                        if (/^continue$/i.test(label) && isVisible(b)) {
                             b.click();
                             return label;
                         }
@@ -1797,13 +1817,12 @@ def _dismiss_third_party_interstitial(page, timeout_ms=9000):
                 return null;
             }""")
             if clicked:
-                logger.info(f"✅ Dismissed Blue Shield third-party interstitial ('{clicked}')")
+                logger.info(f"✅ Clicked Continue on the Blue Shield redirect modal")
                 return True
         except Exception:
             pass
         time.sleep(0.4)
     return False
-
 
 def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
     """Open (or re-open) the ECW claim detail popup via the Claim Lookup input.
