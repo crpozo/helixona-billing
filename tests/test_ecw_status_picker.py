@@ -43,7 +43,22 @@ class ThePickerIsFoundByBehaviourNotById(unittest.TestCase):
         self.assertNotIn("querySelector('button#billingClaimBtn83')", _step3_js())
 
     def test_any_billing_claim_button_matches(self):
-        self.assertIn('button[id^="billingClaimBtn"]', _step3_js())
+        # Any tag, not just <button>: ECW renders these as button, input and a
+        # depending on the row.
+        self.assertIn('[id^="billingClaimBtn"]', _step3_js())
+        self.assertNotIn('button[id^="billingClaimBtn"]', _step3_js())
+
+    def test_both_ellipsis_forms_are_accepted(self):
+        # "..." as three periods and as the single U+2026 character.
+        self.assertIn(r'\u2026', _step3_js())
+
+    def test_a_failure_reports_what_is_actually_on_the_page(self):
+        # Two rounds of guessing selectors is enough; the next miss should
+        # arrive with the evidence attached.
+        src = _read()
+        self.assertIn('elements around the Claim Status field', src)
+        i = src.index('could not open the Claim Status picker')
+        self.assertIn('ngClick', src[i:i + 2500])
 
     def test_the_ng_click_is_tried_first(self):
         js = _step3_js()

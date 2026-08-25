@@ -223,8 +223,10 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
                     if (visible(x)) { x.click(); return 'selectClaimStatusCode'; }
                 }
 
-                // 2. Any billingClaimBtn, whatever its index.
-                for (const x of document.querySelectorAll('button[id^="billingClaimBtn"]')) {
+                // 2. Any billingClaimBtn, whatever its index or tag. ECW
+                //    renders these as <button>, <input> and <a> depending on
+                //    the row.
+                for (const x of document.querySelectorAll('[id^="billingClaimBtn"]')) {
                     if (visible(x)) { x.click(); return x.id; }
                 }
 
@@ -236,9 +238,13 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
                 for (const lab of labels) {
                     let box = lab.parentElement;
                     for (let up = 0; box && up < 4; up++, box = box.parentElement) {
-                        for (const b of box.querySelectorAll('button, a, img, span')) {
+                        for (const b of box.querySelectorAll(
+                                'button, a, img, span, input, div[onclick], [role="button"]')) {
                             const t = (b.innerText || b.value || b.title || b.alt || '').trim();
-                            if (/^\.{2,3}$/.test(t) && visible(b)) { b.click(); return 'ellipsis-near-label'; }
+                            // "..." as periods, or the single U+2026 character.
+                            if (/^(\.{2,3}|\u2026)$/.test(t) && visible(b)) {
+                                b.click(); return 'ellipsis-near-label';
+                            }
                         }
                     }
                 }
@@ -255,6 +261,42 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
             f"  ❌ STEP 3 — could not open the Claim Status picker for claim {claim_id}. "
             f"Tried selectClaimStatusCode, billingClaimBtn*, and the '...' beside the "
             f"Claim Status field.")
+        # Two rounds of guessing selectors is enough. Report what is actually
+        # next to the Claim Status field so the next attempt is informed.
+        for frm in page.frames:
+            try:
+                found = frm.evaluate('''() => {
+                    const out = [];
+                    const labels = Array.from(document.querySelectorAll('td, th, label, span, div'))
+                        .filter(el => /claim\\s*status/i.test((el.textContent || '').trim())
+                                      && (el.textContent || '').trim().length < 40);
+                    for (const lab of labels.slice(0, 3)) {
+                        let box = lab.parentElement;
+                        for (let up = 0; box && up < 3; up++, box = box.parentElement) {
+                            for (const el of box.querySelectorAll('*')) {
+                                const r = el.getBoundingClientRect();
+                                const t = (el.innerText || el.value || el.title || el.alt || '').trim();
+                                if (!t && !el.id && !el.getAttribute('ng-click')) continue;
+                                out.push({
+                                    tag: el.tagName,
+                                    id: el.id || '',
+                                    cls: (el.className || '').toString().slice(0, 40),
+                                    text: t.slice(0, 20),
+                                    ngClick: (el.getAttribute('ng-click')
+                                              || el.getAttribute('data-ng-click') || '').slice(0, 40),
+                                    onclick: (el.getAttribute('onclick') || '').slice(0, 40),
+                                    visible: r.width > 0 && r.height > 0,
+                                });
+                            }
+                        }
+                    }
+                    return out.slice(0, 25);
+                }''')
+                if found:
+                    logger.warning(f"     elements around the Claim Status field: {found}")
+                    break
+            except Exception:
+                continue
         _close_claim_popup(page)
         return False
     time.sleep(2)
