@@ -144,5 +144,41 @@ class DashboardAgreesWithTheAgent(unittest.TestCase):
         self.assertEqual(dashboard.BOT_ROUTING['resubmissions']['novnc_port'], 6081)
 
 
+class EcwStatusCanBeRechecked(unittest.TestCase):
+    """Claims we believe are updated can drift back.
+
+    Claim 13 was recorded as set to "Claim sent via Symplisend" on 2026-06-28
+    and verified at the time, yet ECW showed it in "Ready to Bill - Symplisend
+    CC" weeks later. The resubmissions bot extracts on exactly that status, so
+    every stale one is re-walked on every run.
+    """
+
+    def _main(self):
+        import os
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'src', 'main.py')
+        with open(p, encoding='utf-8') as fh:
+            return fh.read()
+
+    def test_recheck_revisits_claims_already_marked_updated(self):
+        src = self._main()
+        self.assertIn("recheck = bool(body.get('recheck'))", src)
+        self.assertIn("and (recheck or not item.get('ecw_status_updated'))", src)
+
+    def test_without_recheck_only_the_never_updated_are_touched(self):
+        # The default must stay cheap and narrow.
+        src = self._main()
+        self.assertIn("not item.get('ecw_status_updated')", src)
+
+    def test_a_claim_already_correct_is_left_alone(self):
+        # What makes a recheck over hundreds of claims affordable: read first,
+        # write only where ECW actually disagrees.
+        src = self._main()
+        self.assertIn('already reads', src)
+        i = src.index('Claim Status BEFORE')
+        j = src.index('STEP 3 — open the Claim Status Code picker')
+        self.assertIn('return True', src[i:j])
+
+
 if __name__ == '__main__':
     unittest.main()

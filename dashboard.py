@@ -2599,8 +2599,14 @@ function render() {
   const supLabel = showSuperseded
     ? ` <span class="chip" onclick="toggleSuperseded()">including retried attempts &times;</span>`
     : (hidden ? ` <span class="chip" onclick="toggleSuperseded()">${hidden} retried attempt${hidden === 1 ? '' : 's'} hidden — show</span>` : '');
+  const term = document.getElementById('q').value.trim().toLowerCase();
+  const exactCount = term ? SHOWN.filter(r =>
+      String(r.claim_id || '').toLowerCase() === term
+      || String(r.blueshield_claim_number || '').toLowerCase() === term).length : 0;
+  const exactNote = exactCount
+    ? ` <span class="chip">${exactCount} exact claim-number match${exactCount === 1 ? '' : 'es'} first</span>` : '';
   document.getElementById('count').innerHTML =
-    `Showing <b>${slice.length.toLocaleString()}</b> of <b>${SHOWN.length.toLocaleString()}</b> submissions${active}${supLabel}`;
+    `Showing <b>${slice.length.toLocaleString()}</b> of <b>${SHOWN.length.toLocaleString()}</b> submissions${active}${supLabel}${exactNote}`;
 }
 
 function showMore() { limit += PAGE; render(); }
@@ -2646,6 +2652,18 @@ function apply() {
   const q = qs();
   document.getElementById('csv').href = '/api/audit-log.csv' + (q ? '?' + q : '');
   SHOWN = ALL.filter(matches);
+
+  // Searching a claim number matches it as a substring everywhere — "13" hits
+  // 485 rows through dates, subscriber IDs and longer claim numbers, and the
+  // claim actually numbered 13 is lost among them. Exact matches come first.
+  const term = document.getElementById('q').value.trim().toLowerCase();
+  if (term) {
+    const exact = r => (String(r.claim_id || '').toLowerCase() === term
+                     || String(r.blueshield_claim_number || '').toLowerCase() === term) ? 0 : 1;
+    SHOWN = SHOWN.slice().sort((a, b) => exact(a) - exact(b)
+      || String(b.submitted_at_utc || '').localeCompare(String(a.submitted_at_utc || '')));
+  }
+
   limit = PAGE;
   tiles();
   render();

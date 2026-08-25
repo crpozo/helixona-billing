@@ -185,7 +185,15 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     time.sleep(3)
     _dismiss_claim_alert(page)
 
-    logger.info(f"  STEP 2 — Claim Status BEFORE = {_read_status()!r}")
+    _before = _read_status()
+    logger.info(f"  STEP 2 — Claim Status BEFORE = {_before!r}")
+
+    # Already correct — nothing to do. This is what makes a recheck over
+    # hundreds of claims cheap: it costs a page open and a read, and writes
+    # only where ECW actually disagrees with us.
+    if _before and _before.strip().lower() == target_label.strip().lower():
+        logger.info(f"  ✅ Claim {claim_id} already reads '{target_label}' — left alone")
+        return True
 
     # STEP 3 — open the Claim Status Code picker
     status_btn_clicked = False
@@ -11026,18 +11034,35 @@ def process_message(message: dict, aws_client: AWSClient):
         logger.info("═══ ECW Status Update — Updating claim statuses in ECW ═══")
         
         test_claim_id = body.get('test_claim_id')
+        # `recheck` revisits claims we believe are already updated. They can
+        # drift: claim 13 was recorded as set to "Claim sent via Symplisend" on
+        # 2026-06-28 and verified at the time, yet ECW showed it back in
+        # "Ready to Bill - Symplisend CC" weeks later — a later edit by a person
+        # or a save that did not stick. Since the resubmissions bot extracts on
+        # exactly that status, every stale one is re-walked on every run.
+        #
+        # _set_claim_status_in_ecw reads the status first and returns early when
+        # it already matches, so a recheck over hundreds of claims costs a page
+        # open each and writes nothing where nothing is wrong.
+        recheck = bool(body.get('recheck'))
         claims_table = aws_client.dynamodb.Table('helixona-claims')
-        
+
         try:
             submitted_claims = [
                 item for item in scan_all(claims_table)
-                if item.get('symplisend_submitted') and not item.get('ecw_status_updated')
+                if item.get('symplisend_submitted')
+                and (recheck or not item.get('ecw_status_updated'))
             ]
             if test_claim_id:
                 submitted_claims = [c for c in submitted_claims if str(c.get('claim_id', '')) == str(test_claim_id)]
         except Exception as e:
             logger.error(f"Failed to scan for submitted claims: {e}")
             submitted_claims = []
+
+        if recheck:
+            logger.info(
+                f"🔁 Recheck mode — revisiting {len(submitted_claims)} submitted claims, "
+                f"including ones already marked updated.")
         
         if not submitted_claims:
             logger.info("No claims need ECW status update")
