@@ -314,6 +314,36 @@ class ClaimsApiReturnsEverything(unittest.TestCase):
         self.assertIn('1197', ids)
 
 
+class TheClaimsTableTellsTheTruthAboutHcfa(unittest.TestCase):
+    """A missing HCFA used to render as a present one.
+
+    The cell showed the chip whenever state >= 2, file or no file, so 23 claims
+    whose PDF capture failed read "HCFA" and looked complete. The subscriber ID
+    is parsed out of HCFA box 1a, so those same claims were missing that too,
+    and the pair blocked submission with nothing on screen to say why.
+    """
+
+    def test_the_chip_is_no_longer_shown_on_state_alone(self):
+        self.assertNotIn('!!c.hcfa_s3_path || state >= 2', dashboard.DASHBOARD_HTML)
+
+    def test_the_chip_requires_the_file(self):
+        html = dashboard.DASHBOARD_HTML
+        self.assertIn('if (c.hcfa_s3_path) {', html)
+
+    def test_an_attempted_generation_with_no_file_reads_as_failed(self):
+        html = dashboard.DASHBOARD_HTML
+        self.assertIn('HCFA failed', html)
+        self.assertIn('hcfaTried', html)
+
+    def test_the_failure_says_what_to_do_about_it(self):
+        self.assertIn('Re-run ECW Obtain Claims Documentation', dashboard.DASHBOARD_HTML)
+
+    def test_a_claim_never_attempted_shows_neither(self):
+        html = dashboard.DASHBOARD_HTML
+        i = html.index('hcfaCell = \'—\'')
+        self.assertGreater(i, html.index('hcfaTried'))
+
+
 class ApiFailsSoftly(unittest.TestCase):
     def test_a_dynamodb_error_returns_empty_rows_not_a_500(self):
         class Broken:

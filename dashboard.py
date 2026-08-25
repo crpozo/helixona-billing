@@ -1203,12 +1203,27 @@ window.scrollToEl = function(sel){
             body.innerHTML = claims.map(c => {
                 const state = parseInt(c.state || c.current_state || 0);
                 const stageKey = getStageKey(state);
-                // HCFA status — clickable if generated (opens actual PDF)
-                const hasHCFA = !!c.hcfa_s3_path || state >= 2;
+                // HCFA status.
+                //
+                // This used to show the chip whenever state >= 2, whether or
+                // not the file existed — so a claim whose PDF capture failed
+                // still read "📄 HCFA" and looked complete. The subscriber ID
+                // is parsed out of HCFA box 1a, so those claims were also
+                // missing that, and the pair blocked submission silently.
+                //
+                // Now: the chip only when the file is really in S3, and a
+                // visible failure when generation was attempted without one.
                 const hcfaTitle = c.hcfa_generated_at ? `Generated: ${c.hcfa_generated_at}` : '';
-                const hcfaCell = hasHCFA
-                    ? `<span class="hcfa-link" onclick="window.open('/api/hcfa_pdf/${c.claim_id}', '_blank')" title="${hcfaTitle}">📄 HCFA</span>`
-                    : '—';
+                const hcfaTried = !!c.hcfa_triggered || !!c.hcfa_generated_at;
+                let hcfaCell;
+                if (c.hcfa_s3_path) {
+                    hcfaCell = `<span class="hcfa-link" onclick="window.open('/api/hcfa_pdf/${c.claim_id}', '_blank')" title="${hcfaTitle}">📄 HCFA</span>`;
+                } else if (hcfaTried) {
+                    const when = c.hcfa_generated_at ? ` at ${c.hcfa_generated_at}` : '';
+                    hcfaCell = `<span style="color:#ef4444;font-size:11px;font-weight:600;" title="ECW was asked for the HCFA${when} but the PDF never downloaded. Re-run ECW Obtain Claims Documentation for this claim.">🚫 HCFA failed</span>`;
+                } else {
+                    hcfaCell = '—';
+                }
                 // Submission type from Box 22
                 const subType = c.submission_type || (state >= 2 ? 'Pending' : '—');
                 const refNo = c.original_ref_no || '';
