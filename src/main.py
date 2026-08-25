@@ -195,15 +195,52 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
         logger.info(f"  ✅ Claim {claim_id} already reads '{target_label}' — left alone")
         return True
 
-    # STEP 3 — open the Claim Status Code picker
+    # STEP 3 — open the Claim Status Code picker.
+    #
+    # This used to look for button#billingClaimBtn83 and one ng-click, and
+    # failed on most claims: the numeric suffix is an index that varies per
+    # claim, so the ID matched only occasionally. Every miss returned False and
+    # left the claim in its old status — which is why claims recorded as
+    # "updated" months ago still read "Ready to Bill - Symplisend CC" in ECW.
+    #
+    # Layered instead: the ng-click, then any billingClaimBtn* whatever its
+    # number, then the "..." button sitting beside the Claim Status field.
     status_btn_clicked = False
     for frm in page.frames:
         try:
             which = frm.evaluate('''() => {
-                const b = document.querySelector('button#billingClaimBtn83');
-                if (b && b.offsetWidth > 0) { b.click(); return 'billingClaimBtn83'; }
-                for (const x of document.querySelectorAll('button[data-ng-click="selectClaimStatusCode()"]')) {
-                    if (x.offsetWidth > 0) { x.click(); return 'selectClaimStatusCode'; }
+                const visible = el => {
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+
+                // 1. The behaviour, not the id.
+                for (const x of document.querySelectorAll(
+                        'button[data-ng-click="selectClaimStatusCode()"], '
+                        + '[ng-click="selectClaimStatusCode()"], '
+                        + '[onclick*="selectClaimStatusCode"]')) {
+                    if (visible(x)) { x.click(); return 'selectClaimStatusCode'; }
+                }
+
+                // 2. Any billingClaimBtn, whatever its index.
+                for (const x of document.querySelectorAll('button[id^="billingClaimBtn"]')) {
+                    if (visible(x)) { x.click(); return x.id; }
+                }
+
+                // 3. The "..." beside the Claim Status field. Find the label,
+                //    then the nearest ellipsis button in its row.
+                const labels = Array.from(document.querySelectorAll('td, th, label, span, div'))
+                    .filter(el => /claim\s*status/i.test((el.textContent || '').trim())
+                                  && (el.textContent || '').trim().length < 40);
+                for (const lab of labels) {
+                    let box = lab.parentElement;
+                    for (let up = 0; box && up < 4; up++, box = box.parentElement) {
+                        for (const b of box.querySelectorAll('button, a, img, span')) {
+                            const t = (b.innerText || b.value || b.title || b.alt || '').trim();
+                            if (/^\.{2,3}$/.test(t) && visible(b)) { b.click(); return 'ellipsis-near-label'; }
+                        }
+                    }
                 }
                 return null;
             }''')
@@ -214,7 +251,10 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
         except Exception:
             continue
     if not status_btn_clicked:
-        logger.warning(f"  ❌ STEP 3 — status '...' button not found for claim {claim_id}")
+        logger.warning(
+            f"  ❌ STEP 3 — could not open the Claim Status picker for claim {claim_id}. "
+            f"Tried selectClaimStatusCode, billingClaimBtn*, and the '...' beside the "
+            f"Claim Status field.")
         _close_claim_popup(page)
         return False
     time.sleep(2)
@@ -2961,7 +3001,7 @@ def process_message(message: dict, aws_client: AWSClient):
                 pass
 
             # ── SET FILTERS using Playwright's native interaction (proper AngularJS binding) ──
-            logger.info("Setting date filter: from 06/01/2025")
+            logger.info("Setting date filter: from 07/01/2025")
 
             # Find the Service Dt FROM input using visible label association
             date_set = False
@@ -2981,7 +3021,7 @@ def process_message(message: dict, aws_client: AWSClient):
                             # Use triple-click to select all, then type to replace
                             inp.click(click_count=3)
                             time.sleep(0.3)
-                            inp.fill('06/01/2025')
+                            inp.fill('07/01/2025')
                             inp.dispatch_event('change')
                             inp.dispatch_event('blur')
                             logger.info(f"✅ FROM date set via: {sel}")
@@ -3007,7 +3047,7 @@ def process_message(message: dict, aws_client: AWSClient):
                                     # First date input is FROM
                                     inp.click(click_count=3)
                                     time.sleep(0.3)
-                                    inp.fill('06/01/2025')
+                                    inp.fill('07/01/2025')
                                     inp.dispatch_event('change')
                                     inp.dispatch_event('blur')
                                     logger.info(f"✅ FROM date set via visible input[{i}]: {inp_id}")
@@ -3058,13 +3098,13 @@ def process_message(message: dict, aws_client: AWSClient):
                         inp = page.query_selector(sel)
                         if inp and inp.is_visible():
                             actual_val = inp.input_value()
-                            if actual_val == '06/01/2025':
+                            if actual_val == '07/01/2025':
                                 logger.info(f"✅ FROM date verified: {actual_val}")
                             else:
                                 logger.warning(f"⚠️ FROM date value changed to: {actual_val} — re-setting")
                                 inp.click(click_count=3)
                                 time.sleep(0.2)
-                                inp.fill('06/01/2025')
+                                inp.fill('07/01/2025')
                                 inp.dispatch_event('change')
                                 inp.dispatch_event('blur')
                                 page.keyboard.press('Escape')
@@ -3673,7 +3713,7 @@ def process_message(message: dict, aws_client: AWSClient):
                     'claims': claims_list,
                     'total_found': len(claims_list),
                     'filter_status': 'Ready to Submit to Symplisend',
-                    'filter_date_from': '06/01/2025',
+                    'filter_date_from': '07/01/2025',
                     'scraped_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
                 }
                 with open('/opt/helixona-agent/ecw_claims.json', 'w') as ecw_f:
@@ -4130,7 +4170,7 @@ def process_message(message: dict, aws_client: AWSClient):
             time.sleep(3)
 
             # ── 5. Set filters & Lookup (same as extraction) ──
-            logger.info("Setting date filter: from 06/01/2025")
+            logger.info("Setting date filter: from 07/01/2025")
             date_set = False
             from_selectors = [
                 'input[ng-model*="fromDate"]',
@@ -4145,7 +4185,7 @@ def process_message(message: dict, aws_client: AWSClient):
                     if inp and inp.is_visible():
                         inp.click(click_count=3)
                         time.sleep(0.3)
-                        inp.fill('06/01/2025')
+                        inp.fill('07/01/2025')
                         inp.dispatch_event('change')
                         inp.dispatch_event('blur')
                         logger.info(f"✅ FROM date set via: {sel}")
@@ -4162,7 +4202,7 @@ def process_message(message: dict, aws_client: AWSClient):
                         if val and '/' in val and len(val) == 10:
                             inp.click(click_count=3)
                             time.sleep(0.3)
-                            inp.fill('06/01/2025')
+                            inp.fill('07/01/2025')
                             inp.dispatch_event('change')
                             inp.dispatch_event('blur')
                             logger.info(f"✅ FROM date set via visible input[{i}]")
