@@ -2068,6 +2068,90 @@ def _dismiss_third_party_interstitial(page, timeout_ms=9000):
         time.sleep(0.4)
     return False
 
+def _wait_for_claim_popup(page, claim_id, seconds):
+    """Poll every frame until this claim's popup is up, or time runs out."""
+    import time as _time
+    deadline = _time.time() + seconds
+    while True:
+        for frm in page.frames:
+            try:
+                if frm.evaluate(
+                        POPUP_JS + '((claimId) => findClaimPopup(claimId) !== null)',
+                        str(claim_id)):
+                    return True
+            except Exception:
+                continue
+        if _time.time() >= deadline:
+            return False
+        _time.sleep(0.5)
+
+
+def _open_claim_row(page, claim_id):
+    """Open the claim from its row in the claims results grid.
+
+    Typing a claim number into the lookup box FILTERS the grid on this screen;
+    it does not open the claim. That is why the popup never appeared while the
+    old detection — buttons named Cancel/OK plus "Prog. Notes", all of which
+    the lookup screen has — reported that it had, and why the status read then
+    picked up the grid row instead of a popup.
+
+    Only ever touches the cell holding the claim number, so a stray click
+    cannot land on a checkbox or a row action.
+    """
+    for frm in page.frames:
+        try:
+            how = frm.evaluate(r"""((claimId) => {
+                const vis = el => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                for (const row of document.querySelectorAll('tr')) {
+                    if (!vis(row)) continue;
+                    const cells = Array.from(row.querySelectorAll('td'));
+                    const cell = cells.find(
+                        c => (c.textContent || '').trim() === claimId);
+                    if (!cell) continue;
+                    const link = cell.querySelector('a');
+                    if (link && vis(link)) { link.click(); return 'claim-number-link'; }
+                    cell.dispatchEvent(new MouseEvent('dblclick',
+                        {bubbles: true, cancelable: true, view: window}));
+                    return 'claim-number-dblclick';
+                }
+                return null;
+            })""", str(claim_id))
+            if how:
+                logger.info(f"  ↳ Opening claim {claim_id} from its results row ({how})")
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _report_lookup_failure(page, claim_id):
+    """Say why the popup never came up, in the terms that decide the next move."""
+    for n, frm in enumerate(page.frames):
+        try:
+            info = frm.evaluate(r"""((claimId) => {
+                const rows = Array.from(document.querySelectorAll('tr'));
+                const matching = rows.filter(r => Array.from(r.querySelectorAll('td'))
+                    .some(c => (c.textContent || '').trim() === claimId));
+                const lookupInput = document.querySelector(
+                    'input[id^="claimLookupIpt"], input[ng-model="_InvId"]');
+                return {
+                    rows: rows.length,
+                    rowForThisClaim: matching.length,
+                    rowText: matching.length
+                        ? (matching[0].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+                        : '',
+                    lookupValue: lookupInput ? (lookupInput.value || '') : null,
+                };
+            })""", str(claim_id))
+        except Exception:
+            continue
+        if info.get('rows'):
+            logger.warning(f"     frame {n}: {info}")
+
+
 def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
     """Open (or re-open) the ECW claim detail popup via the Claim Lookup input.
     Returns (popup_found, best_frame) where best_frame is the iframe whose body
@@ -2120,25 +2204,18 @@ def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
     if not lookup_set:
         return (False, None)
 
-    _time.sleep(wait_seconds)
+    # 2. Wait for THIS claim's popup. Button names alone matched the background
+    #    lookup screen, so a claim whose popup never opened was reported as
+    #    opened and then read from the results grid.
+    popup_found = _wait_for_claim_popup(page, claim_id, wait_seconds)
 
-    # 2. Verify the popup opened AND that it is this claim's popup.
-    #    Button names alone matched the background lookup screen, so a claim
-    #    whose popup never opened was reported as opened and then read from the
-    #    results grid.
-    popup_found = False
-    for f_ctx in page.frames:
-        try:
-            has_popup = f_ctx.evaluate(
-                POPUP_JS + '((claimId) => findClaimPopup(claimId) !== null)',
-                str(claim_id))
-            if has_popup:
-                popup_found = True
-                break
-        except Exception:
-            continue
+    # 2b. On this screen the lookup only filters the grid. Open the claim from
+    #     its row, then give it longer than the initial wait.
+    if not popup_found and _open_claim_row(page, claim_id):
+        popup_found = _wait_for_claim_popup(page, claim_id, 8)
 
     if not popup_found:
+        _report_lookup_failure(page, claim_id)
         return (False, None)
 
     # 3. Find best frame (the one with the claim popup buttons)

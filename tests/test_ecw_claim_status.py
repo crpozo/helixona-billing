@@ -92,7 +92,8 @@ class ThePopupMustBeTheRightClaim(unittest.TestCase):
 
     def test_the_opener_verifies_identity_not_just_button_names(self):
         opener = _fn('_open_claim_popup_via_lookup')
-        self.assertIn('findClaimPopup', opener)
+        self.assertIn('_wait_for_claim_popup(page, claim_id', opener)
+        self.assertIn('findClaimPopup', _fn('_wait_for_claim_popup'))
 
     def test_the_generic_button_name_check_is_gone(self):
         # (hasCancel || hasOK) && hasProgNotes matched the lookup screen.
@@ -100,14 +101,14 @@ class ThePopupMustBeTheRightClaim(unittest.TestCase):
         # uses those words for a different purpose — ranking frames, not
         # deciding whether a popup exists.
         opener = _fn('_open_claim_popup_via_lookup')
-        verify = opener[opener.index('# 2. Verify'):opener.index('# 3. Find best frame')]
+        verify = opener[opener.index('# 2. Wait for'):opener.index('# 3. Find best frame')]
         self.assertNotIn('hasCancel', verify)
         self.assertNotIn('hasProgNotes', verify)
-        self.assertIn('findClaimPopup', verify)
+        self.assertIn('_wait_for_claim_popup', verify)
 
     def test_a_claim_whose_popup_did_not_open_is_reported_not_guessed(self):
         opener = _fn('_open_claim_popup_via_lookup')
-        i = opener.index('findClaimPopup')
+        i = opener.index('_report_lookup_failure')
         self.assertIn('return (False, None)', opener[i:])
 
 
@@ -378,6 +379,75 @@ class TheClaimsSearchStartsInJuly2025(unittest.TestCase):
 
     def test_the_saved_filter_records_the_same_date(self):
         self.assertIn("'filter_date_from': '07/01/2025'", _read())
+
+
+class TheClaimIsOpenedFromItsRow(unittest.TestCase):
+    """Typing a claim number into the lookup box only FILTERS the grid.
+
+    The claim still has to be opened from its row. Without that the popup never
+    appeared — while the old detection reported that it had, and the status read
+    picked up the grid row instead.
+    """
+
+    def test_there_is_a_row_opener(self):
+        self.assertIn('def _open_claim_row(', _read())
+
+    def test_it_only_touches_the_cell_holding_the_claim_number(self):
+        # A row-wide click can land on a checkbox or a row action.
+        fn = _fn('_open_claim_row')
+        self.assertIn("(c.textContent || '').trim() === claimId", fn)
+        self.assertIn('cell.querySelector(', fn)
+        # The row is only read for its cells; nothing inside it is clicked.
+        self.assertNotIn("row.querySelector('a')", fn)
+        self.assertNotIn('[ng-click]', fn)
+
+    def test_it_prefers_a_link_then_falls_back_to_a_double_click(self):
+        fn = _fn('_open_claim_row')
+        self.assertLess(fn.index('claim-number-link'), fn.index('claim-number-dblclick'))
+        self.assertIn("new MouseEvent('dblclick'", fn)
+
+    def test_the_double_click_bubbles_so_angular_sees_it(self):
+        self.assertIn('bubbles: true', _fn('_open_claim_row'))
+
+    def test_invisible_rows_are_skipped(self):
+        self.assertIn('vis(row)', _fn('_open_claim_row'))
+
+
+class TheWaitForThePopupIsAPoll(unittest.TestCase):
+    def test_there_is_a_polling_wait(self):
+        self.assertIn('def _wait_for_claim_popup(', _read())
+
+    def test_it_returns_as_soon_as_the_popup_is_up(self):
+        fn = _fn('_wait_for_claim_popup')
+        self.assertIn('return True', fn)
+        self.assertIn('deadline', fn)
+
+    def test_the_fixed_sleep_is_gone(self):
+        opener = _fn('_open_claim_popup_via_lookup')
+        self.assertNotIn('_time.sleep(wait_seconds)', opener)
+
+    def test_the_row_is_only_opened_when_the_popup_is_not_already_up(self):
+        opener = _fn('_open_claim_popup_via_lookup')
+        self.assertIn('if not popup_found and _open_claim_row(page, claim_id):', opener)
+
+    def test_a_row_click_gets_longer_to_render_than_the_first_wait(self):
+        opener = _fn('_open_claim_popup_via_lookup')
+        i = opener.index('_open_claim_row(page, claim_id)')
+        self.assertIn('_wait_for_claim_popup(page, claim_id, 8)', opener[i:])
+
+
+class ALookupMissExplainsItself(unittest.TestCase):
+    def test_the_failure_is_reported_before_giving_up(self):
+        opener = _fn('_open_claim_popup_via_lookup')
+        i = opener.index('_report_lookup_failure(page, claim_id)')
+        self.assertIn('return (False, None)', opener[i:])
+
+    def test_it_says_whether_the_grid_even_holds_this_claim(self):
+        # The question that separates "the search failed" from "the row would
+        # not open" — two different next moves.
+        fn = _fn('_report_lookup_failure')
+        self.assertIn('rowForThisClaim', fn)
+        self.assertIn('lookupValue', fn)
 
 
 if __name__ == '__main__':
