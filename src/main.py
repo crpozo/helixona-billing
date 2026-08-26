@@ -85,14 +85,21 @@ def _dismiss_ecw_data_error(page, label=''):
     return False
 
 
-def _dismiss_claim_alert(page):
-    """Dismiss the small eCW validation alerts that pop on top of the claim detail
+# The wording of the eCW alerts that pop on top of the claim popup. Shared, so
+# the save step can recognise an alert's OK button and refuse to count clicking
+# it as having saved the claim.
+CLAIM_ALERT_RE = ("fee schedule is selected|data loading error|already open"
+                  "|cannot be|is required|please select")
+
+
+def _dismiss_one_claim_alert(page):
+    """Dismiss ONE of the small eCW validation alerts that pop on top of the claim detail
     popup (e.g. 'Master/Default fee schedule is selected.', 'data loading error').
     Clicks the OK inside the alert dialog only — scoped by the alert's text so it
     won't hit the status-picker OK or the claim popup's Save/OK. Returns True if one
     was dismissed. Safe to call repeatedly."""
     import time as _t
-    ALERT_RE = "fee schedule is selected|data loading error|already open|cannot be|is required|please select"
+    ALERT_RE = CLAIM_ALERT_RE
     for ctx in [page] + list(page.frames):
         try:
             clicked = ctx.evaluate('''(reSrc) => {
@@ -122,6 +129,24 @@ def _dismiss_claim_alert(page):
         except Exception:
             continue
     return False
+
+
+def _dismiss_claim_alert(page, rounds=4):
+    """Clear EVERY eCW alert stacked on the claim popup, not just the first.
+
+    One claim can raise several at once — 1931 shows "*Error (3)" plus a
+    "Suppressed Error" — and the claim form only finishes binding once the last
+    one is gone. Dismissing a single alert left the rest sitting on top, so the
+    Claim Status <select> was still absent when the next step looked for it.
+
+    Returns how many were dismissed (0 is the normal, quiet case).
+    """
+    dismissed = 0
+    for _ in range(rounds):
+        if not _dismiss_one_claim_alert(page):
+            break
+        dismissed += 1
+    return dismissed
 
 
 def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Symplisend'):
@@ -218,107 +243,154 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
                   'select[data-ng-model="ClaimData.ClaimStatus"], '
                   'select[id^="claimStatusSel"]')
 
+    # The claim form is not always bound by the time we look. An eCW alert
+    # sits on top of it and the form finishes rendering only once the last one
+    # is gone, so a miss is retried after clearing alerts rather than being
+    # treated as "this claim has no status field".
     status_set = False
-    for frm in page.frames:
-        try:
-            code = frm.evaluate('''([targetLc, css]) => {
-                const sel = document.querySelector(css);
-                if (!sel) return null;
-                for (const o of sel.options) {
-                    if ((o.textContent || '').trim().toLowerCase() === targetLc) {
-                        return o.value;
-                    }
-                }
-                return null;
-            }''', [target_lc, SELECT_CSS])
-        except Exception:
-            continue
-        if not code:
-            continue
-
-        via = None
-        try:
-            # A real native selection, so Angular's ng-change fires the way it
-            # does for a person.
-            frm.select_option(SELECT_CSS, value=code, timeout=5000)
-            via = 'select_option'
-        except Exception:
-            # Disabled or covered: set it and tell Angular ourselves.
+    for attempt in range(1, 4):
+        _dismiss_claim_alert(page)
+        for frm in page.frames:
             try:
-                via = frm.evaluate('''([css, code]) => {
+                code = frm.evaluate('''([targetLc, css]) => {
                     const sel = document.querySelector(css);
                     if (!sel) return null;
-                    sel.value = code;
-                    sel.dispatchEvent(new Event('input', {bubbles: true}));
-                    sel.dispatchEvent(new Event('change', {bubbles: true}));
-                    try {
-                        if (window.angular) {
-                            const s = window.angular.element(sel).scope();
-                            if (s && s.$root && !s.$root.$$phase) s.$apply();
+                    for (const o of sel.options) {
+                        if ((o.textContent || '').trim().toLowerCase() === targetLc) {
+                            return o.value;
                         }
-                    } catch (e) {}
-                    return sel.value === code ? 'dispatch' : null;
-                }''', [SELECT_CSS, code])
+                    }
+                    return null;
+                }''', [target_lc, SELECT_CSS])
             except Exception:
-                via = None
+                continue
+            if not code:
+                continue
 
-        if via:
-            status_set = True
-            logger.info(f"  ✅ STEP 3 — Set Claim Status to {target_label!r} "
-                        f"(option {code}, via {via})")
+            via = None
+            try:
+                # A real native selection, so Angular's ng-change fires the way
+                # it does for a person.
+                frm.select_option(SELECT_CSS, value=code, timeout=5000)
+                via = 'select_option'
+            except Exception:
+                # Disabled or covered: set it and tell Angular ourselves.
+                try:
+                    via = frm.evaluate('''([css, code]) => {
+                        const sel = document.querySelector(css);
+                        if (!sel) return null;
+                        sel.value = code;
+                        sel.dispatchEvent(new Event('input', {bubbles: true}));
+                        sel.dispatchEvent(new Event('change', {bubbles: true}));
+                        try {
+                            if (window.angular) {
+                                const s = window.angular.element(sel).scope();
+                                if (s && s.$root && !s.$root.$$phase) s.$apply();
+                            }
+                        } catch (e) {}
+                        return sel.value === code ? 'dispatch' : null;
+                    }''', [SELECT_CSS, code])
+                except Exception:
+                    via = None
+
+            if via:
+                status_set = True
+                logger.info(f"  ✅ STEP 3 — Set Claim Status to {target_label!r} "
+                            f"(option {code}, via {via})")
+                break
+
+        if status_set:
             break
+        if attempt < 3:
+            logger.info(f"  … STEP 3 — Claim Status select not present yet for claim "
+                        f"{claim_id} (attempt {attempt}/3); clearing alerts and waiting")
+            time.sleep(2.5)
 
     if not status_set:
         logger.warning(
-            f"  ❌ STEP 3 — could not set the Claim Status select for claim {claim_id}.")
-        # Report the selects that ARE on the page, so a miss arrives with its
-        # own evidence instead of costing another round of guessing.
-        for frm in page.frames:
+            f"  ❌ STEP 3 — could not set the Claim Status select for claim {claim_id} "
+            f"after 3 attempts.")
+        # Report EVERY frame. Breaking on the first frame that had any <select>
+        # reported the background lookup screen — claimLookupSel1, patient
+        # lookups — and never the frame the claim popup lives in, which is the
+        # one being asked about.
+        for n, frm in enumerate(page.frames):
             try:
                 found = frm.evaluate('''() => Array.from(
-                    document.querySelectorAll('select')).slice(0, 15).map(s => ({
+                    document.querySelectorAll('select')).slice(0, 20).map(s => ({
                         id: s.id || '',
                         ngModel: (s.getAttribute('ng-model')
                                   || s.getAttribute('data-ng-model') || ''),
                         options: s.options.length,
-                        selected: (s.options[s.selectedIndex]
-                                   ? (s.options[s.selectedIndex].textContent || '').trim().slice(0, 40)
-                                   : ''),
                     }))''')
-                if found:
-                    logger.warning(f"     selects on the page: {found}")
-                    break
             except Exception:
                 continue
+            if not found:
+                continue
+            has_status = [s for s in found if s['id'].startswith('claimStatusSel')
+                          or s['ngModel'] == 'ClaimData.ClaimStatus']
+            logger.warning(f"     frame {n} ({frm.url[:60]}): {len(found)} selects, "
+                           f"claim-status select present: {bool(has_status)}")
+            if has_status:
+                logger.warning(f"       -> {has_status}")
         _close_claim_popup(page)
         return False
     time.sleep(1.5)
     _dismiss_claim_alert(page)
 
-    # STEP 4 — save the claim popup (saveAllData)
+    # STEP 4 — save the claim popup.
+    #
+    # Alerts are cleared first, and an alert's OK is never accepted as a save.
+    # The last resort below clicks any visible OK; with an alert on screen that
+    # dismisses the alert and reports the claim as saved when nothing was
+    # written. Claim 5402 logged "Save/OK button not found" with an alert up.
+    _dismiss_claim_alert(page)
     saved_via = None
     for frm in page.frames:
         try:
-            saved_via = frm.evaluate('''() => {
-                const okBtn = document.querySelector('button[ng-click="saveAllData()"]');
-                if (okBtn && okBtn.offsetWidth > 0) { okBtn.click(); return 'saveAllData'; }
-                for (const b of document.querySelectorAll('button[id^="claimScreenOkBtn"]')) {
-                    if (b.offsetWidth > 0) { b.click(); return 'claimScreenOkBtn'; }
+            saved_via = frm.evaluate('''(alertRe) => {
+                const re = new RegExp(alertRe, 'i');
+                const vis = el => el && el.offsetWidth > 0 && el.offsetHeight > 0;
+                const dlgOf = el => el.closest(
+                    '.modal, .modal-content, .ui-dialog, [role="dialog"], .bootbox, .alert');
+                const isAlert = el => {
+                    const d = dlgOf(el);
+                    return !!(d && re.test(d.textContent || ''));
+                };
+                const isClaimDialog = el => {
+                    const d = dlgOf(el);
+                    if (!d) return false;
+                    const t = d.textContent || '';
+                    return t.indexOf('Print HCFA') >= 0
+                        || t.indexOf('Claim No') >= 0
+                        || t.indexOf('Prog. Notes') >= 0;
+                };
+
+                // Any tag: ECW renders these as button, input and a.
+                for (const x of document.querySelectorAll(
+                        '[ng-click="saveAllData()"], [data-ng-click="saveAllData()"]')) {
+                    if (vis(x)) { x.click(); return 'saveAllData'; }
                 }
-                const all = document.querySelectorAll('button, input[type="button"]');
+                for (const x of document.querySelectorAll('[id^="claimScreenOkBtn"]')) {
+                    if (vis(x)) { x.click(); return 'claimScreenOkBtn'; }
+                }
+                const all = document.querySelectorAll(
+                    'button, a, input[type="button"], input[type="submit"]');
                 for (const b of all) {
                     const t = (b.value || b.textContent || '').trim();
-                    if (t === 'OK' && b.offsetWidth > 0) {
-                        const dlg = b.closest('.modal, .ui-dialog, [role="dialog"]');
-                        if (dlg && /Print HCFA|Prog\\.? Notes|Claim No/i.test(dlg.textContent || '')) { b.click(); return 'claimPopupOK'; }
+                    if ((t === 'OK' || t === 'Ok') && vis(b)
+                            && !isAlert(b) && isClaimDialog(b)) {
+                        b.click(); return 'claimPopupOK';
                     }
                 }
                 for (const b of all) {
                     const t = (b.value || b.textContent || '').trim();
-                    if (t === 'OK' && b.offsetWidth > 0) { b.click(); return 'anyOK'; }
+                    if ((t === 'OK' || t === 'Ok') && vis(b) && !isAlert(b)) {
+                        b.click(); return 'anyOK';
+                    }
                 }
                 return null;
-            }''')
+            }''', CLAIM_ALERT_RE)
             if saved_via:
                 logger.info(f"  ✅ STEP 4 — Saved claim via {saved_via}")
                 break
@@ -326,6 +398,9 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
             continue
     if not saved_via:
         logger.warning(f"  ❌ STEP 4 — Save/OK button not found for claim {claim_id}")
+    # A save can raise its own validation alert; left up, it blocks the re-open
+    # that STEP 5 verifies with.
+    _dismiss_claim_alert(page)
     time.sleep(3)
 
     # STEP 5 (verify) — re-open the claim and confirm the status persisted
