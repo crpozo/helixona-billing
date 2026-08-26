@@ -109,6 +109,43 @@ class TheFlowUsesIt(unittest.TestCase):
         i = src.index('externalSSO?partnerId=FirstSource')
         self.assertIn('_dismiss_third_party_interstitial', src[i:i + 600])
 
+    def test_it_anchors_on_the_wording_not_the_container(self):
+        # Requiring role="dialog" or a .modal class matched nothing at all and
+        # a run reached /en/provider having never clicked Continue.
+        js = _selector_js()
+        self.assertIn('anchors', js)
+        self.assertNotIn('role="dialog"', js)
+        self.assertNotIn('.modal-dialog', js)
+
+    def test_it_takes_the_smallest_element_holding_the_wording(self):
+        # Otherwise <body> qualifies and we are back to clicking anything.
+        js = _selector_js()
+        self.assertIn('el.children', js)
+
+    def test_it_walks_up_a_bounded_number_of_levels(self):
+        self.assertIn('up < 6', _selector_js())
+
+    def test_a_missing_modal_is_reported_with_its_buttons(self):
+        src = _read(MAIN)
+        self.assertIn("the modal's wording IS on", src)
+
+    def test_it_anchors_on_the_wording_not_the_container(self):
+        # Requiring role=dialog or a .modal class matched nothing at all, and
+        # a run reached /en/provider having never clicked Continue.
+        js = _selector_js()
+        self.assertIn('anchors', js)
+        self.assertNotIn('.modal-dialog', js)
+
+    def test_it_takes_the_smallest_element_holding_the_wording(self):
+        # Otherwise <body> qualifies and we are back to clicking anything.
+        self.assertIn('el.children', _selector_js())
+
+    def test_it_walks_up_a_bounded_number_of_levels(self):
+        self.assertIn('up < 6', _selector_js())
+
+    def test_a_missing_modal_is_reported_with_its_buttons(self):
+        self.assertIn("the modal's wording IS on", _read(MAIN))
+
     def test_only_an_exact_continue_is_clicked(self):
         # "Continue reading" and friends are not this button.
         self.assertIn('/^continue$/i', _selector_js())
@@ -118,10 +155,8 @@ class TheFlowUsesIt(unittest.TestCase):
         # what made it click Blue Shield's own links and spawn blank tabs.
         self.assertNotIn('document.body', _selector_js())
 
-    def test_it_requires_a_real_dialog(self):
-        js = _selector_js()
-        self.assertIn('role="dialog"', js)
-        self.assertIn('leaving blue shield', js.lower())
+    def test_it_still_matches_on_the_modal_wording(self):
+        self.assertIn('leaving blue shield', _selector_js().lower())
 
     def test_the_dialog_and_button_must_be_visible(self):
         js = _selector_js()

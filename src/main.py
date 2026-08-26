@@ -1841,6 +1841,33 @@ def _find_symplisend_page(context, timeout_s=60):
     logger.error(
         f"❌ No SympliSend tab appeared within {timeout_s}s. Open tabs: "
         + ', '.join((p.url or 'about:blank')[:70] for p in context.pages))
+
+    # If the Continue modal was never clicked, that is why. Report whether its
+    # wording is on any tab and what buttons sit near it, so the selector can be
+    # fixed from evidence rather than another guess.
+    for pg in list(context.pages):
+        try:
+            probe = pg.evaluate("""() => {
+                const marker = /leaving blue shield|third-party site|redirecting you to/i;
+                if (!marker.test(document.body ? document.body.innerText : '')) return null;
+                const out = [];
+                for (const el of document.querySelectorAll(
+                        'button, a, input[type=button], input[type=submit], [role="button"]')) {
+                    const r = el.getBoundingClientRect();
+                    const t = (el.innerText || el.value || '').trim();
+                    if (!t) continue;
+                    out.push({tag: el.tagName, text: t.slice(0, 24),
+                              cls: (el.className || '').toString().slice(0, 40),
+                              visible: r.width > 0 && r.height > 0});
+                }
+                return {url: location.href.slice(0, 90), buttons: out.slice(0, 15)};
+            }""")
+            if probe:
+                logger.error(
+                    f"     the modal's wording IS on {probe['url']} — "
+                    f"buttons there: {probe['buttons']}")
+        except Exception:
+            continue
     return None
 
 
@@ -1863,20 +1890,21 @@ def _close_blank_tabs(context, keep=None):
 def _dismiss_third_party_interstitial(page, timeout_ms=9000):
     """Click Continue on Blue Shield's "you're leaving our site" modal.
 
-    Blue Shield puts an interstitial between the SympliSend link and SympliSend
-    itself — "You're leaving Blue Shield of California and going to a
-    third-party site", with Cancel and Continue. The destination tab only opens
-    once Continue is clicked, so this has to happen; it is not optional.
+    The destination tab only opens once Continue is clicked, so this has to
+    happen. Getting the aim right has taken two swings in opposite directions:
 
-    What it must NOT do is click anything else. An earlier version fell back to
-    scanning the whole body whenever the marker words appeared anywhere on the
-    page, and then clicked the first "Continue" it found — on Blue Shield's own
-    pages that meant clicking links that navigated away and spawned blank tabs.
+    Too loose — scanning the whole body whenever the marker words appeared
+    anywhere — clicked Blue Shield's own links and spawned blank tabs.
 
-    So: a real, VISIBLE dialog element carrying the modal's own wording, and a
-    button whose label is exactly "Continue". No body fallback, no partial
-    label match. If that is not on screen, this does nothing and says so by
-    returning False.
+    Too strict — demanding role="dialog" or a .modal class — matched nothing at
+    all, and a run reached /en/provider with no SympliSend tab and no Continue
+    ever clicked.
+
+    So: anchor on the modal's own wording, take the smallest element that
+    contains it, and walk up only as far as the first ancestor holding a button
+    labelled exactly "Continue". Scoped by proximity to the text rather than by
+    what the container happens to be called, which is the part that keeps
+    changing.
     """
     deadline = time.time() + (timeout_ms / 1000.0)
     while time.time() < deadline:
@@ -1887,27 +1915,32 @@ def _dismiss_third_party_interstitial(page, timeout_ms=9000):
                     const r = el.getBoundingClientRect();
                     if (r.width <= 0 || r.height <= 0) return false;
                     const cs = getComputedStyle(el);
-                    return cs.visibility !== 'hidden' && cs.display !== 'none'
-                           && cs.opacity !== '0';
+                    return cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
                 };
-                const dialogs = Array.from(document.querySelectorAll(
-                    '[role="dialog"], [aria-modal="true"], .modal, .modal-content, .modal-dialog'))
-                    .filter(el => isVisible(el) && marker.test(el.innerText || ''));
-                for (const d of dialogs) {
-                    for (const b of d.querySelectorAll(
-                            'button, a, input[type=button], input[type=submit]')) {
-                        const label = (b.innerText || b.value || '').trim();
-                        // Exact label only: "Continue reading" is not this button.
-                        if (/^continue$/i.test(label) && isVisible(b)) {
-                            b.click();
-                            return label;
+                const isContinue = el => {
+                    const label = (el.innerText || el.value || '').trim();
+                    return /^continue$/i.test(label) && isVisible(el);
+                };
+
+                // Smallest visible elements whose own text carries the wording.
+                const anchors = Array.from(document.querySelectorAll('*')).filter(el =>
+                    isVisible(el)
+                    && marker.test(el.textContent || '')
+                    && !Array.from(el.children).some(c => marker.test(c.textContent || '')));
+
+                for (const anchor of anchors) {
+                    let box = anchor;
+                    for (let up = 0; box && up < 6; up++, box = box.parentElement) {
+                        for (const b of box.querySelectorAll(
+                                'button, a, input[type=button], input[type=submit], [role="button"]')) {
+                            if (isContinue(b)) { b.click(); return (b.innerText || b.value).trim(); }
                         }
                     }
                 }
                 return null;
             }""")
             if clicked:
-                logger.info(f"✅ Clicked Continue on the Blue Shield redirect modal")
+                logger.info("✅ Clicked Continue on the Blue Shield redirect modal")
                 return True
         except Exception:
             pass
