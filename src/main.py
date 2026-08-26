@@ -85,6 +85,33 @@ def _dismiss_ecw_data_error(page, label=''):
     return False
 
 
+# Locating the claim detail popup, and proving it is the RIGHT claim.
+#
+# The old check asked whether the frame held buttons named Cancel/OK and one
+# saying "Prog. Notes". The background claims-lookup screen has those, so every
+# open "succeeded" even when no popup appeared — and the status read then came
+# from the claim's row in the results grid rather than from a popup. That is why
+# STEP 1 logged a modal it had not opened, STEP 2 reported a plausible status,
+# and STEP 3 found no Claim Status control anywhere: there was no popup.
+#
+# A real popup shows this claim's number AND popup-only wording.
+POPUP_JS = r"""
+    function findClaimPopup(claimId) {
+        const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+        const idRe = new RegExp('claim\\s*no\\.?\\s*:?\\s*' + claimId + '(\\D|$)', 'i');
+        let best = null;
+        for (const el of document.querySelectorAll('div, section, form, td')) {
+            const t = norm(el.textContent);
+            if (!t || t.length > 6000) continue;
+            if (!idRe.test(t)) continue;
+            if (!/print hcfa/i.test(t) && !/prog\.? notes/i.test(t)) continue;
+            if (!best || t.length < norm(best.textContent).length) best = el;
+        }
+        return best;
+    }
+"""
+
+
 # The wording of the eCW alerts that pop on top of the claim popup. Shared, so
 # the save step can recognise an alert's OK button and refuse to count clicking
 # it as having saved the claim.
@@ -149,6 +176,116 @@ def _dismiss_claim_alert(page, rounds=4):
     return dismissed
 
 
+def _set_status_via_select(frm, claim_id, target_lc, select_css):
+    """Path (a): the Claim Status field is a <select> bound to ClaimData.ClaimStatus.
+
+    Returns a short description of how it was set, or None if this frame has no
+    such control. The option code is read off the page by its label, never
+    hardcoded, so a re-coded status list cannot silently select another status.
+    """
+    code = frm.evaluate(POPUP_JS + r"""(([claimId, targetLc, css]) => {
+        const popup = findClaimPopup(claimId);
+        if (!popup) return null;
+        const sel = popup.querySelector(css);
+        if (!sel) return null;
+        for (const o of sel.options) {
+            if ((o.textContent || '').trim().toLowerCase() === targetLc) return o.value;
+        }
+        return null;
+    })""", [str(claim_id), target_lc, select_css])
+    if not code:
+        return None
+    try:
+        # A real native selection, so Angular's ng-change fires as it does for
+        # a person.
+        frm.select_option(select_css, value=code, timeout=5000)
+        return 'select:%s' % code
+    except Exception:
+        pass
+    # Disabled or covered: set it and tell Angular ourselves.
+    ok = frm.evaluate(r"""(([css, code]) => {
+        const sel = document.querySelector(css);
+        if (!sel) return null;
+        sel.value = code;
+        sel.dispatchEvent(new Event('input', {bubbles: true}));
+        sel.dispatchEvent(new Event('change', {bubbles: true}));
+        try {
+            if (window.angular) {
+                const s = window.angular.element(sel).scope();
+                if (s && s.$root && !s.$root.$$phase) s.$apply();
+            }
+        } catch (e) {}
+        return sel.value === code ? true : null;
+    })""", [select_css, code])
+    return ('select-dispatch:%s' % code) if ok else None
+
+
+def _set_status_via_picker(frm, claim_id, target_lc):
+    """Path (b): a "..." button opening a status list with its own OK.
+
+    ECW renders the Claim Status field two ways and both are in production. The
+    submissions bot has been driving this one — 187 opens via billingClaimBtn83,
+    the last on 2026-08-24 — so replacing it with the <select> alone would have
+    taken away the path that works for it.
+
+    The picker button is looked for inside the claim popup; hunting it across
+    the whole document matched the background lookup screen's own controls.
+    """
+    opened = frm.evaluate(POPUP_JS + r"""((claimId) => {
+        const popup = findClaimPopup(claimId);
+        if (!popup) return null;
+        const vis = el => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+        };
+        for (const x of popup.querySelectorAll(
+                '[ng-click="selectClaimStatusCode()"], '
+                + '[data-ng-click="selectClaimStatusCode()"], '
+                + '[onclick*="selectClaimStatusCode"]')) {
+            if (vis(x)) { x.click(); return 'selectClaimStatusCode'; }
+        }
+        for (const x of popup.querySelectorAll('[id^="billingClaimBtn"]')) {
+            if (vis(x)) { x.click(); return x.id; }
+        }
+        return null;
+    })""", str(claim_id))
+    if not opened:
+        return None
+    time.sleep(2)
+
+    # The picker is a modal of its own, so it is searched frame-wide.
+    picked = frm.evaluate(r"""((targetLc) => {
+        for (const row of document.querySelectorAll('tr')) {
+            for (const cell of row.querySelectorAll('td')) {
+                if ((cell.textContent || '').trim().toLowerCase() === targetLc) {
+                    row.click();
+                    return true;
+                }
+            }
+        }
+        return false;
+    })""", target_lc)
+    if not picked:
+        return None
+    time.sleep(1)
+
+    # Its OK is saveClaimStatusCodes(true); the x close calls it with false.
+    frm.evaluate(r"""(() => {
+        const ngOf = b => (b.getAttribute('ng-click')
+                           || b.getAttribute('data-ng-click') || '');
+        const btns = Array.from(document.querySelectorAll(
+            'button, input[type="button"], input[type="submit"]'))
+            .filter(b => b.offsetWidth > 0);
+        let ok = btns.find(b => /saveClaimStatusCodes\(\s*true\s*\)/.test(ngOf(b)));
+        if (!ok) ok = btns.find(b => /saveClaimStatusCodes/.test(ngOf(b))
+                                     && !/\(\s*false\s*\)/.test(ngOf(b)));
+        if (!ok) ok = btns.find(b => ['OK', 'Ok'].includes((b.value || b.textContent || '').trim()));
+        if (ok) { ok.click(); return true; }
+        return false;
+    })""")
+    return 'picker:%s' % opened
+
+
 def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Symplisend'):
     """Set a claim's Claim Status in the ECW claim popup and verify it persisted.
 
@@ -164,23 +301,27 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     """
     target_lc = target_label.strip().lower()
 
-    READ_STATUS_JS = '''() => {
+    READ_STATUS_JS = POPUP_JS + '''((claimId) => {
+        const popup = findClaimPopup(claimId);
+        if (!popup) return null;
         // The Claim Status field is a plain <select> bound to Angular's
         // ClaimData.ClaimStatus. Its id carries a per-render timestamp
         // (claimStatusSel1787764786180), so match the binding and the id
         // prefix — never the whole id.
-        const sel = document.querySelector('select[ng-model="ClaimData.ClaimStatus"]')
-                 || document.querySelector('select[data-ng-model="ClaimData.ClaimStatus"]')
-                 || document.querySelector('select[id^="claimStatusSel"]');
+        const sel = popup.querySelector('select[ng-model="ClaimData.ClaimStatus"]')
+                 || popup.querySelector('select[data-ng-model="ClaimData.ClaimStatus"]')
+                 || popup.querySelector('select[id^="claimStatusSel"]');
         if (sel) {
             const opt = sel.options[sel.selectedIndex];
             const t = opt ? (opt.textContent || '').trim() : '';
             if (t) return t;
         }
-        // Fallback: a span/td showing a known claim status verbatim. This list
-        // omitted "Ready to Bill - Symplisend CC", so claims sitting in exactly
-        // the status the resubmissions bot extracts on read back as None.
-        for (const el of document.querySelectorAll('span, td')) {
+        // Fallback: a span/td showing a known claim status verbatim — searched
+        // INSIDE the popup only. Over the whole document this matched the
+        // claim's row in the results grid, which reads plausibly while telling
+        // you nothing about the popup, and could confirm a change that never
+        // happened.
+        for (const el of popup.querySelectorAll('span, td')) {
             const t = (el.textContent || '').trim();
             const lt = t.toLowerCase();
             if ((lt === 'claim sent via symplisend'
@@ -190,12 +331,12 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
             }
         }
         return null;
-    }'''
+    })'''
 
     def _read_status():
         for frm in page.frames:
             try:
-                v = frm.evaluate(READ_STATUS_JS)
+                v = frm.evaluate(READ_STATUS_JS, str(claim_id))
                 if v is not None:
                     return v
             except Exception:
@@ -243,96 +384,59 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
                   'select[data-ng-model="ClaimData.ClaimStatus"], '
                   'select[id^="claimStatusSel"]')
 
-    # The claim form is not always bound by the time we look. An eCW alert
-    # sits on top of it and the form finishes rendering only once the last one
-    # is gone, so a miss is retried after clearing alerts rather than being
-    # treated as "this claim has no status field".
+    # Both renderings of the field are tried, in the popup only. A miss is
+    # retried after clearing alerts, since the form finishes binding only once
+    # the last alert is gone.
     status_set = False
     for attempt in range(1, 4):
         _dismiss_claim_alert(page)
         for frm in page.frames:
-            try:
-                code = frm.evaluate('''([targetLc, css]) => {
-                    const sel = document.querySelector(css);
-                    if (!sel) return null;
-                    for (const o of sel.options) {
-                        if ((o.textContent || '').trim().toLowerCase() === targetLc) {
-                            return o.value;
-                        }
-                    }
-                    return null;
-                }''', [target_lc, SELECT_CSS])
-            except Exception:
-                continue
-            if not code:
-                continue
-
             via = None
             try:
-                # A real native selection, so Angular's ng-change fires the way
-                # it does for a person.
-                frm.select_option(SELECT_CSS, value=code, timeout=5000)
-                via = 'select_option'
+                via = _set_status_via_select(frm, claim_id, target_lc, SELECT_CSS)
             except Exception:
-                # Disabled or covered: set it and tell Angular ourselves.
+                via = None
+            if not via:
                 try:
-                    via = frm.evaluate('''([css, code]) => {
-                        const sel = document.querySelector(css);
-                        if (!sel) return null;
-                        sel.value = code;
-                        sel.dispatchEvent(new Event('input', {bubbles: true}));
-                        sel.dispatchEvent(new Event('change', {bubbles: true}));
-                        try {
-                            if (window.angular) {
-                                const s = window.angular.element(sel).scope();
-                                if (s && s.$root && !s.$root.$$phase) s.$apply();
-                            }
-                        } catch (e) {}
-                        return sel.value === code ? 'dispatch' : null;
-                    }''', [SELECT_CSS, code])
+                    via = _set_status_via_picker(frm, claim_id, target_lc)
                 except Exception:
                     via = None
-
             if via:
                 status_set = True
                 logger.info(f"  ✅ STEP 3 — Set Claim Status to {target_label!r} "
-                            f"(option {code}, via {via})")
+                            f"(via {via})")
                 break
 
         if status_set:
             break
         if attempt < 3:
-            logger.info(f"  … STEP 3 — Claim Status select not present yet for claim "
+            logger.info(f"  … STEP 3 — no Claim Status control in the popup for claim "
                         f"{claim_id} (attempt {attempt}/3); clearing alerts and waiting")
             time.sleep(2.5)
 
     if not status_set:
         logger.warning(
-            f"  ❌ STEP 3 — could not set the Claim Status select for claim {claim_id} "
-            f"after 3 attempts.")
-        # Report EVERY frame. Breaking on the first frame that had any <select>
-        # reported the background lookup screen — claimLookupSel1, patient
-        # lookups — and never the frame the claim popup lives in, which is the
-        # one being asked about.
+            f"  ❌ STEP 3 — no Claim Status control found in claim {claim_id}'s popup "
+            f"after 3 attempts (tried the <select> and the '...' picker).")
+        # Report every frame, and say whether the popup is even there. Breaking
+        # on the first frame with any <select> reported the background lookup
+        # screen and hid the fact that no popup had opened at all.
         for n, frm in enumerate(page.frames):
             try:
-                found = frm.evaluate('''() => Array.from(
-                    document.querySelectorAll('select')).slice(0, 20).map(s => ({
-                        id: s.id || '',
-                        ngModel: (s.getAttribute('ng-model')
-                                  || s.getAttribute('data-ng-model') || ''),
-                        options: s.options.length,
-                    }))''')
+                info = frm.evaluate(POPUP_JS + '''((claimId) => {
+                    const popup = findClaimPopup(claimId);
+                    return {
+                        popup: !!popup,
+                        selectsInDoc: document.querySelectorAll('select').length,
+                        selectsInPopup: popup ? popup.querySelectorAll('select').length : 0,
+                        statusSelect: !!(popup && popup.querySelector('select[id^="claimStatusSel"]')),
+                        pickerButtons: popup
+                            ? popup.querySelectorAll('[id^="billingClaimBtn"]').length : 0,
+                    };
+                })''', str(claim_id))
             except Exception:
                 continue
-            if not found:
-                continue
-            has_status = [s for s in found if s['id'].startswith('claimStatusSel')
-                          or s['ngModel'] == 'ClaimData.ClaimStatus']
-            logger.warning(f"     frame {n} ({frm.url[:60]}): {len(found)} selects, "
-                           f"claim-status select present: {bool(has_status)}")
-            if has_status:
-                logger.warning(f"       -> {has_status}")
+            logger.warning(f"     frame {n} ({frm.url[:55]}): {info}")
         _close_claim_popup(page)
         return False
     time.sleep(1.5)
@@ -2018,34 +2122,21 @@ def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
 
     _time.sleep(wait_seconds)
 
-    # 2. Verify popup opened — look for Cancel/OK + Prog. Notes
+    # 2. Verify the popup opened AND that it is this claim's popup.
+    #    Button names alone matched the background lookup screen, so a claim
+    #    whose popup never opened was reported as opened and then read from the
+    #    results grid.
     popup_found = False
     for f_ctx in page.frames:
         try:
-            has_popup = f_ctx.evaluate('''() => {
-                const btns = document.querySelectorAll('button');
-                let hasCancel = false, hasProgNotes = false, hasOK = false;
-                for (const btn of btns) {
-                    const t = (btn.value || btn.textContent || '').trim();
-                    if (t === 'Cancel') hasCancel = true;
-                    if (t.includes('Prog') && t.includes('Note')) hasProgNotes = true;
-                    if (t === 'OK') hasOK = true;
-                }
-                return (hasCancel || hasOK) && hasProgNotes;
-            }''')
+            has_popup = f_ctx.evaluate(
+                POPUP_JS + '((claimId) => findClaimPopup(claimId) !== null)',
+                str(claim_id))
             if has_popup:
                 popup_found = True
                 break
         except Exception:
             continue
-    if not popup_found:
-        try:
-            popup_found = page.evaluate('''() => {
-                const bodyText = document.body.innerText || '';
-                return bodyText.includes('Prog. Notes') && bodyText.includes('Cancel');
-            }''')
-        except Exception:
-            pass
 
     if not popup_found:
         return (False, None)
