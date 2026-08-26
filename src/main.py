@@ -129,36 +129,37 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
 
     Assumes ECW is already logged in and on the Billing → Claims lookup screen.
     Flow (mirrors the manual one): open the claim via lookup → dismiss the recurring
-    'Master/Default fee schedule is selected' alert → open the Claim Status Code picker
-    (#billingClaimBtn83) → select the target status row → click the picker's OK button
-    (saveClaimStatusCodes(true); the × close calls saveClaimStatusCodes(false)) → save
-    the claim (saveAllData) → re-open and read the status field to confirm.
+    'Master/Default fee schedule is selected' alert → set the Claim Status <select> to
+    the target status → save the claim (saveAllData) → re-open and read the status back.
 
-    The status is rendered as text in a <span>/<td> next to the '...' button — NOT an
-    <input> — and the in-popup value does not refresh after the picker save, so the only
+    The status is a plain <select> bound to ClaimData.ClaimStatus, whose id ends in a
+    per-render timestamp. The in-popup value does not prove a save, so the only
     authoritative check is re-opening the claim. Returns True only if the re-opened claim
     shows target_label. Leaves nothing changed in our datastore on failure (caller decides).
     """
     target_lc = target_label.strip().lower()
 
     READ_STATUS_JS = '''() => {
-        const btn = document.querySelector('#billingClaimBtn83')
-                 || document.querySelector('button[data-ng-click^="selectClaimStatusCode"]');
-        if (btn) {
-            let p = btn.parentElement;
-            for (let i = 0; i < 4 && p; i++) {
-                const inp = p.querySelector('input');
-                if (inp && (inp.value || '').trim()) return inp.value.trim();
-                const txt = ((p.innerText || p.textContent || '').replace(/\\.\\.\\./g, '').trim());
-                if (txt && txt.length < 80) return txt;
-                p = p.parentElement;
-            }
+        // The Claim Status field is a plain <select> bound to Angular's
+        // ClaimData.ClaimStatus. Its id carries a per-render timestamp
+        // (claimStatusSel1787764786180), so match the binding and the id
+        // prefix — never the whole id.
+        const sel = document.querySelector('select[ng-model="ClaimData.ClaimStatus"]')
+                 || document.querySelector('select[data-ng-model="ClaimData.ClaimStatus"]')
+                 || document.querySelector('select[id^="claimStatusSel"]');
+        if (sel) {
+            const opt = sel.options[sel.selectedIndex];
+            const t = opt ? (opt.textContent || '').trim() : '';
+            if (t) return t;
         }
-        // Fallback (the robust path): a span/td showing a known claim status verbatim
+        // Fallback: a span/td showing a known claim status verbatim. This list
+        // omitted "Ready to Bill - Symplisend CC", so claims sitting in exactly
+        // the status the resubmissions bot extracts on read back as None.
         for (const el of document.querySelectorAll('span, td')) {
             const t = (el.textContent || '').trim();
             const lt = t.toLowerCase();
             if ((lt === 'claim sent via symplisend'
+                 || lt === 'ready to bill - symplisend cc'
                  || lt === 'ready to submit to symplisend') && t.length < 60) {
                 return t;
             }
@@ -195,165 +196,106 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
         logger.info(f"  ✅ Claim {claim_id} already reads '{target_label}' — left alone")
         return True
 
-    # STEP 3 — open the Claim Status Code picker.
+    # STEP 3 — set the Claim Status.
     #
-    # This used to look for button#billingClaimBtn83 and one ng-click, and
-    # failed on most claims: the numeric suffix is an index that varies per
-    # claim, so the ID matched only occasionally. Every miss returned False and
-    # left the claim in its old status — which is why claims recorded as
-    # "updated" months ago still read "Ready to Bill - Symplisend CC" in ECW.
+    # This is a plain <select>, not a picker. Every earlier attempt here tried
+    # to OPEN a lookup dialog — ng-click="selectClaimStatusCode()", any
+    # billingClaimBtn*, an ellipsis beside the label — and no such control
+    # exists on this screen. That is why STEP 3 failed on every claim rather
+    # than on some, and why claims recorded as updated months ago still read
+    # "Ready to Bill - Symplisend CC" in ECW. The real control:
     #
-    # Layered instead: the ng-click, then any billingClaimBtn* whatever its
-    # number, then the "..." button sitting beside the Claim Status field.
-    status_btn_clicked = False
+    #   <select ng-model="ClaimData.ClaimStatus"
+    #           id="claimStatusSel1787764786180"
+    #           ng-change="ClaimStautsChange('ChangeEvent')">
+    #     <option value="72CL">Claim sent via Symplisend</option>
+    #     <option value="68RE" selected>Ready to Bill - Symplisend CC</option>
+    #
+    # The option code is read off the live page by its label rather than
+    # hardcoded, so a re-coded status list cannot silently select a different
+    # status than the one asked for.
+    SELECT_CSS = ('select[ng-model="ClaimData.ClaimStatus"], '
+                  'select[data-ng-model="ClaimData.ClaimStatus"], '
+                  'select[id^="claimStatusSel"]')
+
+    status_set = False
     for frm in page.frames:
         try:
-            which = frm.evaluate('''() => {
-                const visible = el => {
-                    if (!el) return false;
-                    const r = el.getBoundingClientRect();
-                    return r.width > 0 && r.height > 0;
-                };
-
-                // 1. The behaviour, not the id.
-                for (const x of document.querySelectorAll(
-                        'button[data-ng-click="selectClaimStatusCode()"], '
-                        + '[ng-click="selectClaimStatusCode()"], '
-                        + '[onclick*="selectClaimStatusCode"]')) {
-                    if (visible(x)) { x.click(); return 'selectClaimStatusCode'; }
-                }
-
-                // 2. Any billingClaimBtn, whatever its index or tag. ECW
-                //    renders these as <button>, <input> and <a> depending on
-                //    the row.
-                for (const x of document.querySelectorAll('[id^="billingClaimBtn"]')) {
-                    if (visible(x)) { x.click(); return x.id; }
-                }
-
-                // 3. The "..." beside the Claim Status field. Find the label,
-                //    then the nearest ellipsis button in its row.
-                const labels = Array.from(document.querySelectorAll('td, th, label, span, div'))
-                    .filter(el => /claim\s*status/i.test((el.textContent || '').trim())
-                                  && (el.textContent || '').trim().length < 40);
-                for (const lab of labels) {
-                    let box = lab.parentElement;
-                    for (let up = 0; box && up < 4; up++, box = box.parentElement) {
-                        for (const b of box.querySelectorAll(
-                                'button, a, img, span, input, div[onclick], [role="button"]')) {
-                            const t = (b.innerText || b.value || b.title || b.alt || '').trim();
-                            // "..." as periods, or the single U+2026 character.
-                            if (/^(\.{2,3}|\u2026)$/.test(t) && visible(b)) {
-                                b.click(); return 'ellipsis-near-label';
-                            }
-                        }
+            code = frm.evaluate('''([targetLc, css]) => {
+                const sel = document.querySelector(css);
+                if (!sel) return null;
+                for (const o of sel.options) {
+                    if ((o.textContent || '').trim().toLowerCase() === targetLc) {
+                        return o.value;
                     }
                 }
                 return null;
-            }''')
-            if which:
-                status_btn_clicked = True
-                logger.info(f"  ✅ STEP 3 — Opened status picker (via {which})")
-                break
+            }''', [target_lc, SELECT_CSS])
         except Exception:
             continue
-    if not status_btn_clicked:
+        if not code:
+            continue
+
+        via = None
+        try:
+            # A real native selection, so Angular's ng-change fires the way it
+            # does for a person.
+            frm.select_option(SELECT_CSS, value=code, timeout=5000)
+            via = 'select_option'
+        except Exception:
+            # Disabled or covered: set it and tell Angular ourselves.
+            try:
+                via = frm.evaluate('''([css, code]) => {
+                    const sel = document.querySelector(css);
+                    if (!sel) return null;
+                    sel.value = code;
+                    sel.dispatchEvent(new Event('input', {bubbles: true}));
+                    sel.dispatchEvent(new Event('change', {bubbles: true}));
+                    try {
+                        if (window.angular) {
+                            const s = window.angular.element(sel).scope();
+                            if (s && s.$root && !s.$root.$$phase) s.$apply();
+                        }
+                    } catch (e) {}
+                    return sel.value === code ? 'dispatch' : null;
+                }''', [SELECT_CSS, code])
+            except Exception:
+                via = None
+
+        if via:
+            status_set = True
+            logger.info(f"  ✅ STEP 3 — Set Claim Status to {target_label!r} "
+                        f"(option {code}, via {via})")
+            break
+
+    if not status_set:
         logger.warning(
-            f"  ❌ STEP 3 — could not open the Claim Status picker for claim {claim_id}. "
-            f"Tried selectClaimStatusCode, billingClaimBtn*, and the '...' beside the "
-            f"Claim Status field.")
-        # Two rounds of guessing selectors is enough. Report what is actually
-        # next to the Claim Status field so the next attempt is informed.
+            f"  ❌ STEP 3 — could not set the Claim Status select for claim {claim_id}.")
+        # Report the selects that ARE on the page, so a miss arrives with its
+        # own evidence instead of costing another round of guessing.
         for frm in page.frames:
             try:
-                found = frm.evaluate('''() => {
-                    const out = [];
-                    const labels = Array.from(document.querySelectorAll('td, th, label, span, div'))
-                        .filter(el => /claim\\s*status/i.test((el.textContent || '').trim())
-                                      && (el.textContent || '').trim().length < 40);
-                    for (const lab of labels.slice(0, 3)) {
-                        let box = lab.parentElement;
-                        for (let up = 0; box && up < 3; up++, box = box.parentElement) {
-                            for (const el of box.querySelectorAll('*')) {
-                                const r = el.getBoundingClientRect();
-                                const t = (el.innerText || el.value || el.title || el.alt || '').trim();
-                                if (!t && !el.id && !el.getAttribute('ng-click')) continue;
-                                out.push({
-                                    tag: el.tagName,
-                                    id: el.id || '',
-                                    cls: (el.className || '').toString().slice(0, 40),
-                                    text: t.slice(0, 20),
-                                    ngClick: (el.getAttribute('ng-click')
-                                              || el.getAttribute('data-ng-click') || '').slice(0, 40),
-                                    onclick: (el.getAttribute('onclick') || '').slice(0, 40),
-                                    visible: r.width > 0 && r.height > 0,
-                                });
-                            }
-                        }
-                    }
-                    return out.slice(0, 25);
-                }''')
+                found = frm.evaluate('''() => Array.from(
+                    document.querySelectorAll('select')).slice(0, 15).map(s => ({
+                        id: s.id || '',
+                        ngModel: (s.getAttribute('ng-model')
+                                  || s.getAttribute('data-ng-model') || ''),
+                        options: s.options.length,
+                        selected: (s.options[s.selectedIndex]
+                                   ? (s.options[s.selectedIndex].textContent || '').trim().slice(0, 40)
+                                   : ''),
+                    }))''')
                 if found:
-                    logger.warning(f"     elements around the Claim Status field: {found}")
+                    logger.warning(f"     selects on the page: {found}")
                     break
             except Exception:
                 continue
         _close_claim_popup(page)
         return False
-    time.sleep(2)
-
-    # STEP 4 — select the target status row
-    found = False
-    for frm in page.frames:
-        try:
-            res = frm.evaluate('''(targetLc) => {
-                for (const row of document.querySelectorAll('tr')) {
-                    for (const cell of row.querySelectorAll('td')) {
-                        if ((cell.textContent || '').trim().toLowerCase() === targetLc) {
-                            row.click();
-                            return true;
-                        }
-                    }
-                }
-                return false;
-            }''', target_lc)
-            if res:
-                found = True
-                break
-        except Exception:
-            continue
-    if not found:
-        logger.warning(f"  ❌ STEP 4 — status row {target_label!r} not found for claim {claim_id}")
-        _close_claim_popup(page)
-        return False
-    logger.info(f"  ✅ STEP 4 — Selected status row {target_label!r}")
-    time.sleep(1)
-
-    # STEP 5 — click the picker's OK (saveClaimStatusCodes(true))
-    confirm = None
-    for frm in page.frames:
-        try:
-            confirm = frm.evaluate('''() => {
-                const btns = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
-                    .filter(b => b.offsetWidth > 0);
-                const ngOf = b => (b.getAttribute('ng-click') || b.getAttribute('data-ng-click') || '');
-                let ok = btns.find(b => /saveClaimStatusCodes\\(\\s*true\\s*\\)/.test(ngOf(b)));
-                if (!ok) ok = btns.find(b => /saveClaimStatusCodes/.test(ngOf(b)) && !/\\(\\s*false\\s*\\)/.test(ngOf(b)));
-                if (!ok) ok = btns.find(b => ['OK', 'Ok'].includes((b.value || b.textContent || '').trim()));
-                if (ok) { ok.click(); return ngOf(ok) || 'OK'; }
-                return null;
-            }''')
-            if confirm:
-                break
-        except Exception:
-            continue
-    if confirm:
-        logger.info(f"  ✅ STEP 5 — Clicked picker OK ({confirm})")
-    else:
-        logger.warning(f"  ⚠️ STEP 5 — picker OK (saveClaimStatusCodes(true)) not found for claim {claim_id}")
     time.sleep(1.5)
     _dismiss_claim_alert(page)
 
-    # STEP 6 — save the claim popup (saveAllData)
+    # STEP 4 — save the claim popup (saveAllData)
     saved_via = None
     for frm in page.frames:
         try:
@@ -378,28 +320,28 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
                 return null;
             }''')
             if saved_via:
-                logger.info(f"  ✅ STEP 6 — Saved claim via {saved_via}")
+                logger.info(f"  ✅ STEP 4 — Saved claim via {saved_via}")
                 break
         except Exception:
             continue
     if not saved_via:
-        logger.warning(f"  ❌ STEP 6 — Save/OK button not found for claim {claim_id}")
+        logger.warning(f"  ❌ STEP 4 — Save/OK button not found for claim {claim_id}")
     time.sleep(3)
 
-    # STEP 7 (verify) — re-open the claim and confirm the status persisted
+    # STEP 5 (verify) — re-open the claim and confirm the status persisted
     verified = False
     try:
         reopened, _vf = _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3)
         if reopened:
             _dismiss_claim_alert(page)
             now = _read_status()
-            logger.info(f"  STEP 7 (verify) — re-opened claim {claim_id}, status = {now!r}")
+            logger.info(f"  STEP 5 (verify) — re-opened claim {claim_id}, status = {now!r}")
             verified = (now or '').strip().lower() == target_lc
         else:
-            logger.warning(f"  STEP 7 — could not re-open claim {claim_id} to verify")
+            logger.warning(f"  STEP 5 — could not re-open claim {claim_id} to verify")
         _close_claim_popup(page)
     except Exception as ve:
-        logger.warning(f"  STEP 7 — verify failed for {claim_id}: {ve}")
+        logger.warning(f"  STEP 5 — verify failed for {claim_id}: {ve}")
 
     if not verified:
         logger.warning(f"  ❌ Claim {claim_id} status NOT persisted in ECW — leaving unmarked for retry")

@@ -176,7 +176,7 @@ class EcwStatusCanBeRechecked(unittest.TestCase):
         src = self._main()
         self.assertIn('already reads', src)
         i = src.index('Claim Status BEFORE')
-        j = src.index('STEP 3 — open the Claim Status Code picker')
+        j = src.index('STEP 3 — set the Claim Status')
         self.assertIn('return True', src[i:j])
 
 
