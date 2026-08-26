@@ -382,35 +382,42 @@ class TheClaimsSearchStartsInJuly2025(unittest.TestCase):
 
 
 class TheClaimIsOpenedFromItsRow(unittest.TestCase):
-    """Typing a claim number into the lookup box only FILTERS the grid.
+    """The lookup box lists the claim; it does not open it.
 
-    The claim still has to be opened from its row. Without that the popup never
-    appeared — while the old detection reported that it had, and the status read
-    picked up the grid row instead.
+    Until the row was clicked no popup was ever created, while the old
+    detection reported that one had.
     """
 
     def test_there_is_a_row_opener(self):
         self.assertIn('def _open_claim_row(', _read())
 
-    def test_it_only_touches_the_cell_holding_the_claim_number(self):
-        # A row-wide click can land on a checkbox or a row action.
+    def test_it_matches_the_first_cell_only(self):
+        # Claim 11's number is also the POS column value on 15 other rows; a
+        # row-anywhere match would open somebody else's claim.
         fn = _fn('_open_claim_row')
-        self.assertIn("(c.textContent || '').trim() === claimId", fn)
-        self.assertIn('cell.querySelector(', fn)
-        # The row is only read for its cells; nothing inside it is clicked.
-        self.assertNotIn("row.querySelector('a')", fn)
-        self.assertNotIn('[ng-click]', fn)
+        self.assertIn('//tr[td[1][normalize-space()=', fn)
 
-    def test_it_prefers_a_link_then_falls_back_to_a_double_click(self):
+    def test_it_uses_real_mouse_input(self):
+        # A dispatched MouseEvent('dblclick') is not trusted input; ECW ignored
+        # it and every claim logged a click that opened nothing.
         fn = _fn('_open_claim_row')
-        self.assertLess(fn.index('claim-number-link'), fn.index('claim-number-dblclick'))
-        self.assertIn("new MouseEvent('dblclick'", fn)
+        self.assertIn('cell.dblclick', fn)
+        self.assertNotIn("new MouseEvent('dblclick'", fn)
 
-    def test_the_double_click_bubbles_so_angular_sees_it(self):
-        self.assertIn('bubbles: true', _fn('_open_claim_row'))
+    def test_double_click_is_tried_before_single_click(self):
+        fn = _fn('_open_claim_row')
+        self.assertLess(fn.index("'dblclick'"), fn.index("'click'"))
 
-    def test_invisible_rows_are_skipped(self):
-        self.assertIn('vis(row)', _fn('_open_claim_row'))
+    def test_invisible_cells_are_skipped(self):
+        self.assertIn('cell.is_visible()', _fn('_open_claim_row'))
+
+    def test_it_confirms_the_popup_rather_than_assuming(self):
+        fn = _fn('_open_claim_row')
+        self.assertIn('_wait_for_claim_popup(page, claim_id', fn)
+        self.assertIn('return True', fn)
+
+    def test_a_quoted_claim_id_cannot_break_the_xpath(self):
+        self.assertIn('.replace(\'"\', \'\')', _fn('_open_claim_row'))
 
 
 class TheWaitForThePopupIsAPoll(unittest.TestCase):
@@ -428,12 +435,8 @@ class TheWaitForThePopupIsAPoll(unittest.TestCase):
 
     def test_the_row_is_only_opened_when_the_popup_is_not_already_up(self):
         opener = _fn('_open_claim_popup_via_lookup')
-        self.assertIn('if not popup_found and _open_claim_row(page, claim_id):', opener)
-
-    def test_a_row_click_gets_longer_to_render_than_the_first_wait(self):
-        opener = _fn('_open_claim_popup_via_lookup')
-        i = opener.index('_open_claim_row(page, claim_id)')
-        self.assertIn('_wait_for_claim_popup(page, claim_id, 8)', opener[i:])
+        self.assertIn('if not popup_found:', opener)
+        self.assertIn('popup_found = _open_claim_row(page, claim_id)', opener)
 
 
 class ALookupMissExplainsItself(unittest.TestCase):

@@ -2087,43 +2087,50 @@ def _wait_for_claim_popup(page, claim_id, seconds):
 
 
 def _open_claim_row(page, claim_id):
-    """Open the claim from its row in the claims results grid.
+    """Open the claim by double-clicking its row in the claims results grid.
 
-    Typing a claim number into the lookup box FILTERS the grid on this screen;
-    it does not open the claim. That is why the popup never appeared while the
-    old detection — buttons named Cancel/OK plus "Prog. Notes", all of which
-    the lookup screen has — reported that it had, and why the status read then
-    picked up the grid row instead of a popup.
+    Typing a claim number into the lookup box does NOT open the claim, and does
+    not even filter to it — the search returns its usual page of rows and the
+    grid accumulates them. The claim still has to be opened from its row. Until
+    this existed no popup was ever created, while the old detection reported
+    that one had.
 
-    Only ever touches the cell holding the claim number, so a stray click
-    cannot land on a checkbox or a row action.
+    Two things this gets right that a naive row click does not:
+
+    * It matches the FIRST cell only. Claim 11's number also appears as the POS
+      column value on 15 other rows; a row-anywhere match would have opened
+      somebody else's claim.
+    * It uses Playwright's real mouse. A dispatched MouseEvent('dblclick') is
+      not trusted input and ECW ignored it — every claim logged the click and
+      then no popup.
+
+    Returns True once this claim's popup is up.
     """
+    xpath = ('xpath=//tr[td[1][normalize-space()="%s"]]/td[1]'
+             % str(claim_id).replace('"', ''))
     for frm in page.frames:
         try:
-            how = frm.evaluate(r"""((claimId) => {
-                const vis = el => {
-                    const r = el.getBoundingClientRect();
-                    return r.width > 0 && r.height > 0;
-                };
-                for (const row of document.querySelectorAll('tr')) {
-                    if (!vis(row)) continue;
-                    const cells = Array.from(row.querySelectorAll('td'));
-                    const cell = cells.find(
-                        c => (c.textContent || '').trim() === claimId);
-                    if (!cell) continue;
-                    const link = cell.querySelector('a');
-                    if (link && vis(link)) { link.click(); return 'claim-number-link'; }
-                    cell.dispatchEvent(new MouseEvent('dblclick',
-                        {bubbles: true, cancelable: true, view: window}));
-                    return 'claim-number-dblclick';
-                }
-                return null;
-            })""", str(claim_id))
-            if how:
-                logger.info(f"  ↳ Opening claim {claim_id} from its results row ({how})")
-                return True
+            cells = frm.locator(xpath)
+            count = cells.count()
         except Exception:
             continue
+        for n in range(min(count, 3)):
+            cell = cells.nth(n)
+            try:
+                if not cell.is_visible():
+                    continue
+            except Exception:
+                continue
+            # Double-click first: that is how a person opens a claim here.
+            # A single click only selects the row, so it is the fallback.
+            for how, act in (('dblclick', cell.dblclick), ('click', cell.click)):
+                try:
+                    act(timeout=4000)
+                except Exception:
+                    continue
+                logger.info(f"  ↳ {how} on claim {claim_id}'s row cell")
+                if _wait_for_claim_popup(page, claim_id, 6):
+                    return True
     return False
 
 
@@ -2209,10 +2216,10 @@ def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
     #    opened and then read from the results grid.
     popup_found = _wait_for_claim_popup(page, claim_id, wait_seconds)
 
-    # 2b. On this screen the lookup only filters the grid. Open the claim from
-    #     its row, then give it longer than the initial wait.
-    if not popup_found and _open_claim_row(page, claim_id):
-        popup_found = _wait_for_claim_popup(page, claim_id, 8)
+    # 2b. The lookup does not open the claim — it only lists it. Open it from
+    #     its row; _open_claim_row waits for the popup itself.
+    if not popup_found:
+        popup_found = _open_claim_row(page, claim_id)
 
     if not popup_found:
         _report_lookup_failure(page, claim_id)
