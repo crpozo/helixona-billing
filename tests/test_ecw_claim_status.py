@@ -266,7 +266,7 @@ class TheControlIsRetriedNotGivenUpOn(unittest.TestCase):
     def test_each_attempt_clears_alerts_first(self):
         step3 = _step3()
         i = step3.index('for attempt in range(1, 4):')
-        j = step3.index('for frm in page.frames:', i)
+        j = step3.index('for frm in _all_frames(page):', i)
         self.assertIn('_dismiss_claim_alert(page)', step3[i:j])
 
     def test_it_waits_between_attempts(self):
@@ -315,7 +315,7 @@ class AnAlertsOkIsNeverCountedAsASave(unittest.TestCase):
 
 class AMissArrivesWithItsEvidence(unittest.TestCase):
     def test_it_reports_every_frame(self):
-        self.assertIn('for n, frm in enumerate(page.frames)', _step3())
+        self.assertIn('for n, frm in enumerate(_all_frames(page))', _step3())
 
     def test_it_says_whether_the_popup_is_even_there(self):
         # The question that three rounds of selector guessing never answered.
@@ -451,6 +451,64 @@ class ALookupMissExplainsItself(unittest.TestCase):
         fn = _fn('_report_lookup_failure')
         self.assertIn('rowForThisClaim', fn)
         self.assertIn('lookupValue', fn)
+
+
+class ThePopupIsFoundHoweverBigItIs(unittest.TestCase):
+    """A size limit threw away the answer.
+
+    findClaimPopup skipped any container longer than 6000 characters. A claim
+    popup carrying six ICD codes, fifteen CPT lines, insurances and the
+    Follow-up panel is far bigger, so the element that actually matched was
+    skipped and a claim the operator could SEE open on screen read as "not
+    found" — after which every search for a status control looked at the
+    background lookup screen.
+    """
+
+    def test_there_is_no_size_limit(self):
+        js = _popup_js()
+        self.assertNotIn('6000', js)
+        self.assertNotIn('t.length >', js)
+
+    def test_the_smallest_match_still_wins(self):
+        # What makes the limit unnecessary: <body> matches too, and loses.
+        js = _popup_js()
+        self.assertIn('best', js)
+        self.assertIn('<', js)
+
+    def test_identity_and_popup_wording_are_still_required(self):
+        js = _popup_js()
+        self.assertIn('idRe.test(t)', js)
+        self.assertIn('print hcfa', js.lower())
+
+
+class EveryTabIsSearched(unittest.TestCase):
+    """ECW can open a claim in a second tab.
+
+    page.frames only covers the tab the search ran in, so a popup plainly on
+    screen is invisible to anything scoped to one page.
+    """
+
+    def test_there_is_an_all_tabs_helper(self):
+        self.assertIn('def _all_frames(page):', _read())
+
+    def test_it_walks_the_browser_context(self):
+        fn = _fn('_all_frames')
+        self.assertIn('page.context.pages', fn)
+
+    def test_it_still_includes_the_page_it_was_given(self):
+        # A context that reports no pages must not silently search nothing.
+        fn = _fn('_all_frames')
+        self.assertIn('pages.insert(0, page)', fn)
+
+    def test_it_does_not_return_the_same_frame_twice(self):
+        self.assertIn('seen', _fn('_all_frames'))
+
+    def test_the_status_flow_uses_it_everywhere(self):
+        src = _read()
+        flow = src[src.index('def _all_frames'):src.index('def _combine_excels')]
+        # The docstring mentions page.frames; no loop should still use it.
+        self.assertNotIn('in page.frames:', flow)
+        self.assertGreaterEqual(flow.count('_all_frames(page)'), 6)
 
 
 if __name__ == '__main__':

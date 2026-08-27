@@ -94,7 +94,12 @@ def _dismiss_ecw_data_error(page, label=''):
 # STEP 1 logged a modal it had not opened, STEP 2 reported a plausible status,
 # and STEP 3 found no Claim Status control anywhere: there was no popup.
 #
-# A real popup shows this claim's number AND popup-only wording.
+# A real popup shows this claim's number AND popup-only wording. The smallest
+# element satisfying both wins, so <body> never does — which is why there is no
+# size limit here. There used to be one (6000 chars) and it threw away the
+# answer: a claim popup carrying six ICD codes, fifteen CPT lines, insurances
+# and the Follow-up panel is far bigger than that, so the container that
+# actually matched was skipped and a plainly-open claim read as "not found".
 POPUP_JS = r"""
     function findClaimPopup(claimId) {
         const norm = s => (s || '').replace(/\s+/g, ' ').trim();
@@ -102,7 +107,7 @@ POPUP_JS = r"""
         let best = null;
         for (const el of document.querySelectorAll('div, section, form, td')) {
             const t = norm(el.textContent);
-            if (!t || t.length > 6000) continue;
+            if (!t) continue;
             if (!idRe.test(t)) continue;
             if (!/print hcfa/i.test(t) && !/prog\.? notes/i.test(t)) continue;
             if (!best || t.length < norm(best.textContent).length) best = el;
@@ -119,6 +124,31 @@ CLAIM_ALERT_RE = ("fee schedule is selected|data loading error|already open"
                   "|cannot be|is required|please select")
 
 
+def _all_frames(page):
+    """Every frame of every page in this browser context.
+
+    ECW can open a claim in a second tab. page.frames only covers the tab the
+    search was run from, so a popup that is plainly on screen can be invisible
+    to anything scoped to one page.
+    """
+    frames, seen = [], set()
+    try:
+        pages = list(page.context.pages)
+    except Exception:
+        pages = []
+    if page not in pages:
+        pages.insert(0, page)
+    for p in pages:
+        try:
+            for f in p.frames:
+                if id(f) not in seen:
+                    seen.add(id(f))
+                    frames.append(f)
+        except Exception:
+            continue
+    return frames
+
+
 def _dismiss_one_claim_alert(page):
     """Dismiss ONE of the small eCW validation alerts that pop on top of the claim detail
     popup (e.g. 'Master/Default fee schedule is selected.', 'data loading error').
@@ -127,7 +157,7 @@ def _dismiss_one_claim_alert(page):
     was dismissed. Safe to call repeatedly."""
     import time as _t
     ALERT_RE = CLAIM_ALERT_RE
-    for ctx in [page] + list(page.frames):
+    for ctx in _all_frames(page):
         try:
             clicked = ctx.evaluate('''(reSrc) => {
                 const re = new RegExp(reSrc, 'i');
@@ -334,7 +364,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     })'''
 
     def _read_status():
-        for frm in page.frames:
+        for frm in _all_frames(page):
             try:
                 v = frm.evaluate(READ_STATUS_JS, str(claim_id))
                 if v is not None:
@@ -364,12 +394,11 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
 
     # STEP 3 — set the Claim Status.
     #
-    # This is a plain <select>, not a picker. Every earlier attempt here tried
-    # to OPEN a lookup dialog — ng-click="selectClaimStatusCode()", any
-    # billingClaimBtn*, an ellipsis beside the label — and no such control
-    # exists on this screen. That is why STEP 3 failed on every claim rather
-    # than on some, and why claims recorded as updated months ago still read
-    # "Ready to Bill - Symplisend CC" in ECW. The real control:
+    # ECW renders this field two ways and both are in production: a <select>
+    # bound to ClaimData.ClaimStatus, and a "..." picker button. Both are tried,
+    # inside the verified popup. Searching for either across the whole document
+    # matched the background lookup screen's own filter controls, which is how
+    # a run could report having changed a status it never touched. The select:
     #
     #   <select ng-model="ClaimData.ClaimStatus"
     #           id="claimStatusSel1787764786180"
@@ -390,7 +419,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     status_set = False
     for attempt in range(1, 4):
         _dismiss_claim_alert(page)
-        for frm in page.frames:
+        for frm in _all_frames(page):
             via = None
             try:
                 via = _set_status_via_select(frm, claim_id, target_lc, SELECT_CSS)
@@ -421,7 +450,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
         # Report every frame, and say whether the popup is even there. Breaking
         # on the first frame with any <select> reported the background lookup
         # screen and hid the fact that no popup had opened at all.
-        for n, frm in enumerate(page.frames):
+        for n, frm in enumerate(_all_frames(page)):
             try:
                 info = frm.evaluate(POPUP_JS + '''((claimId) => {
                     const popup = findClaimPopup(claimId);
@@ -450,7 +479,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     # written. Claim 5402 logged "Save/OK button not found" with an alert up.
     _dismiss_claim_alert(page)
     saved_via = None
-    for frm in page.frames:
+    for frm in _all_frames(page):
         try:
             saved_via = frm.evaluate('''(alertRe) => {
                 const re = new RegExp(alertRe, 'i');
