@@ -121,7 +121,7 @@ class TheStatusIsReadFromThePopupOnly(unittest.TestCase):
 
     def test_the_read_is_scoped_by_the_popup_finder(self):
         block = self._read_block()
-        self.assertIn('POPUP_JS', block)
+        self.assertIn('_with_popup_finder', block)
         self.assertIn('findClaimPopup(claimId)', block)
 
     def test_no_popup_means_no_answer(self):
@@ -391,14 +391,18 @@ class TheClaimIsOpenedFromItsRow(unittest.TestCase):
     def test_there_is_a_row_opener(self):
         self.assertIn('def _open_claim_row(', _read())
 
-    def test_it_matches_only_the_first_two_cells(self):
-        # The grid leads with a checkbox column, so the claim number is in the
-        # SECOND cell — an assumption of td[1] found nothing and cost a run.
-        # Two cells is still narrow enough to exclude the POS column, where
-        # claim 11's number appears on 15 other rows.
+    def test_the_column_is_the_measured_one_not_a_guess(self):
+        # td[1] matched nothing, and so did the first two. The diagnostic
+        # measured it: claimNumberInCell 6 of cellsInRow 16.
         fn = _fn('_open_claim_row')
-        self.assertIn('//tr/td[position() <= 2][normalize-space()=', fn)
+        self.assertIn('//tr/td[position() <= 8][normalize-space()=', fn)
         self.assertNotIn('//tr[td[1]', fn)
+
+    def test_a_wrong_candidate_cannot_be_acted_on(self):
+        # Widening the column range is safe only because the popup has to show
+        # THIS claim before anything is touched.
+        fn = _fn('_open_claim_row')
+        self.assertIn('_wait_for_claim_popup(page, claim_id', fn)
 
     def test_it_uses_real_mouse_input(self):
         # A dispatched MouseEvent('dblclick') is not trusted input; ECW ignored
@@ -555,6 +559,44 @@ class TheDiagnosticSeparatesTheTwoBugs(unittest.TestCase):
         fn = _fn('_report_lookup_failure')
         self.assertIn('claimNumberInCell', fn)
         self.assertIn('cellsInRow', fn)
+
+
+class TheFinderReachesThePage(unittest.TestCase):
+    """findClaimPopup never ran, and never said so.
+
+    POPUP_JS is a function DECLARATION. Concatenated in front of an arrow
+    function it became
+
+        function findClaimPopup(claimId) {...}
+        ((claimId) => ...)
+
+    which Playwright parenthesises, making it a CALL of findClaimPopup with the
+    arrow function where the claim id belongs. It did not throw — it returned
+    null, Playwright passed that back as the result, null is falsy, and every
+    caller read "no popup". Silently, on every claim, from the day it was
+    written, while the popup was open on screen.
+    """
+
+    def test_the_broken_concatenation_is_gone(self):
+        self.assertNotIn('POPUP_JS + ', _read())
+
+    def test_the_declaration_is_wrapped_inside_the_called_function(self):
+        fn = _fn('_with_popup_finder')
+        self.assertIn("'((...args) => {%s", fn)
+        self.assertIn('.apply(null, args)', fn)
+
+    def test_the_wrapper_yields_one_expression(self):
+        # What went wrong: two statements where one expression was required.
+        fn = _fn('_with_popup_finder')
+        self.assertTrue(fn.rstrip().endswith("% (POPUP_JS, arrow_src)"), fn[-80:])
+
+    def test_every_use_of_the_finder_goes_through_the_wrapper(self):
+        src = _read()
+        # Any evaluate mentioning findClaimPopup must be wrapped.
+        for chunk in src.split('frm.evaluate(')[1:]:
+            head = chunk[:400]
+            if 'findClaimPopup' in head:
+                self.assertIn('_with_popup_finder', head[:60], head[:120])
 
 
 if __name__ == '__main__':

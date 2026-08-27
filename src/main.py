@@ -124,6 +124,31 @@ CLAIM_ALERT_RE = ("fee schedule is selected|data loading error|already open"
                   "|cannot be|is required|please select")
 
 
+def _with_popup_finder(arrow_src):
+    """Make findClaimPopup available to `arrow_src`, as ONE valid expression.
+
+    POPUP_JS is a function DECLARATION. Concatenating it in front of an arrow
+    function produced
+
+        function findClaimPopup(claimId) {...}
+        ((claimId) => ...)
+
+    which JavaScript parses as CALLING findClaimPopup with the arrow function
+    where the claim id belongs — not as two statements. The finder therefore ran
+    once, immediately, tried to build a RegExp out of a function's source, and
+    threw. Every caller wraps its evaluate in `except Exception: continue`, so
+    the throw was silent: findClaimPopup has never once run correctly since the
+    day it was written, and every claim reported "popup not found" while the
+    popup was open on screen. The diagnostic finally said so outright —
+    popupWording True, claimNoShown 7149 — against a run logging
+    "Could not find claim 7149 in ECW".
+
+    Wrapping puts the declaration INSIDE the function Playwright calls, so the
+    arrow sees it lexically and Playwright's argument reaches the arrow.
+    """
+    return '((...args) => {%s\nreturn (%s).apply(null, args);})' % (POPUP_JS, arrow_src)
+
+
 def _all_frames(page):
     """Every frame of every page in this browser context.
 
@@ -213,7 +238,7 @@ def _set_status_via_select(frm, claim_id, target_lc, select_css):
     such control. The option code is read off the page by its label, never
     hardcoded, so a re-coded status list cannot silently select another status.
     """
-    code = frm.evaluate(POPUP_JS + r"""(([claimId, targetLc, css]) => {
+    code = frm.evaluate(_with_popup_finder(r"""(([claimId, targetLc, css]) => {
         const popup = findClaimPopup(claimId);
         if (!popup) return null;
         const sel = popup.querySelector(css);
@@ -222,7 +247,7 @@ def _set_status_via_select(frm, claim_id, target_lc, select_css):
             if ((o.textContent || '').trim().toLowerCase() === targetLc) return o.value;
         }
         return null;
-    })""", [str(claim_id), target_lc, select_css])
+    })"""), [str(claim_id), target_lc, select_css])
     if not code:
         return None
     try:
@@ -261,7 +286,7 @@ def _set_status_via_picker(frm, claim_id, target_lc):
     The picker button is looked for inside the claim popup; hunting it across
     the whole document matched the background lookup screen's own controls.
     """
-    opened = frm.evaluate(POPUP_JS + r"""((claimId) => {
+    opened = frm.evaluate(_with_popup_finder(r"""((claimId) => {
         const popup = findClaimPopup(claimId);
         if (!popup) return null;
         const vis = el => {
@@ -278,7 +303,7 @@ def _set_status_via_picker(frm, claim_id, target_lc):
             if (vis(x)) { x.click(); return x.id; }
         }
         return null;
-    })""", str(claim_id))
+    })"""), str(claim_id))
     if not opened:
         return None
     time.sleep(2)
@@ -331,7 +356,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     """
     target_lc = target_label.strip().lower()
 
-    READ_STATUS_JS = POPUP_JS + '''((claimId) => {
+    READ_STATUS_JS = _with_popup_finder('''((claimId) => {
         const popup = findClaimPopup(claimId);
         if (!popup) return null;
         // The Claim Status field is a plain <select> bound to Angular's
@@ -361,7 +386,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
             }
         }
         return null;
-    })'''
+    })''')
 
     def _read_status():
         for frm in _all_frames(page):
@@ -452,7 +477,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
         # screen and hid the fact that no popup had opened at all.
         for n, frm in enumerate(_all_frames(page)):
             try:
-                info = frm.evaluate(POPUP_JS + '''((claimId) => {
+                info = frm.evaluate(_with_popup_finder('''((claimId) => {
                     const popup = findClaimPopup(claimId);
                     return {
                         popup: !!popup,
@@ -462,7 +487,7 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
                         pickerButtons: popup
                             ? popup.querySelectorAll('[id^="billingClaimBtn"]').length : 0,
                     };
-                })''', str(claim_id))
+                })'''), str(claim_id))
             except Exception:
                 continue
             logger.warning(f"     frame {n} ({frm.url[:55]}): {info}")
@@ -2105,7 +2130,7 @@ def _wait_for_claim_popup(page, claim_id, seconds):
         for frm in page.frames:
             try:
                 if frm.evaluate(
-                        POPUP_JS + '((claimId) => findClaimPopup(claimId) !== null)',
+                        _with_popup_finder('(claimId) => findClaimPopup(claimId) !== null'),
                         str(claim_id)):
                     return True
             except Exception:
@@ -2135,10 +2160,13 @@ def _open_claim_row(page, claim_id):
 
     Returns True once this claim's popup is up.
     """
-    # Not td[1]: the grid leads with a checkbox column, so the claim number
-    # sits in the second cell. Restricting to the first two cells still keeps
-    # out the POS column, where claim 11's number appears on 15 other rows.
-    xpath = ('xpath=//tr/td[position() <= 2][normalize-space()="%s"]'
+    # The diagnostic measured it rather than leaving it to be guessed a third
+    # time: claimNumberInCell 6, cellsInRow 16. td[1] matched nothing (checkbox
+    # column) and so did the first two. Eight covers it while staying left of
+    # most of the row; a candidate that opens the wrong claim is caught anyway,
+    # because the popup must show THIS claim's number before anything is
+    # touched.
+    xpath = ('xpath=//tr/td[position() <= 8][normalize-space()="%s"]'
              % str(claim_id).replace('"', ''))
     for frm in page.frames:
         try:
