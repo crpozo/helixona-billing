@@ -2135,7 +2135,10 @@ def _open_claim_row(page, claim_id):
 
     Returns True once this claim's popup is up.
     """
-    xpath = ('xpath=//tr[td[1][normalize-space()="%s"]]/td[1]'
+    # Not td[1]: the grid leads with a checkbox column, so the claim number
+    # sits in the second cell. Restricting to the first two cells still keeps
+    # out the POS column, where claim 11's number appears on 15 other rows.
+    xpath = ('xpath=//tr/td[position() <= 2][normalize-space()="%s"]'
              % str(claim_id).replace('"', ''))
     for frm in page.frames:
         try:
@@ -2158,7 +2161,7 @@ def _open_claim_row(page, claim_id):
                 except Exception:
                     continue
                 logger.info(f"  ↳ {how} on claim {claim_id}'s row cell")
-                if _wait_for_claim_popup(page, claim_id, 6):
+                if _wait_for_claim_popup(page, claim_id, 12):
                     return True
     return False
 
@@ -2173,9 +2176,31 @@ def _report_lookup_failure(page, claim_id):
                     .some(c => (c.textContent || '').trim() === claimId));
                 const lookupInput = document.querySelector(
                     'input[id^="claimLookupIpt"], input[ng-model="_InvId"]');
+                // Separates "no popup opened" from "a popup is open and the
+                // matcher does not recognise it" — two different bugs that
+                // have looked identical in every run so far.
+                const body = (document.body ? document.body.innerText : '') || '';
+                const popupWording = /print hcfa|prog\.? notes/i.test(body);
+                const claimNoShown = (body.match(/claim\s*no\.?\s*:?\s*(\d+)/i) || [])[1] || null;
+                // Which cell holds the number decides the selector that opens
+                // the claim; assuming the first one cost a run.
+                let cellIndex = null, cellCount = null;
+                if (matching.length) {
+                    const cells = Array.from(matching[0].querySelectorAll('td'));
+                    cellCount = cells.length;
+                    cells.forEach((c, i) => {
+                        if (cellIndex === null && (c.textContent || '').trim() === claimId) {
+                            cellIndex = i + 1;
+                        }
+                    });
+                }
                 return {
+                    popupWording: popupWording,
+                    claimNoShown: claimNoShown,
                     rows: rows.length,
                     rowForThisClaim: matching.length,
+                    claimNumberInCell: cellIndex,
+                    cellsInRow: cellCount,
                     rowText: matching.length
                         ? (matching[0].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120)
                         : '',
@@ -2188,7 +2213,7 @@ def _report_lookup_failure(page, claim_id):
             logger.warning(f"     frame {n}: {info}")
 
 
-def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
+def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=12):
     """Open (or re-open) the ECW claim detail popup via the Claim Lookup input.
     Returns (popup_found, best_frame) where best_frame is the iframe whose body
     contains the claim popup (Cancel/Prog. Notes buttons), or None.
@@ -2250,6 +2275,10 @@ def _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3):
     if not popup_found:
         popup_found = _open_claim_row(page, claim_id)
 
+    if not popup_found:
+        # One more look before giving up: the claim can finish rendering while
+        # the row search is running.
+        popup_found = _wait_for_claim_popup(page, claim_id, 6)
     if not popup_found:
         _report_lookup_failure(page, claim_id)
         return (False, None)

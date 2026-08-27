@@ -391,11 +391,14 @@ class TheClaimIsOpenedFromItsRow(unittest.TestCase):
     def test_there_is_a_row_opener(self):
         self.assertIn('def _open_claim_row(', _read())
 
-    def test_it_matches_the_first_cell_only(self):
-        # Claim 11's number is also the POS column value on 15 other rows; a
-        # row-anywhere match would open somebody else's claim.
+    def test_it_matches_only_the_first_two_cells(self):
+        # The grid leads with a checkbox column, so the claim number is in the
+        # SECOND cell — an assumption of td[1] found nothing and cost a run.
+        # Two cells is still narrow enough to exclude the POS column, where
+        # claim 11's number appears on 15 other rows.
         fn = _fn('_open_claim_row')
-        self.assertIn('//tr[td[1][normalize-space()=', fn)
+        self.assertIn('//tr/td[position() <= 2][normalize-space()=', fn)
+        self.assertNotIn('//tr[td[1]', fn)
 
     def test_it_uses_real_mouse_input(self):
         # A dispatched MouseEvent('dblclick') is not trusted input; ECW ignored
@@ -509,6 +512,49 @@ class EveryTabIsSearched(unittest.TestCase):
         # The docstring mentions page.frames; no loop should still use it.
         self.assertNotIn('in page.frames:', flow)
         self.assertGreaterEqual(flow.count('_all_frames(page)'), 6)
+
+
+class TheClaimIsGivenTimeToRender(unittest.TestCase):
+    """It opened at about five seconds; the bot stopped looking at 4.4.
+
+    The run reported "Could not find claim 7149" while the operator watched
+    that claim open on screen.
+    """
+
+    def test_the_first_wait_is_not_three_seconds(self):
+        sig = "def _open_claim_popup_via_lookup(page, claim_id, wait_seconds="
+        line = _read()[_read().index(sig):]
+        line = line[:line.index(')')]
+        self.assertNotIn('wait_seconds=3', line)
+        self.assertIn('wait_seconds=12', line)
+
+    def test_a_clicked_row_gets_twelve_seconds(self):
+        self.assertIn('_wait_for_claim_popup(page, claim_id, 12)',
+                      _fn('_open_claim_row'))
+
+    def test_there_is_a_last_look_before_giving_up(self):
+        # The claim can finish rendering while the row search runs.
+        opener = _fn('_open_claim_popup_via_lookup')
+        i = opener.index('_open_claim_row(page, claim_id)')
+        j = opener.index('_report_lookup_failure')
+        self.assertIn('_wait_for_claim_popup(page, claim_id, 6)', opener[i:j])
+
+
+class TheDiagnosticSeparatesTheTwoBugs(unittest.TestCase):
+    """"No popup opened" and "a popup is open and the matcher misses it" have
+    looked identical in every run so far."""
+
+    def test_it_reports_whether_popup_wording_is_on_screen(self):
+        self.assertIn('popupWording', _fn('_report_lookup_failure'))
+
+    def test_it_reports_which_claim_the_screen_is_showing(self):
+        self.assertIn('claimNoShown', _fn('_report_lookup_failure'))
+
+    def test_it_reports_which_column_holds_the_claim_number(self):
+        # Assuming the first column is exactly what cost the last run.
+        fn = _fn('_report_lookup_failure')
+        self.assertIn('claimNumberInCell', fn)
+        self.assertIn('cellsInRow', fn)
 
 
 if __name__ == '__main__':
