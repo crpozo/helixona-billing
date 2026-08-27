@@ -343,7 +343,45 @@ class AClaimAlreadyCorrectIsNotRewritten(unittest.TestCase):
         body = _fn('_set_claim_status_in_ecw')
         i = body.index('Claim Status BEFORE')
         j = body.index('# STEP 3')
-        self.assertIn('return True', body[i:j])
+        self.assertIn('return target_label', body[i:j])
+
+
+class AHumanStatusIsNeverRegressed(unittest.TestCase):
+    """The recheck list holds claims that moved on after submission.
+
+    6843 read "In Process" and 4518 "Patient". Overwriting those with
+    "Claim sent via Symplisend" would destroy real bookkeeping to say
+    something ECW already knows.
+    """
+
+    def _guard(self):
+        body = _fn('_set_claim_status_in_ecw')
+        return body[body.index('_ADVANCE_FROM'):body.index('# STEP 3')]
+
+    def test_only_the_two_presend_statuses_are_advanced(self):
+        g = self._guard()
+        self.assertIn("'ready to bill - symplisend cc'", g)
+        self.assertIn("'ready to submit to symplisend'", g)
+
+    def test_anything_else_is_left_alone_and_reported_as_is(self):
+        g = self._guard()
+        self.assertIn('return _before', g)
+        self.assertIn('left alone', g)
+
+    def test_the_guard_runs_before_the_field_is_touched(self):
+        body = _fn('_set_claim_status_in_ecw')
+        self.assertLess(body.index('_ADVANCE_FROM'), body.index('# STEP 3'))
+
+    def test_an_unreadable_status_is_not_treated_as_human(self):
+        # BEFORE = None means the read failed; STEP 3 must still get its try.
+        self.assertIn('if _before and', self._guard())
+
+    def test_what_the_caller_records_is_what_ecw_shows(self):
+        # The DynamoDB mark used to hardcode the target label even when the
+        # claim was left in another status.
+        src = _read()
+        self.assertNotIn("'ecw_status_code': 'Claim sent via Symplisend'", src)
+        self.assertIn("'ecw_status_code': str(final_status)", src)
 
 
 class OnlyAVerifiedChangeCounts(unittest.TestCase):
@@ -359,10 +397,11 @@ class OnlyAVerifiedChangeCounts(unittest.TestCase):
         i = body.index('# STEP 5 (verify)')
         self.assertIn('_open_claim_popup_via_lookup', body[i:])
 
-    def test_true_is_returned_only_when_the_re_read_matches(self):
+    def test_success_returns_the_re_read_status_and_failure_returns_false(self):
         body = _fn('_set_claim_status_in_ecw')
         self.assertIn("verified = (now or '').strip().lower() == target_lc", body)
-        self.assertTrue(body.rstrip().endswith('return verified'))
+        self.assertIn('return False', body[body.index('NOT persisted'):])
+        self.assertTrue(body.rstrip().endswith('return now'))
 
     def test_an_unverified_claim_is_left_unmarked_for_retry(self):
         self.assertIn('leaving unmarked for retry', _fn('_set_claim_status_in_ecw'))
@@ -638,6 +677,50 @@ class TheAlertCleanerCannotCloseTheClaim(unittest.TestCase):
         fn = _fn('_dismiss_one_claim_alert')
         self.assertIn("(box.textContent || '')", fn)
         self.assertIn('Dismissed eCW claim alert ({clicked!r})', fn)
+
+
+class ResendingTheWrongFormSends(unittest.TestCase):
+    """807 resubmissions went out as "Provider First Submission Claim", so the
+    payer opened new claims instead of attaching records to the one under
+    dispute. The resend sends them again through the prior-claim form."""
+
+    def _mode(self):
+        src = _read()
+        i = src.index("if body.get('resend_wrong_form'):")
+        return src[i:src.index('# Filter to test claim if specified', i)]
+
+    def test_only_the_resubmissions_bot_may_run_it(self):
+        m = self._mode()
+        self.assertIn("_role != 'resubmissions'", m)
+        self.assertIn('return', m)
+
+    def test_selection_is_by_the_latest_audit_row(self):
+        # A claim qualifies only while its LATEST submitted row says the wrong
+        # form — each successful resend removes it from the next run, so a
+        # crashed batch is simply re-queued.
+        m = self._mode()
+        self.assertIn('latest_form', m)
+        self.assertIn('ts > prev[0]', m)
+        self.assertIn('form_types.FIRST_SUBMISSION', m)
+
+    def test_only_submitted_rows_count(self):
+        self.assertIn("str(r.get('outcome', '')).lower() != 'submitted'", self._mode())
+
+    def test_a_claim_without_the_prior_number_is_excluded(self):
+        # The prior-claim form requires it; without it the send would downgrade
+        # to a first submission — the very bug being repaired.
+        self.assertIn('form_types.prior_claim_number(item)', self._mode())
+
+    def test_documentation_must_still_be_complete(self):
+        self.assertIn("evaluate_claim(item)['ready']", self._mode())
+
+    def test_only_resubmissions_qualify(self):
+        self.assertIn('form_types.is_resubmission(item)', self._mode())
+
+    def test_batches_can_be_limited(self):
+        m = self._mode()
+        self.assertIn("body.get('resend_limit')", m)
+        self.assertIn('ready_claims[:resend_limit]', m)
 
 
 if __name__ == '__main__':

@@ -176,8 +176,8 @@ class EcwStatusCanBeRechecked(unittest.TestCase):
         src = self._main()
         self.assertIn('already reads', src)
         i = src.index('Claim Status BEFORE')
-        j = src.index('STEP 3 — set the Claim Status')
-        self.assertIn('return True', src[i:j])
+        j = src.index('# STEP 3')
+        self.assertIn('return target_label', src[i:j])
 
 
 if __name__ == '__main__':

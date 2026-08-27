@@ -436,7 +436,21 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     # only where ECW actually disagrees with us.
     if _before and _before.strip().lower() == target_label.strip().lower():
         logger.info(f"  ✅ Claim {claim_id} already reads '{target_label}' — left alone")
-        return True
+        _close_claim_popup(page)
+        return target_label
+
+    # A status a PERSON set is never regressed. The recheck list contains
+    # claims that moved on after submission — 6843 read "In Process", 4518
+    # "Patient" — and overwriting those with "Claim sent via Symplisend" would
+    # destroy real bookkeeping to say something ECW already knows. Only the two
+    # pre-send statuses are ever advanced; anything else is recorded as-is so
+    # the claim stops being re-walked.
+    _ADVANCE_FROM = {'ready to bill - symplisend cc', 'ready to submit to symplisend'}
+    if _before and _before.strip().lower() not in _ADVANCE_FROM:
+        logger.info(f"  ⏭️ Claim {claim_id} reads {_before!r} — a progressed/human "
+                    f"status, left alone")
+        _close_claim_popup(page)
+        return _before
 
     # STEP 3 — set the Claim Status.
     #
@@ -599,7 +613,10 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
 
     if not verified:
         logger.warning(f"  ❌ Claim {claim_id} status NOT persisted in ECW — leaving unmarked for retry")
-    return verified
+        return False
+    # The status the claim actually shows, so the caller records the truth
+    # rather than assuming the target.
+    return now
 
 
 def _combine_excels(paths, output_path):
@@ -10361,6 +10378,50 @@ def process_message(message: dict, aws_client: AWSClient):
             f"📋 {len(ready_claims)} claims ready for this bot ({_role}) — "
             f"{_ready_any} ready overall, out of {len(all_claims)} total")
         
+        # Re-send resubmissions that went out through the wrong form. 807 went
+        # to Blue Shield as "Provider First Submission Claim", so the payer
+        # opened NEW claims instead of attaching the records to the claim under
+        # dispute — the mechanism behind "medical records not received". This
+        # sends them again through "Provider Prior Claim Submission" with the
+        # original claim number.
+        #
+        # Selection is self-limiting: a claim qualifies only while its LATEST
+        # submitted audit row says the wrong form, so each successful resend
+        # removes the claim from the next run and a crashed batch can simply be
+        # re-queued. Claims without an original_ref_no cannot use the prior
+        # form (the field is required) and are excluded, not downgraded.
+        if body.get('resend_wrong_form'):
+            if _role != 'resubmissions':
+                logger.warning("resend_wrong_form is a resubmissions-bot task; ignoring on %r" % _role)
+                return
+            audit_rows = scan_all(aws_client.dynamodb.Table('helixona-submissions'))
+            latest_form = {}
+            for r in audit_rows:
+                if str(r.get('outcome', '')).lower() != 'submitted':
+                    continue
+                rcid = str(r.get('claim_id', ''))
+                ts = str(r.get('submitted_at_utc', ''))
+                prev = latest_form.get(rcid)
+                if not prev or ts > prev[0]:
+                    latest_form[rcid] = (ts, str(r.get('submission_form_type', '')))
+
+            ready_claims = [
+                item for item in all_claims
+                if form_types.is_resubmission(item)
+                and form_types.prior_claim_number(item)
+                and evaluate_claim(item)['ready']
+                and latest_form.get(str(item.get('claim_id', '')), ('', ''))[1]
+                    == form_types.FIRST_SUBMISSION
+            ]
+            resend_limit = int(body.get('resend_limit') or 0)
+            if resend_limit:
+                ready_claims = ready_claims[:resend_limit]
+            logger.info(
+                f"🔁 RESEND mode — {len(ready_claims)} resubmissions whose latest "
+                f"send used the wrong form (limit={resend_limit or 'none'}). Each "
+                f"goes out again as 'Provider Prior Claim Submission' with its "
+                f"original claim number.")
+
         # Filter to test claim if specified
         if test_claim_id:
             # For test mode: find the claim regardless of submitted status
@@ -11421,13 +11482,14 @@ def process_message(message: dict, aws_client: AWSClient):
                         cid = claim_item.get('claim_id', '')
                         logger.info(f"📋 Updating ECW status for claim {cid}...")
                         try:
-                            if _set_claim_status_in_ecw(ecw_page, cid):
+                            final_status = _set_claim_status_in_ecw(ecw_page, cid)
+                            if final_status:
                                 aws_client.update_claim_status(cid, {
                                     'ecw_status_updated': True,
-                                    'ecw_status_code': 'Claim sent via Symplisend',
+                                    'ecw_status_code': str(final_status),
                                     'ecw_status_updated_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
                                 })
-                                logger.info(f"  ✅ Claim {cid} ECW status updated + verified + marked in DynamoDB")
+                                logger.info(f"  ✅ Claim {cid} ECW status recorded as {final_status!r} in DynamoDB")
                         except Exception as ecw_err:
                             logger.error(f"  ❌ ECW status update failed for {cid}: {ecw_err}")
                             continue
@@ -11520,13 +11582,14 @@ def process_message(message: dict, aws_client: AWSClient):
                 cid = claim_item.get('claim_id', '')
                 logger.info(f"📋 Updating ECW status for claim {cid}...")
                 try:
-                    if _set_claim_status_in_ecw(ecw_page, cid):
+                    final_status = _set_claim_status_in_ecw(ecw_page, cid)
+                    if final_status:
                         aws_client.update_claim_status(cid, {
                             'ecw_status_updated': True,
-                            'ecw_status_code': 'Claim sent via Symplisend',
+                            'ecw_status_code': str(final_status),
                             'ecw_status_updated_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
                         })
-                        logger.info(f"  ✅ Claim {cid} ECW status updated + verified + marked in DynamoDB")
+                        logger.info(f"  ✅ Claim {cid} ECW status recorded as {final_status!r} in DynamoDB")
                 except Exception as ecw_err:
                     logger.error(f"  ❌ ECW status update failed for {cid}: {ecw_err}")
                     continue
