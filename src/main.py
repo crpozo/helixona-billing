@@ -175,37 +175,58 @@ def _all_frames(page):
 
 
 def _dismiss_one_claim_alert(page):
-    """Dismiss ONE of the small eCW validation alerts that pop on top of the claim detail
-    popup (e.g. 'Master/Default fee schedule is selected.', 'data loading error').
-    Clicks the OK inside the alert dialog only — scoped by the alert's text so it
-    won't hit the status-picker OK or the claim popup's Save/OK. Returns True if one
-    was dismissed. Safe to call repeatedly."""
+    """Dismiss ONE eCW validation alert, and never the claim popup itself.
+
+    The claim was being closed by its own alert cleaner. Run of 2026-08-27
+    18:31: STEP 1 opened claim 7149, TWO alerts were "dismissed" 0.6s apart
+    when only one was on screen, and by STEP 2 the popup was gone — the second
+    click was the CLAIM's OK, which saves and closes it. Both old paths could
+    do that: the fallback clicked the first visible OK anywhere on the page,
+    and the dialog-scoped path matched the claim modal itself whenever the
+    alert was nested inside it, since the claim modal's textContent contains
+    the alert's.
+
+    So: anchor on the smallest visible element carrying the alert wording,
+    walk up a bounded number of levels, and stop cold before any container
+    that carries claim-popup wording. The OK is found near the alert text or
+    not at all — there is no page-wide fallback any more.
+
+    Returns the wording of what was dismissed, or None.
+    """
     import time as _t
-    ALERT_RE = CLAIM_ALERT_RE
     for ctx in _all_frames(page):
         try:
-            clicked = ctx.evaluate('''(reSrc) => {
+            clicked = ctx.evaluate(r"""((reSrc) => {
                 const re = new RegExp(reSrc, 'i');
-                const btns = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
-                // 1) Prefer an OK whose enclosing dialog text matches a known alert
-                for (const b of btns) {
-                    const t = (b.value || b.textContent || '').trim();
-                    if ((t === 'OK' || t === 'Ok') && b.offsetWidth > 0) {
-                        const dlg = b.closest('.modal, .modal-content, .ui-dialog, [role="dialog"], .bootbox, .alert');
-                        if (dlg && re.test(dlg.textContent || '')) { b.click(); return true; }
+                const claimRe = /print hcfa|prog\.?\s*notes|claim no/i;
+                const vis = el => el.offsetWidth > 0 && el.offsetHeight > 0;
+                const isOk = b => ['OK', 'Ok'].includes(
+                    (b.value || b.textContent || '').trim());
+
+                const anchors = Array.from(document.querySelectorAll('*')).filter(el =>
+                    vis(el)
+                    && re.test(el.textContent || '')
+                    && !Array.from(el.children).some(c => re.test(c.textContent || '')));
+
+                for (const anchor of anchors) {
+                    let box = anchor;
+                    for (let up = 0; box && up < 6; up++, box = box.parentElement) {
+                        // Grown past the alert into the claim popup (or the
+                        // whole page): stop before an OK in there gets hit.
+                        if (claimRe.test(box.textContent || '')) break;
+                        for (const b of box.querySelectorAll(
+                                'button, input[type="button"], input[type="submit"]')) {
+                            if (isOk(b) && vis(b)) {
+                                b.click();
+                                return (box.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+                            }
+                        }
                     }
                 }
-                // 2) Fallback: if the page clearly shows the alert text, click first visible OK
-                if (re.test((document.body && document.body.innerText) || '')) {
-                    for (const b of btns) {
-                        const t = (b.value || b.textContent || '').trim();
-                        if ((t === 'OK' || t === 'Ok') && b.offsetWidth > 0) { b.click(); return true; }
-                    }
-                }
-                return false;
-            }''', ALERT_RE)
+                return null;
+            })""", CLAIM_ALERT_RE)
             if clicked:
-                logger.info("  🟦 Dismissed eCW claim alert (fee schedule / validation popup)")
+                logger.info(f"  🟦 Dismissed eCW claim alert ({clicked!r})")
                 _t.sleep(0.6)
                 return True
         except Exception:

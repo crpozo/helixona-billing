@@ -256,7 +256,8 @@ class EveryStackedAlertIsCleared(unittest.TestCase):
         src = _read()
         self.assertIn('CLAIM_ALERT_RE = (', src)
         self.assertEqual(src.count('fee schedule is selected|data loading error'), 1)
-        self.assertIn('ALERT_RE = CLAIM_ALERT_RE', src)
+        # The dismisser references the constant rather than re-spelling it.
+        self.assertIn('CLAIM_ALERT_RE)', _fn('_dismiss_one_claim_alert'))
 
 
 class TheControlIsRetriedNotGivenUpOn(unittest.TestCase):
@@ -597,6 +598,46 @@ class TheFinderReachesThePage(unittest.TestCase):
             head = chunk[:400]
             if 'findClaimPopup' in head:
                 self.assertIn('_with_popup_finder', head[:60], head[:120])
+
+
+class TheAlertCleanerCannotCloseTheClaim(unittest.TestCase):
+    """The claim was being closed by its own alert cleaner.
+
+    Run of 2026-08-27 18:31: STEP 1 opened claim 7149, TWO alerts were
+    "dismissed" 0.6s apart when only one was on screen, and by STEP 2 the popup
+    was gone — the second click was the CLAIM's OK, which saves and closes it.
+    Both old paths could do that: the fallback clicked the first visible OK
+    anywhere on the page, and the dialog-scoped path matched the claim modal
+    itself whenever the alert was nested inside it, since the claim modal's
+    textContent contains the alert's.
+    """
+
+    def test_the_page_wide_ok_fallback_is_gone(self):
+        fn = _fn('_dismiss_one_claim_alert')
+        self.assertNotIn('document.body', fn)
+
+    def test_the_ok_is_anchored_on_the_alert_wording(self):
+        # The smallest visible element carrying the wording, so a big container
+        # that merely CONTAINS the alert (like the claim modal) never anchors.
+        fn = _fn('_dismiss_one_claim_alert')
+        self.assertIn('anchors', fn)
+        self.assertIn("!Array.from(el.children).some(c => re.test(c.textContent || ''))", fn)
+
+    def test_the_walk_stops_before_claim_popup_wording(self):
+        fn = _fn('_dismiss_one_claim_alert')
+        self.assertIn('claimRe', fn)
+        self.assertIn('print hcfa', fn.lower())
+        self.assertIn('break', fn)
+
+    def test_the_walk_is_bounded(self):
+        self.assertIn('up < 6', _fn('_dismiss_one_claim_alert'))
+
+    def test_a_hit_says_what_was_dismissed(self):
+        # Two identical log lines hid this bug; the wording in the log would
+        # have shown the second "alert" was the claim.
+        fn = _fn('_dismiss_one_claim_alert')
+        self.assertIn("(box.textContent || '')", fn)
+        self.assertIn('Dismissed eCW claim alert ({clicked!r})', fn)
 
 
 if __name__ == '__main__':
