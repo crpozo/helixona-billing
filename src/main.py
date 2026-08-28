@@ -10390,37 +10390,17 @@ def process_message(message: dict, aws_client: AWSClient):
         # removes the claim from the next run and a crashed batch can simply be
         # re-queued. Claims without an original_ref_no cannot use the prior
         # form (the field is required) and are excluded, not downgraded.
+        # resend_wrong_form was REMOVED at the operator's request on
+        # 2026-08-28, with 96 of 803 wrong-form resubmissions re-sent and the
+        # remainder deliberately canceled. A stray or replayed message must not
+        # quietly fall through to the normal batch path, so it is refused
+        # outright rather than reinterpreted.
         if body.get('resend_wrong_form'):
-            if _role != 'resubmissions':
-                logger.warning("resend_wrong_form is a resubmissions-bot task; ignoring on %r" % _role)
-                return
-            audit_rows = scan_all(aws_client.dynamodb.Table('helixona-submissions'))
-            latest_form = {}
-            for r in audit_rows:
-                if str(r.get('outcome', '')).lower() != 'submitted':
-                    continue
-                rcid = str(r.get('claim_id', ''))
-                ts = str(r.get('submitted_at_utc', ''))
-                prev = latest_form.get(rcid)
-                if not prev or ts > prev[0]:
-                    latest_form[rcid] = (ts, str(r.get('submission_form_type', '')))
-
-            ready_claims = [
-                item for item in all_claims
-                if form_types.is_resubmission(item)
-                and form_types.prior_claim_number(item)
-                and evaluate_claim(item)['ready']
-                and latest_form.get(str(item.get('claim_id', '')), ('', ''))[1]
-                    == form_types.FIRST_SUBMISSION
-            ]
-            resend_limit = int(body.get('resend_limit') or 0)
-            if resend_limit:
-                ready_claims = ready_claims[:resend_limit]
-            logger.info(
-                f"🔁 RESEND mode — {len(ready_claims)} resubmissions whose latest "
-                f"send used the wrong form (limit={resend_limit or 'none'}). Each "
-                f"goes out again as 'Provider Prior Claim Submission' with its "
-                f"original claim number.")
+            logger.warning(
+                "resend_wrong_form is no longer a supported task — the resend of "
+                "wrong-form resubmissions was canceled by the operator on 2026-08-28 "
+                "(96 of 803 sent). Nothing was selected and nothing will be sent.")
+            return
 
         # Filter to test claim if specified
         if test_claim_id:

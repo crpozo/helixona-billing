@@ -679,48 +679,34 @@ class TheAlertCleanerCannotCloseTheClaim(unittest.TestCase):
         self.assertIn('Dismissed eCW claim alert ({clicked!r})', fn)
 
 
-class ResendingTheWrongFormSends(unittest.TestCase):
-    """807 resubmissions went out as "Provider First Submission Claim", so the
-    payer opened new claims instead of attaching records to the one under
-    dispute. The resend sends them again through the prior-claim form."""
+class TheResendWasRemovedAtTheOperatorsRequest(unittest.TestCase):
+    """The resend of wrong-form resubmissions was canceled on 2026-08-28.
 
-    def _mode(self):
+    96 of 803 had been re-sent through the prior-claim form when the operator
+    stopped the bot and asked for the rest to be left alone. The task is gone,
+    and a stray or replayed message must be refused outright — not quietly
+    reinterpreted as a normal batch send.
+    """
+
+    def _handler(self):
         src = _read()
-        i = src.index("if body.get('resend_wrong_form'):")
+        i = src.index("elif task_type == 'blueshield_submissions':")
         return src[i:src.index('# Filter to test claim if specified', i)]
 
-    def test_only_the_resubmissions_bot_may_run_it(self):
-        m = self._mode()
-        self.assertIn("_role != 'resubmissions'", m)
-        self.assertIn('return', m)
+    def test_no_selection_logic_remains(self):
+        h = self._handler()
+        self.assertNotIn('latest_form', h)
+        self.assertNotIn('resend_limit', h)
 
-    def test_selection_is_by_the_latest_audit_row(self):
-        # A claim qualifies only while its LATEST submitted row says the wrong
-        # form — each successful resend removes it from the next run, so a
-        # crashed batch is simply re-queued.
-        m = self._mode()
-        self.assertIn('latest_form', m)
-        self.assertIn('ts > prev[0]', m)
-        self.assertIn('form_types.FIRST_SUBMISSION', m)
+    def test_a_replayed_message_is_refused_not_reinterpreted(self):
+        h = self._handler()
+        i = h.index("if body.get('resend_wrong_form'):")
+        block = h[i:i + 700]
+        self.assertIn('no longer a supported task', block)
+        self.assertIn('return', block)
 
-    def test_only_submitted_rows_count(self):
-        self.assertIn("str(r.get('outcome', '')).lower() != 'submitted'", self._mode())
-
-    def test_a_claim_without_the_prior_number_is_excluded(self):
-        # The prior-claim form requires it; without it the send would downgrade
-        # to a first submission — the very bug being repaired.
-        self.assertIn('form_types.prior_claim_number(item)', self._mode())
-
-    def test_documentation_must_still_be_complete(self):
-        self.assertIn("evaluate_claim(item)['ready']", self._mode())
-
-    def test_only_resubmissions_qualify(self):
-        self.assertIn('form_types.is_resubmission(item)', self._mode())
-
-    def test_batches_can_be_limited(self):
-        m = self._mode()
-        self.assertIn("body.get('resend_limit')", m)
-        self.assertIn('ready_claims[:resend_limit]', m)
+    def test_the_refusal_says_nothing_will_be_sent(self):
+        self.assertIn('Nothing was selected and nothing will be sent', self._handler())
 
 
 if __name__ == '__main__':
