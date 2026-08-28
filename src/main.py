@@ -4951,6 +4951,19 @@ def process_message(message: dict, aws_client: AWSClient):
                                 'page_num': int(pc.get('pageNum', 1)),
                             })
                         elif claim_state >= 2:
+                            # A claim that already went to SympliSend with its
+                            # packet complete has nothing left to collect. These
+                            # were re-walked on every extraction — a ~7s popup
+                            # each, hundreds of claims — because an office visit
+                            # never gets an encounter_date and a failed
+                            # encounter capture stays flagged, so their "needs"
+                            # never emptied.
+                            if (item.get('symplisend_submitted') and has_hcfa
+                                    and has_prog_notes and item.get('subscriber_id')
+                                    and not item.get('iv_note_patient_mismatch')):
+                                logger.info(f"  ⏭️ Claim {cid}: already submitted with a "
+                                            f"complete packet — nothing to collect")
+                                continue
                             # Validate existing data quality
                             needs_hcfa_redo = False
                             # Force re-capture of IV Note when ANY signal indicates the
@@ -4983,8 +4996,11 @@ def process_message(message: dict, aws_client: AWSClient):
                                 needs_subscriber = True
                                 reasons.append('missing Subscriber ID')
                             
-                            # Check encounter date
-                            needs_enc_date = not item.get('encounter_date')
+                            # Check encounter date — an office visit has no IV
+                            # encounter to chase, so an empty date is its normal,
+                            # permanent state, not a gap to fill.
+                            _is_office = bool(item.get('office_visit'))
+                            needs_enc_date = not _is_office and not item.get('encounter_date')
                             if needs_enc_date:
                                 reasons.append('missing Encounter Date')
                             
@@ -4996,10 +5012,10 @@ def process_message(message: dict, aws_client: AWSClient):
                             #    the EXACT-only matching strategy, those two MUST be equal.
                             _rx_d = item.get('iv_note_rx_start_date')
                             _enc_d = item.get('encounter_date')
-                            _is_office = bool(item.get('office_visit'))
-                            needs_enc_file = (not item.get('encounter_file_s3_path')
-                                              or bool(item.get('encounter_revision_needed'))
-                                              or (not _is_office and bool(_rx_d) and _enc_d != _rx_d))
+                            needs_enc_file = not _is_office and (
+                                not item.get('encounter_file_s3_path')
+                                or bool(item.get('encounter_revision_needed'))
+                                or (bool(_rx_d) and _enc_d != _rx_d))
                             if needs_enc_file:
                                 reasons.append('missing/stale Encounter File')
                             
