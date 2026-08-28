@@ -228,6 +228,15 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .hero-kpi-pct strong{font-family:'Playfair Display',serif;font-size:22px;color:var(--success);font-weight:600;margin-right:4px}
 .hero-progress{position:relative;height:8px;background:var(--card2);border-radius:4px;overflow:hidden}
 .hero-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--success));border-radius:4px;transition:width .5s ease;box-shadow:0 0 18px var(--accent-glow)}
+.date-filter{display:flex;align-items:center;gap:8px;margin:0 0 14px;position:relative;flex-wrap:wrap}
+.date-filter label{font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.date-filter select,.date-filter input[type=date]{background:var(--card2);border:1px solid var(--bdr2);border-radius:8px;color:var(--text-primary);font-size:12px;padding:6px 9px;font-family:'Inter';color-scheme:dark}
+.date-filter input[type=date]:focus,.date-filter select:focus{outline:none;border-color:var(--accent)}
+.date-filter .df-clear{background:none;border:1px solid var(--bdr2);border-radius:8px;color:var(--text-muted);font-size:12px;padding:6px 10px;cursor:pointer;display:none}
+.date-filter .df-clear:hover{color:var(--text-primary);border-color:var(--accent)}
+.date-filter.active .df-clear{display:inline-block}
+.date-filter .df-hint{font-size:11px;color:var(--accent);font-weight:600;display:none}
+.date-filter.active .df-hint{display:inline}
 
 /* ========== PIPELINE ========== */
 .pipeline-section{margin-bottom:20px}
@@ -412,6 +421,18 @@ tbody tr:last-child td{border-bottom:none}
           <span class="hero-denom"> of <span id="hero-total">—</span> claims submitted</span>
         </div>
         <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> complete · <span id="hero-remaining">—</span> remaining</div>
+      </div>
+      <div class="date-filter" id="date-filter">
+        <label for="df-from">Dates</label>
+        <select id="df-field" onchange="onDateFilterChange()">
+          <option value="dos">Service date</option>
+          <option value="sent">Sent date</option>
+        </select>
+        <input type="date" id="df-from" onchange="onDateFilterChange()">
+        <span style="color:var(--text-dim)">→</span>
+        <input type="date" id="df-to" onchange="onDateFilterChange()">
+        <button class="df-clear" onclick="clearDateFilter()">✕ Clear</button>
+        <span class="df-hint" id="df-hint"></span>
       </div>
       <div class="hero-progress"><div class="hero-progress-fill" id="hero-progress-fill"></div></div>
     </div>
@@ -951,7 +972,84 @@ window.scrollToEl = function(sel){
             return claims;
         }
 
+        // ---- Date filter (hero card) ----
+        // Filters everything the page shows — the headline counter, the
+        // pipeline, the stats and the claims table — by service date or by
+        // the date the packet was sent. Claims carry dates in two shapes:
+        // dos "MM/DD/YYYY" and symplisend_submitted_at "YYYY-MM-DD HH:MM:SS
+        // UTC"; both normalise to ISO so <input type=date> values compare as
+        // plain strings.
+        function _claimDateISO(c, field) {
+            if (field === 'sent') {
+                const m = String(c.symplisend_submitted_at || '').match(/^(\d{4}-\d{2}-\d{2})/);
+                return m ? m[1] : '';
+            }
+            const m = String(c.dos || c.service_date || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
+            return m ? `${m[3]}-${m[1]}-${m[2]}` : '';
+        }
+
+        function dateFilterActive() {
+            return !!((document.getElementById('df-from') || {}).value
+                      || (document.getElementById('df-to') || {}).value);
+        }
+
+        function applyDateFilter(claims) {
+            const from = (document.getElementById('df-from') || {}).value || '';
+            const to = (document.getElementById('df-to') || {}).value || '';
+            if (!from && !to) return claims;
+            const field = (document.getElementById('df-field') || {}).value || 'dos';
+            return claims.filter(c => {
+                const d = _claimDateISO(c, field);
+                if (!d) return false;
+                if (from && d < from) return false;
+                if (to && d > to) return false;
+                return true;
+            });
+        }
+
+        function onDateFilterChange() {
+            const bar = document.getElementById('date-filter');
+            if (bar) bar.classList.toggle('active', dateFilterActive());
+            // Re-render from the cached load; a filter change should not cost
+            // a 3MB refetch.
+            if (window._allClaims) {
+                const claims = applyDateFilter(claimsForActiveBot(window._allClaims));
+                renderStats(claims);
+                renderPipeline(claims);
+                renderClaims(claims);
+            } else {
+                loadData();
+            }
+            loadCounts();
+        }
+
+        function clearDateFilter() {
+            for (const id of ['df-from', 'df-to']) {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            }
+            onDateFilterChange();
+        }
+
         async function loadCounts() {
+            // With a date filter on, the headline is computed from the cached
+            // claims with the SAME state definition the server uses
+            // (PIPELINE_STAGES.submitted) — one definition, two callers.
+            if (dateFilterActive() && window._allClaims) {
+                const rows = applyDateFilter(claimsForActiveBot(window._allClaims));
+                const sub = PIPELINE_STAGES.submitted.states;
+                const done = rows.filter(c => sub.includes(parseInt(c.state || 0))).length;
+                const total = rows.length;
+                const pct = total ? Math.round((done / total) * 100) : 0;
+                document.getElementById('hero-submitted').textContent = done;
+                document.getElementById('hero-total').textContent = total;
+                document.getElementById('hero-pct').textContent = pct + '%';
+                document.getElementById('hero-remaining').textContent = total - done;
+                document.getElementById('hero-progress-fill').style.width = pct + '%';
+                const hint = document.getElementById('df-hint');
+                if (hint) hint.textContent = 'filtered';
+                return;
+            }
             try {
                 const res = await fetch('/api/claim-counts');
                 const data = await res.json();
@@ -970,7 +1068,8 @@ window.scrollToEl = function(sel){
             try {
                 const res = await fetch('/api/claims');
                 const data = await res.json();
-                const claims = claimsForActiveBot(data.claims);
+                window._allClaims = data.claims;
+                const claims = applyDateFilter(claimsForActiveBot(data.claims));
                 renderStats(claims);
                 renderPipeline(claims);
                 renderClaims(claims);
