@@ -397,6 +397,17 @@ class OnlyAVerifiedChangeCounts(unittest.TestCase):
         i = body.index('# STEP 5 (verify)')
         self.assertIn('_open_claim_popup_via_lookup', body[i:])
 
+    def test_the_verify_closes_the_popup_before_re_opening(self):
+        # A blocked save leaves the popup open holding our unsaved value; a
+        # "re-open" that finds it reads our own write back as ECW's answer.
+        # 704 and 3986 were marked done that way while ECW still said
+        # "Ready to Bill" six hours later.
+        body = _fn('_set_claim_status_in_ecw')
+        i = body.index('# STEP 5 (verify)')
+        block = body[i:i + 900]
+        self.assertLess(block.index('_close_claim_popup(page)'),
+                        block.index('_open_claim_popup_via_lookup'))
+
     def test_success_returns_the_re_read_status_and_failure_returns_false(self):
         body = _fn('_set_claim_status_in_ecw')
         self.assertIn("verified = (now or '').strip().lower() == target_lc", body)

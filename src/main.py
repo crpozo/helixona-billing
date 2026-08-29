@@ -669,7 +669,15 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
             logger.warning(f"  📣 post-save dialogs (frame {_n}): {_dlgs}")
     time.sleep(2)
 
-    # STEP 5 (verify) — re-open the claim and confirm the status persisted
+    # STEP 5 (verify) — re-open the claim and confirm the status persisted.
+    #
+    # Close whatever is still open FIRST. When a save is blocked (704 and 3986:
+    # the ICD confirm sat unanswered), the popup never closes, the "re-open"
+    # finds the same popup still holding our unsaved client-side value, and the
+    # verify reads our own write back as if ECW had accepted it — both claims
+    # were marked done while ECW still said "Ready to Bill" six hours later.
+    _close_claim_popup(page)
+    time.sleep(1.5)
     verified = False
     try:
         reopened, _vf = _open_claim_popup_via_lookup(page, claim_id, wait_seconds=3)
