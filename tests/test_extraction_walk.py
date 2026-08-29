@@ -62,5 +62,42 @@ class AnOfficeVisitHasNoEncounterToChase(unittest.TestCase):
         self.assertIn("encounter_revision_needed", w)
 
 
+class TheHcfaPdfIsFetchedInsideThePage(unittest.TestCase):
+    """The download failed on every claim, for two structural reasons.
+
+    A synchronous XHR may not set responseType — the old code threw "The
+    response type cannot be changed for synchronous requests" on every single
+    claim — and any client outside the browser gets a 400 from Cloudflare no
+    matter how many session cookies it carries. Only an in-page async fetch,
+    riding the browser's own session, can download this PDF.
+    """
+
+    def _dl(self):
+        with open(os.path.join(REPO, 'src', 'main.py'), encoding='utf-8') as fh:
+            src = fh.read()
+        i = src.index('Downloading PDF via iframe XHR')
+        return src[i:src.index('Method C', i)]
+
+    def test_no_synchronous_xhr_remains(self):
+        dl = self._dl()
+        self.assertNotIn("xhr.open('GET', url, false)", dl)
+        self.assertNotIn('new XMLHttpRequest()', dl)
+
+    def test_the_fetch_is_async_and_in_page(self):
+        dl = self._dl()
+        self.assertIn("fetch(url, { credentials: 'include' })", dl)
+        self.assertIn('hcfa_context.evaluate', dl)
+
+    def test_a_non_ok_response_reports_its_status(self):
+        self.assertIn('status: r.status', self._dl())
+
+    def test_only_a_real_pdf_is_saved(self):
+        # A 400 page or an HTML render must never be stored as the HCFA.
+        self.assertIn("pdf_bytes[:5] == b'%PDF-'", self._dl())
+
+    def test_the_requests_fallback_stays_for_the_day_cloudflare_relents(self):
+        self.assertIn('import requests as _requests', self._dl())
+
+
 if __name__ == '__main__':
     unittest.main()

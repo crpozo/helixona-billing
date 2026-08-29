@@ -8090,26 +8090,27 @@ def process_message(message: dict, aws_client: AWSClient):
                         # (shares session cookies + CSRF context — avoids 412 errors)
                         try:
                             logger.info(f"Downloading PDF via iframe XHR: {pdf_url[:100]}")
-                            pdf_b64_result = hcfa_context.evaluate('''(url) => {
-                                try {
-                                    const xhr = new XMLHttpRequest();
-                                    xhr.open('GET', url, false);
-                                    xhr.responseType = 'arraybuffer';
-                                    xhr.send();
-                                    if (xhr.status === 200) {
-                                        const bytes = new Uint8Array(xhr.response);
+                            # An in-page fetch, because nothing else can work here:
+                            # a synchronous XHR may not set responseType (the old
+                            # code threw "The response type cannot be changed for
+                            # synchronous requests" on every single claim), and any
+                            # client OUTSIDE the browser gets a 400 from Cloudflare
+                            # no matter how many session cookies it carries.
+                            # Playwright awaits a returned promise, so async is fine.
+                            pdf_b64_result = hcfa_context.evaluate('''(url) =>
+                                fetch(url, { credentials: 'include' }).then(r => {
+                                    if (!r.ok) return { ok: false, status: r.status, text: r.statusText };
+                                    const type = r.headers.get('Content-Type') || '';
+                                    return r.arrayBuffer().then(buf => {
+                                        const bytes = new Uint8Array(buf);
                                         let binary = '';
                                         const chunk = 8192;
                                         for (let i = 0; i < bytes.length; i += chunk) {
                                             binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
                                         }
-                                        return { ok: true, data: btoa(binary), size: bytes.length, type: xhr.getResponseHeader('Content-Type') };
-                                    }
-                                    return { ok: false, status: xhr.status, text: xhr.statusText };
-                                } catch(e) {
-                                    return { ok: false, error: e.message };
-                                }
-                            }''', pdf_url)
+                                        return { ok: true, data: btoa(binary), size: bytes.length, type: type };
+                                    });
+                                }).catch(e => ({ ok: false, error: String(e && e.message || e) }))''', pdf_url)
                             
                             if pdf_b64_result and pdf_b64_result.get('ok'):
                                 import base64
