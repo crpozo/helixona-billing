@@ -709,5 +709,42 @@ class TheResendWasRemovedAtTheOperatorsRequest(unittest.TestCase):
         self.assertIn('Nothing was selected and nothing will be sent', self._handler())
 
 
+class TheSaveConfirmIsAnsweredYes(unittest.TestCase):
+    """The save silently never happened on 29 claims.
+
+    Saving a claim with data-entry warnings raises "You have not assigned the
+    ICDs correctly. Do you want to continue?" — a Yes/No CONFIRM, not an OK
+    alert, so the alert dismisser never touched it. The select was set,
+    saveAllData clicked, and the re-opened claim still read the old status.
+    """
+
+    def test_the_handler_exists_and_knows_the_wording(self):
+        fn = _fn('_answer_save_confirm')
+        self.assertIn('do you want to continue', fn)
+        self.assertIn('have not assigned', fn)
+
+    def test_it_clicks_only_a_button_labeled_yes(self):
+        # Never No, never some other dialog's button.
+        fn = _fn('_answer_save_confirm')
+        self.assertIn('/^yes$/i', fn)
+
+    def test_it_is_anchored_and_bounded_like_the_alert_dismisser(self):
+        fn = _fn('_answer_save_confirm')
+        self.assertIn("!Array.from(el.children).some(c => re.test(c.textContent || ''))", fn)
+        self.assertIn('up < 6', fn)
+
+    def test_it_runs_after_the_save_before_the_alert_dismisser(self):
+        step4 = _step4()
+        i = step4.index('_answer_save_confirm(page)')
+        self.assertLess(step4.index('saveAllData'), i)
+        self.assertLess(i, step4.rindex('_dismiss_claim_alert(page)'))
+
+    def test_a_second_confirm_is_answered_too(self):
+        self.assertIn('for _ in range(2):', _step4())
+
+    def test_a_hit_is_logged_with_the_dialog_wording(self):
+        self.assertIn('Answered Yes to eCW save confirm', _fn('_answer_save_confirm'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -252,6 +252,54 @@ def _dismiss_claim_alert(page, rounds=4):
     return dismissed
 
 
+def _answer_save_confirm(page):
+    """Answer Yes to eCW's post-save confirm, so the save actually happens.
+
+    Saving a claim that carries data-entry warnings raises
+
+        "You have not assigned the ICDs correctly. Do you want to continue?"
+                                                              [Yes]  [No]
+
+    — a Yes/No CONFIRM, not an OK alert, so the alert dismisser never touched
+    it and the save silently never completed. That is the exact shape of all
+    29 overnight status-update failures. Yes proceeds with the save the way
+    the operator would; it changes nothing about the ICDs themselves.
+
+    Anchored on the wording and clicking only a button labeled Yes, so it can
+    never answer some other dialog, and never clicks No.
+    """
+    for ctx in _all_frames(page):
+        try:
+            clicked = ctx.evaluate(r"""(() => {
+                const re = /do you want to continue|have not assigned/i;
+                const vis = el => el.offsetWidth > 0 && el.offsetHeight > 0;
+                const anchors = Array.from(document.querySelectorAll('*')).filter(el =>
+                    vis(el) && re.test(el.textContent || '')
+                    && !Array.from(el.children).some(c => re.test(c.textContent || '')));
+                for (const anchor of anchors) {
+                    let box = anchor;
+                    for (let up = 0; box && up < 6; up++, box = box.parentElement) {
+                        for (const b of box.querySelectorAll(
+                                'button, a, input[type="button"], input[type="submit"]')) {
+                            const t = (b.value || b.textContent || '').trim();
+                            if (/^yes$/i.test(t) && vis(b)) {
+                                b.click();
+                                return (box.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+                            }
+                        }
+                    }
+                }
+                return null;
+            })""")
+            if clicked:
+                logger.info(f"  🟨 Answered Yes to eCW save confirm ({clicked!r})")
+                time.sleep(0.8)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _set_status_via_select(frm, claim_id, target_lc, select_css):
     """Path (a): the Claim Status field is a <select> bound to ClaimData.ClaimStatus.
 
@@ -594,6 +642,10 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
     # A save can raise its own validation alert; left up, it blocks the re-open
     # that STEP 5 verifies with.
     time.sleep(1.5)
+    # The confirm blocks the save until answered; a second one can follow.
+    for _ in range(2):
+        if not _answer_save_confirm(page):
+            break
     _dismiss_claim_alert(page)
     # 29 claims were set + saved and read back unchanged: ECW rejected those
     # saves. Whatever it throws — an unrecognized dialog, a validation banner —
