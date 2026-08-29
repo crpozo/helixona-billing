@@ -263,6 +263,9 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* ========== CLAIMS TABLE ========== */
 .claims-section{background:var(--panel);border:1px solid var(--bdr);border-radius:14px;overflow:hidden}
 .claims-section .section-title{padding:14px 18px;margin:0;border-bottom:1px solid var(--bdr)}
+.claims-search{background:var(--card2);border:1px solid var(--bdr2);border-radius:8px;color:var(--text-primary);font-size:12px;padding:6px 10px;font-family:'Inter';width:300px;margin-left:14px}
+.claims-search:focus{outline:none;border-color:var(--accent)}
+.claims-search::placeholder{color:var(--text-dim)}
 .claims-table-wrap{overflow-x:auto;max-height:760px;overflow-y:auto}
 .claims-table-wrap.hide-payer .col-payer{display:none}
 table{width:100%;border-collapse:collapse}
@@ -446,6 +449,9 @@ tbody tr:last-child td{border-bottom:none}
         <div class="section-title">
           📋 Claims<span id="claims-payer-title" style="font-weight:500;color:var(--text-muted);margin-left:8px;font-size:12px;"></span>
           <span id="claims-type-counts" style="font-weight:500;margin-left:12px;font-size:11px;"></span>
+          <input id="claims-search" class="claims-search" autocomplete="off"
+                 placeholder="Search: patient, claim #, BS ref, DOS, subscriber…"
+                 oninput="onClaimsSearch()">
           <button class="btn btn-refresh" onclick="loadData()">↻ Refresh</button>
           <span id="claims-eta" style="font-size:11px;color:var(--info);font-weight:600;margin-left:auto;display:none">⏱ </span>
           <span id="claims-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
@@ -1205,13 +1211,52 @@ window.scrollToEl = function(sel){
             });
         }
 
+        // ---- Claims search (table only) ----
+        // Filters just the table, not the headline or the pipeline: search is
+        // for finding a row, the date filter is for scoping the numbers.
+        // Client-side over the cached load, so clearing the box restores every
+        // row instantly — the audit page's slow-response race cannot happen.
+        function applyClaimsSearch(claims) {
+            const q = ((document.getElementById('claims-search') || {}).value || '')
+                .trim().toLowerCase();
+            if (!q) return claims;
+            const terms = q.split(/\s+/);
+            return claims.filter(c => {
+                const hay = [c.claim_id, c.patient_name, c.dos, c.service_date,
+                             c.original_ref_no, c.subscriber_id, c.claim_status,
+                             c.ecw_status_code, c.submission_type, c.cpt]
+                    .map(v => String(v || '').toLowerCase()).join(' ');
+                return terms.every(t => hay.includes(t));
+            });
+        }
+
+        let _claimsSearchTimer = null;
+        function onClaimsSearch() {
+            clearTimeout(_claimsSearchTimer);
+            _claimsSearchTimer = setTimeout(() => {
+                if (window._allClaims) {
+                    renderClaims(applyDateFilter(claimsForActiveBot(window._allClaims)));
+                } else {
+                    loadData();
+                }
+            }, 150);
+        }
+
         function renderClaims(claims) {
             const body = document.getElementById('claims-body');
             const meta = document.getElementById('claims-meta');
+            const beforeSearch = claims.length;
+            claims = applyClaimsSearch(claims);
+            const searching = claims.length !== beforeSearch;
             if (!claims.length) {
-                body.innerHTML = '<tr><td colspan="11" class="empty-state">No claims yet. Send a task to begin.</td></tr>';
-                if (meta) meta.textContent = '';
+                body.innerHTML = searching
+                    ? '<tr><td colspan="11" class="empty-state">No claims match the search.</td></tr>'
+                    : '<tr><td colspan="11" class="empty-state">No claims yet. Send a task to begin.</td></tr>';
+                if (meta) meta.textContent = searching ? `0 of ${beforeSearch} claims match` : '';
                 return;
+            }
+            if (searching && meta) {
+                meta.textContent = `${claims.length} of ${beforeSearch} claims match`;
             }
             // Show metadata about the last scrape
             if (meta) {

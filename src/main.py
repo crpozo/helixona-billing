@@ -593,8 +593,29 @@ def _set_claim_status_in_ecw(page, claim_id, target_label='Claim sent via Sympli
         logger.warning(f"  ❌ STEP 4 — Save/OK button not found for claim {claim_id}")
     # A save can raise its own validation alert; left up, it blocks the re-open
     # that STEP 5 verifies with.
+    time.sleep(1.5)
     _dismiss_claim_alert(page)
-    time.sleep(3)
+    # 29 claims were set + saved and read back unchanged: ECW rejected those
+    # saves. Whatever it throws — an unrecognized dialog, a validation banner —
+    # is on screen RIGHT NOW, so report anything dialog-shaped the dismisser
+    # did not recognize, before the verify re-open replaces the page state.
+    for _n, _frm in enumerate(_all_frames(page)):
+        try:
+            _dlgs = _frm.evaluate(r"""(() => {
+                const out = [];
+                for (const d of document.querySelectorAll(
+                        '.modal, .modal-content, .ui-dialog, [role="dialog"], .bootbox, .alert')) {
+                    if (d.offsetWidth === 0 || d.offsetHeight === 0) continue;
+                    const t = (d.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (t && t.length < 4000) out.push(t.slice(0, 200));
+                }
+                return out.slice(0, 4);
+            })""")
+        except Exception:
+            continue
+        if _dlgs:
+            logger.warning(f"  📣 post-save dialogs (frame {_n}): {_dlgs}")
+    time.sleep(2)
 
     # STEP 5 (verify) — re-open the claim and confirm the status persisted
     verified = False
