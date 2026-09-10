@@ -21,6 +21,14 @@ def _read(rel):
         return fh.read()
 
 
+def _repo_only(rel):
+    """infra/ and the setup scripts are deliberately not deployed; on the host
+    these checks have nothing to read and must skip rather than error."""
+    if not os.path.exists(os.path.join(REPO, rel)):
+        raise unittest.SkipTest(f'{rel} is not deployed to this host')
+    return _read(rel)
+
+
 # The Finalized results table, columns exactly as the portal shows them.
 FINALIZED_HEADERS = [
     'Claim status (Last modified)', 'Claim number', 'Claim type', 'Dates of service',
@@ -294,7 +302,7 @@ class MareaHasItsPlaceOnTheDashboard(unittest.TestCase):
 
 class TheHostSideIsWiredToo(unittest.TestCase):
     def test_the_unit_file_exists_on_its_own_display(self):
-        u = _read('infra/helixona-agent-eob.service')
+        u = _repo_only('infra/helixona-agent-eob.service')
         self.assertIn('Environment=DISPLAY=:102', u)
         self.assertIn('Environment=BOT_ROLE=eob', u)
         self.assertIn('Marea', u)
@@ -307,7 +315,7 @@ class TheHostSideIsWiredToo(unittest.TestCase):
         self.assertNotIn('systemctl enable helixona-agent-iv', d)
 
     def test_the_eob_table_is_declared(self):
-        self.assertIn('"TableName": "helixona-eobs"', _read('setup_dynamodb.py'))
+        self.assertIn('"TableName": "helixona-eobs"', _repo_only('setup_dynamodb.py'))
 
 
 if __name__ == '__main__':
