@@ -283,6 +283,10 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* ========== CLAIMS TABLE ========== */
 .claims-section{background:var(--panel);border:1px solid var(--bdr);border-radius:14px;overflow:hidden}
 .claims-section .section-title{padding:14px 18px;margin:0;border-bottom:1px solid var(--bdr)}
+.mfa-box{background:var(--card2);border:1px solid var(--bdr2);border-radius:10px;padding:10px 12px;margin:0 0 14px}
+.mfa-box label{display:block;font-size:11px;font-weight:600;margin-bottom:6px}
+.mfa-box input{background:var(--card);border:1px solid var(--bdr2);border-radius:8px;color:var(--text-primary);font-size:16px;letter-spacing:4px;padding:6px 10px;width:150px;font-family:'Inter'}
+.mfa-box input:focus{outline:none;border-color:var(--accent)}
 .claims-search{background:var(--card2);border:1px solid var(--bdr2);border-radius:8px;color:var(--text-primary);font-size:12px;padding:6px 10px;font-family:'Inter';width:300px;margin-left:14px}
 .claims-search:focus{outline:none;border-color:var(--accent)}
 .claims-search::placeholder{color:var(--text-dim)}
@@ -528,6 +532,15 @@ tbody tr:last-child td{border-bottom:none}
         <!-- SEND TASK -->
         <div class="task-card" id="send-task-card">
           <h3>⚡ Send Task to Agent</h3>
+          <div class="mfa-box" id="mfa-box">
+            <label for="mfa-code">🔐 MFA code <span style="font-weight:400;color:var(--text-muted)">— when a bot's log says it is waiting at Blue Shield's 2-step</span></label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="mfa-code" inputmode="numeric" maxlength="8" placeholder="6 digits" autocomplete="one-time-code"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault();sendMfaCode();}">
+              <button class="btn" type="button" onclick="sendMfaCode()">Send code</button>
+              <span id="mfa-status" style="font-size:11px;color:var(--text-muted)"></span>
+            </div>
+          </div>
           <label>Task Type</label>
           <select id="task-type" onchange="updateTaskTemplate()">
             <optgroup label="🛡️ Blue Shield Claims Bot" data-bot="submissions resubmissions">
@@ -1040,6 +1053,28 @@ window.scrollToEl = function(sel){
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
             if (window.activeBot === 'eob') return claims.filter(c => !!c.eob_check_eft);
             return claims;
+        }
+
+        // ---- MFA relay ----
+        // Blue Shield e-mails a 2-step code at every fresh login; when Gmail
+        // cannot be read, the bot waits a few minutes for one typed here.
+        async function sendMfaCode() {
+            const inp = document.getElementById('mfa-code');
+            const st = document.getElementById('mfa-status');
+            const code = (inp.value || '').replace(/\D/g, '');
+            if (code.length < 4) { st.textContent = 'type the digits first'; return; }
+            st.textContent = 'sending…';
+            try {
+                const res = await fetch('/api/mfa-code', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({code})
+                });
+                const data = await res.json();
+                st.textContent = data.success ? `✅ code delivered ${data.submitted_at}` : ('❌ ' + (data.error || 'failed'));
+                if (data.success) inp.value = '';
+            } catch (e) {
+                st.textContent = '❌ ' + e;
+            }
         }
 
         // ---- EOB table (Marea) ----
@@ -1857,6 +1892,20 @@ def api_claims():
         return jsonify({'claims': claims, 'tasks': tasks})
     except Exception as e:
         return jsonify({'claims': [], 'tasks': [], 'error': str(e)})
+
+
+@app.route('/api/mfa-code', methods=['POST'])
+def api_mfa_code():
+    """Hand a Blue Shield 2-step code to whichever bot is waiting for one."""
+    try:
+        from src.utils.mfa_relay import post_manual_code
+        payload = request.get_json(silent=True) or {}
+        item = post_manual_code(dynamodb, payload.get('code', ''))
+        return jsonify({'success': True, 'submitted_at': item['submitted_at']})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/eobs')

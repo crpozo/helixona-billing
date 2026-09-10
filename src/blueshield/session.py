@@ -192,6 +192,10 @@ def login_to_provider_portal(page, aws_client) -> bool:
             from src.utils.gmail_mfa import clear_old_mfa_emails, fetch_mfa_code
             clear_old_mfa_emails(gmail_creds['email'], gmail_creds['app_password'])
 
+            # Only a code typed AFTER this moment counts as an answer to this
+            # login; see src/utils/mfa_relay.py.
+            from src.utils.mfa_relay import now_iso, wait_for_manual_code
+            code_requested_at = now_iso()
             try:
                 page.click('text=Send code', timeout=5000)
                 logger.info("✅ Clicked 'Send code'")
@@ -206,6 +210,14 @@ def login_to_provider_portal(page, aws_client) -> bool:
                 max_wait_seconds=90,
                 poll_interval=3
             )
+
+            if not mfa_code:
+                # Gmail had its chance (an expired app password reads as
+                # AUTHENTICATIONFAILED and yields nothing). The operator can
+                # type the code into the dashboard's 🔐 MFA code box instead.
+                logger.warning("⌛ No code from Gmail — waiting up to 4 minutes for one typed "
+                               "into the dashboard (🔐 MFA code box on any bot tab)")
+                mfa_code = wait_for_manual_code(aws_client.dynamodb, code_requested_at)
 
             if mfa_code:
                 logger.info(f"✅ MFA code: {mfa_code}")
