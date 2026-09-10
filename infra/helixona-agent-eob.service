@@ -1,0 +1,19 @@
+[Unit]
+Description=Helixona Billing Agent (Marea — EOB Bot)
+After=network.target xvfb@102.service
+# Wants (not Requires): a flapping display must not crash-loop the worker. See
+# helixona-agent.service for the rationale.
+Wants=xvfb@102.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/helixona-agent
+ExecStart=/opt/helixona-agent/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:102
+Environment=BOT_ROLE=eob
+
+[Install]
+WantedBy=multi-user.target

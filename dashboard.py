@@ -3,9 +3,11 @@ Helixona Billing Agent — Monitoring Dashboard
 Real-time web UI to see what the agent is doing.
 """
 import json
+import re
+from decimal import Decimal
 import subprocess
 from datetime import datetime
-from flask import Flask, render_template_string, jsonify, request, send_file
+from flask import Flask, render_template_string, jsonify, request, send_file, redirect
 import boto3
 import os
 from src.aws.clients import scan_all
@@ -25,6 +27,8 @@ dynamodb = session.resource('dynamodb')
 sqs = session.client('sqs')
 SQS_URL = os.environ['SQS_QUEUE_URL']
 SQS_URL_RESUB = os.environ.get('SQS_QUEUE_URL_RESUB', '')
+SQS_URL_EOB = os.environ.get('SQS_QUEUE_URL_EOB', '')
+S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '')
 EC2_IP = "54.189.175.233"
 KEY_FILE = "infra/helixona-agent-key.pem"
 
@@ -32,18 +36,34 @@ KEY_FILE = "infra/helixona-agent-key.pem"
 # Each bot is its own systemd unit with its own X display, noVNC port, SQS
 # queue and Chrome profile. Keep this table in step with QUEUE_BY_ROLE in
 # src/aws/clients.py — the agent side of the same mapping.
+# Each bot also has a name the clinic knows it by. They follow the claim's
+# journey: Sol sends it out for the first time, Luna sends it again over one
+# already on file, Marea brings back what the payer returns — payments,
+# denials, explanations. One place to change them.
 BOT_ROUTING = {
     'submissions': {
         'queue_url': SQS_URL,
         'service': 'helixona-agent',
+        'name': 'Sol',
+        'emoji': '☀️',
         'label': 'Blue Shield Submissions',
         'novnc_port': 6080,
     },
     'resubmissions': {
         'queue_url': SQS_URL_RESUB,
         'service': 'helixona-agent-resub',
+        'name': 'Luna',
+        'emoji': '🌙',
         'label': 'Blue Shield Resubmissions',
         'novnc_port': 6081,
+    },
+    'eob': {
+        'queue_url': SQS_URL_EOB,
+        'service': 'helixona-agent-eob',
+        'name': 'Marea',
+        'emoji': '🌊',
+        'label': 'Blue Shield EOB',
+        'novnc_port': 6083,
     },
 }
 
@@ -412,8 +432,9 @@ tbody tr:last-child td{border-bottom:none}
 
     <!-- BOT TABS -->
     <div class="subtabs" id="bot-tabs">
-      <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">🛡️ Blue Shield Submissions</div>
-      <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">♻️ Blue Shield Resubmissions</div>
+      <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">☀️ Sol · Blue Shield Submissions</div>
+      <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🌙 Luna · Blue Shield Resubmissions</div>
+      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🌊 Marea · EOB</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -421,7 +442,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="hero-kpi-top">
         <div class="hero-kpi-headline">
           <span class="hero-num" id="hero-submitted">—</span>
-          <span class="hero-denom"> of <span id="hero-total">—</span> claims submitted</span>
+          <span class="hero-denom"> of <span id="hero-total">—</span> <span id="hero-denom-label">claims submitted</span></span>
         </div>
         <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> complete · <span id="hero-remaining">—</span> remaining</div>
       </div>
@@ -443,6 +464,26 @@ tbody tr:last-child td{border-bottom:none}
 
     <!-- MAIN: claims + admin rail -->
     <div class="main">
+
+      <!-- EOB TABLE (Marea) — one row per Check/EFT captured from Blue Shield -->
+      <div class="claims-section" id="eob-section" hidden>
+        <div class="section-title">
+          🌊 Explanations of Benefits
+          <span id="eob-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
+          <button class="btn btn-refresh" onclick="loadEobs()">↻ Refresh</button>
+        </div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Check/EFT #</th><th>Check date</th><th>Amount</th><th>Status</th><th>Cashed</th>
+                <th>Payee</th><th>Claims</th><th>Matched</th><th>EOB</th><th>Captured</th><th>eCW</th>
+              </tr>
+            </thead>
+            <tbody id="eob-body"><tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Marea to begin.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
 
       <!-- CLAIMS TABLE -->
       <div class="claims-section" id="claims-section-submissions">
@@ -493,6 +534,9 @@ tbody tr:last-child td{border-bottom:none}
               <option value="bs_missing_docs" data-bot="submissions resubmissions">📋 ECW Obtain Claims Documentation</option>
               <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
               <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
+            </optgroup>
+            <optgroup label="🌊 Marea · EOB Bot" data-bot="eob">
+              <option value="eob_capture" data-bot="eob">💰 Capture EOBs from Blue Shield</option>
             </optgroup>
           </select>
 
@@ -715,6 +759,11 @@ window.scrollToEl = function(sel){
             }, null, 2),
             ecw_status_update: JSON.stringify({
                 note: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims."
+            }, null, 2),
+            eob_capture: JSON.stringify({
+                since: "07/01/2025",
+                limit_checks: 0,
+                note: "Blue Shield → Claims → Check claim status: Finalized, Claim amount paid ≥ $0.01, status/payment date from `since`. For every Check/EFT: transaction summary, claims paid, EOB report PDF. Read-only. limit_checks > 0 captures only that many cheques (a test run)."
             }, null, 2)
         };
 
@@ -737,6 +786,11 @@ window.scrollToEl = function(sel){
                 title: 'ECW Status Update',
                 desc: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims.",
                 steps: []
+            },
+            eob_capture: {
+                title: 'Capture EOBs from Blue Shield',
+                desc: 'Logs into the Blue Shield provider portal, searches finalized claims with a payment, opens every Check/EFT, downloads the EOB report and pins each paid claim to ours. Nothing is written to eCW.',
+                steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → transaction summary + claims paid', 'Download EOB report (PDF → S3)', 'Match claims by patient account number / subscriber + DOS']
             }
         };
 
@@ -764,7 +818,8 @@ window.scrollToEl = function(sel){
         // Active bot tab. Drives which SQS queue / systemd service the dashboard talks to.
         window.activeBot = 'submissions';
 
-        const BOT_NOVNC = {submissions: 6080, resubmissions: 6081};
+        const BOT_NOVNC = {{ bot_novnc | tojson }};
+        const BOT_NAMES = {{ bot_names | tojson }};
 
         function setActiveBot(bot) {
             if (!(bot in BOT_NOVNC)) bot = 'submissions';
@@ -789,7 +844,15 @@ window.scrollToEl = function(sel){
             const sel = document.getElementById('task-type');
             const firstVisible = Array.from(sel.options).find(o => !o.hidden);
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
-            // Both Blue Shield bots share the claims table, each filtered to
+            // The headline counts something different per bot: what each has
+            // sent, or — for Marea — how many sent claims have come back paid.
+            const denom = document.getElementById('hero-denom-label');
+            if (denom) denom.textContent = bot === 'eob'
+                ? 'submitted claims with an EOB captured' : 'claims submitted';
+            const eobSec = document.getElementById('eob-section');
+            if (eobSec) eobSec.hidden = (bot !== 'eob');
+            if (bot === 'eob' && typeof loadEobs === 'function') loadEobs();
+            // The Blue Shield bots share the claims table, each filtered to
             // its own work.
             if (typeof loadCounts === 'function') loadCounts();
             if (typeof loadData === 'function') loadData();
@@ -975,7 +1038,44 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
+            if (window.activeBot === 'eob') return claims.filter(c => !!c.eob_check_eft);
             return claims;
+        }
+
+        // ---- EOB table (Marea) ----
+        async function loadEobs() {
+            const body = document.getElementById('eob-body');
+            const meta = document.getElementById('eob-meta');
+            if (!body) return;
+            try {
+                const res = await fetch('/api/eobs');
+                const data = await res.json();
+                const eobs = data.eobs || [];
+                if (meta) meta.textContent = eobs.length
+                    ? `${eobs.length} cheques · $${data.total_amount} · ${data.claims_matched}/${data.claims_total} claims matched`
+                    : '';
+                if (!eobs.length) {
+                    body.innerHTML = '<tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Marea to begin.</td></tr>';
+                    return;
+                }
+                const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+                body.innerHTML = eobs.map(e => `
+                    <tr>
+                      <td><strong>${esc(e.check_eft)}</strong></td>
+                      <td>${esc(e.check_date)}</td>
+                      <td>${e.check_amount ? '$' + esc(e.check_amount) : '—'}</td>
+                      <td>${esc(e.check_status)}</td>
+                      <td>${esc(e.cashed_date)}</td>
+                      <td>${esc(e.payee_name)}</td>
+                      <td>${esc(e.num_claims)}</td>
+                      <td>${esc(e.claims_matched)}/${(e.claims || []).length}</td>
+                      <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
+                      <td style="font-size:11px;color:var(--text-muted)">${esc(e.captured_at)}</td>
+                      <td>${e.posted_in_ecw ? '<span style="color:var(--success)">posted</span>' : '<span style="color:var(--text-muted)">pending</span>'}</td>
+                    </tr>`).join('');
+            } catch (e) {
+                console.error('loadEobs failed', e);
+            }
         }
 
         // ---- Date filter (hero card) ----
@@ -1725,7 +1825,9 @@ window.scrollToEl = function(sel){
 def dashboard():
     return render_template_string(DASHBOARD_HTML,
         state_labels=STATE_LABELS,
-        pipeline_stages=PIPELINE_STAGES)
+        pipeline_stages=PIPELINE_STAGES,
+        bot_novnc={k: v['novnc_port'] for k, v in BOT_ROUTING.items()},
+        bot_names={k: v['name'] for k, v in BOT_ROUTING.items()})
 
 
 @app.route('/client')
@@ -1757,6 +1859,59 @@ def api_claims():
         return jsonify({'claims': [], 'tasks': [], 'error': str(e)})
 
 
+@app.route('/api/eobs')
+def api_eobs():
+    """Every cheque Marea has captured, newest check date first, sized for a
+    table: the PDF's parsed CPT lines stay out of this payload."""
+    try:
+        table = dynamodb.Table('helixona-eobs')
+        items, kwargs = [], {}
+        while True:
+            resp = table.scan(**kwargs)
+            items.extend(resp.get('Items', []))
+            if 'LastEvaluatedKey' not in resp:
+                break
+            kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
+        eobs = []
+        total = Decimal('0')
+        matched = claims_total = 0
+        for it in items:
+            it = {k: v for k, v in it.items() if k != 'eob_lines'}
+            eobs.append(it)
+            try:
+                total += Decimal(str(it.get('check_amount') or '0'))
+            except Exception:
+                pass
+            matched += int(it.get('claims_matched') or 0)
+            claims_total += len(it.get('claims') or [])
+
+        def sort_key(e):
+            d = str(e.get('check_date') or '')
+            m = re.match(r'(\d{2})/(\d{2})/(\d{4})', d)
+            return (m.group(3) + m.group(1) + m.group(2)) if m else ''
+        eobs.sort(key=sort_key, reverse=True)
+        return jsonify({'eobs': eobs, 'total_amount': f'{total:.2f}',
+                        'claims_matched': matched, 'claims_total': claims_total})
+    except Exception as e:
+        return jsonify({'error': str(e), 'eobs': []})
+
+
+@app.route('/api/eob/<check_eft>/pdf')
+def api_eob_pdf(check_eft):
+    """A short-lived link to the EOB report PDF in S3."""
+    try:
+        it = dynamodb.Table('helixona-eobs').get_item(Key={'check_eft': check_eft}).get('Item') or {}
+        s3_path = str(it.get('eob_pdf_s3_path') or '')
+        if not s3_path.startswith('s3://'):
+            return jsonify({'error': 'no PDF on file for this cheque'}), 404
+        bucket, key = s3_path[5:].split('/', 1)
+        url = session.client('s3').generate_presigned_url(
+            'get_object', Params={'Bucket': bucket, 'Key': key}, ExpiresIn=600)
+        return redirect(url)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/claim-counts')
 def api_claim_counts():
     """Just the hero numbers, per bot.
@@ -1770,7 +1925,7 @@ def api_claim_counts():
     try:
         table = dynamodb.Table('helixona-claims')
         items, kwargs = [], {
-            'ProjectionExpression': '#st, submission_type, symplisend_submitted',
+            'ProjectionExpression': '#st, submission_type, symplisend_submitted, eob_check_eft',
             'ExpressionAttributeNames': {'#st': 'state'},
         }
         while True:
@@ -1789,9 +1944,14 @@ def api_claim_counts():
             return {'submitted': done, 'total': total}
 
         is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
+        # Marea's headline is not a slice of the submissions/resubmissions
+        # partition: of everything sent, how much has come back paid.
+        sent = [r for r in items if r.get('symplisend_submitted')]
+        with_eob = [r for r in sent if r.get('eob_check_eft')]
         return jsonify({
             'submissions': tally([r for r in items if not is_resub(r)]),
             'resubmissions': tally([r for r in items if is_resub(r)]),
+            'eob': {'submitted': len(with_eob), 'total': len(sent)},
             'all': tally(items),
         })
     except Exception as e:

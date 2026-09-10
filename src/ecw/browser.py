@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 _PROFILE_BY_ROLE = {
     'submissions':   '/opt/helixona-agent/browser-profile',
     'resubmissions': '/opt/helixona-agent/browser-profile-resubmissions',
+    'eob':           '/opt/helixona-agent/browser-profile-eob',
 }
 
 

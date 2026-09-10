@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     sqs_queue_url: str = ""
     sqs_queue_url_resub: str = ""
     sqs_queue_url_iv: str = ""
+    sqs_queue_url_eob: str = ""
     s3_bucket_name: str = ""
     ecw_login_url: str = "https://eclinicalworks.com/login"
     secrets_manager_prefix: str = "prod/helixona/"
@@ -18,6 +19,10 @@ class Settings(BaseSettings):
     #   role             unit                   display  noVNC  queue
     #   submissions      helixona-agent         :99      6080   sqs_queue_url
     #   resubmissions    helixona-agent-resub   :100     6081   sqs_queue_url_resub
+    #   eob              helixona-agent-eob     :102     6083   sqs_queue_url_eob
+    #
+    # Each also has a name the clinic knows it by — Sol, Luna, Marea — kept
+    # with the dashboard's BOT_ROUTING, which is where people see it.
     bot_role: str = "submissions"
 
     # Browser config

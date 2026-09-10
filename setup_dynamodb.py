@@ -55,6 +55,16 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # One item per Check/EFT the EOB bot (Marea) captured from Blue Shield:
+        # transaction summary, the claims it paid, the EOB report in S3.
+        "TableName": "helixona-eobs",
+        "KeySchema": [{"AttributeName": "check_eft", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "check_eft", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

@@ -52,6 +52,7 @@ class TaskTypesStillDispatch(unittest.TestCase):
         'nightly_bulk_extract',
         'fix_coding_ivs',
         'bs_missing_docs',
+        'eob_capture',
     ]
 
     def test_every_known_task_type_is_handled(self):
