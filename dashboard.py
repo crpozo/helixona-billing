@@ -315,7 +315,9 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .plan-held{color:var(--warning);font-weight:600}
 .plan-tot{color:var(--text-muted);margin-left:8px}
 .plan-reasons{margin:4px 0 8px 18px;padding:0;font-size:12px}
-.plan-reasons li{margin:2px 0}
+/* A reason wraps inside the card instead of stretching the table's
+   horizontal scroll out of reach. */
+.plan-reasons li,.plan-claim-h,.plan-note,.plan-err{max-width:900px;overflow-wrap:anywhere}
 .plan-claim{margin-top:10px;padding-top:8px;border-top:1px dashed var(--bdr)}
 .plan-claim-h{font-size:12px;margin-bottom:4px}
 .plan-note{font-size:11px;color:var(--text-muted);margin-top:4px}
