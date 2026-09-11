@@ -293,6 +293,21 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .claims-search::placeholder{color:var(--text-dim)}
 .claims-table-wrap{overflow-x:auto;max-height:760px;overflow-y:auto}
 .claims-table-wrap.hide-payer .col-payer{display:none}
+/* One main-column panel per tab — the claims table on Intake and Follow-up,
+   the EOB table on Remittance — pinned so an extra panel can never again
+   push the rail out of its column. */
+.main > #eob-section, .main > #claims-section-submissions{grid-column:1}
+.main > .task-panel{grid-column:2;grid-row:1}
+#eob-body tr.eob-row{cursor:pointer}
+#eob-body tr.eob-row td:first-child::before{content:'▸';display:inline-block;width:14px;color:var(--text-muted);transition:transform .15s}
+#eob-body tr.eob-row.open td:first-child::before{transform:rotate(90deg)}
+#eob-body tr.eob-claims > td{background:var(--bg2);padding:0 0 0 22px;border-bottom:1px solid var(--bdr)}
+#eob-body tr.eob-claims:hover{background:transparent}
+.eob-claims-table{width:100%;border-collapse:collapse}
+.eob-claims-table th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid var(--bdr)}
+.eob-claims-table td{font-size:12px;padding:8px 12px;border-bottom:1px solid var(--bdr)}
+.eob-claims-table tr:last-child td{border-bottom:none}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 table{width:100%;border-collapse:collapse}
 thead th{background:rgba(255,255,255,.015);padding:11px 14px;text-align:left;font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:2}
 tbody td{padding:11px 14px;font-size:11.5px;border-bottom:1px solid var(--bdr);color:var(--text-secondary)}
@@ -383,6 +398,7 @@ tbody tr:last-child td{border-bottom:none}
   .hero .promo>div:nth-child(2){flex:1}
   .hero .promo-btns{flex-direction:row}
   .main{grid-template-columns:1fr}
+  .main > .task-panel{grid-column:1;grid-row:auto}
 }
 @media(max-width:1080px){
   .pipeline-flow{grid-template-columns:repeat(2,1fr)}
@@ -449,7 +465,7 @@ tbody tr:last-child td{border-bottom:none}
           <span class="hero-num" id="hero-submitted">—</span>
           <span class="hero-denom"> of <span id="hero-total">—</span> <span id="hero-denom-label">claims submitted</span></span>
         </div>
-        <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> complete · <span id="hero-remaining">—</span> remaining</div>
+        <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> <span id="hero-pct-label">complete</span> · <span id="hero-remaining">—</span> <span id="hero-remaining-label">remaining</span></div>
       </div>
       <div class="date-filter" id="date-filter">
         <label for="df-from">Dates</label>
@@ -485,7 +501,7 @@ tbody tr:last-child td{border-bottom:none}
                 <th>Payee</th><th>Claims</th><th>Matched</th><th>EOB</th><th>Captured</th><th>eCW</th>
               </tr>
             </thead>
-            <tbody id="eob-body"><tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Remittance to begin.</td></tr></tbody>
+            <tbody id="eob-body"><tr><td colspan="11" class="empty-state">No EOBs captured yet. Send <strong>💰 Capture EOBs from Blue Shield</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -863,11 +879,27 @@ window.scrollToEl = function(sel){
             const denom = document.getElementById('hero-denom-label');
             if (denom) denom.textContent = bot === 'eob'
                 ? 'submitted claims with an EOB captured' : 'claims submitted';
+            const pctLabel = document.getElementById('hero-pct-label');
+            if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'captured' : 'complete';
+            const remLabel = document.getElementById('hero-remaining-label');
+            if (remLabel) remLabel.textContent = bot === 'eob' ? 'without an EOB yet' : 'remaining';
+            // Remittance works per cheque, not per claim document — the claims
+            // table's HCFA / IV note / progress-note columns mean nothing
+            // there — so each tab shows exactly one main panel.
             const eobSec = document.getElementById('eob-section');
             if (eobSec) eobSec.hidden = (bot !== 'eob');
+            const claimsSec = document.getElementById('claims-section-submissions');
+            if (claimsSec) claimsSec.hidden = (bot === 'eob');
             if (bot === 'eob' && typeof loadEobs === 'function') loadEobs();
-            // The Blue Shield bots share the claims table, each filtered to
-            // its own work.
+            // Re-render from the claims already loaded, THEN refetch. The
+            // table used to keep showing the previous tab's claims until the
+            // next full fetch came back.
+            if (window._allClaims) {
+                const cached = applyDateFilter(claimsForActiveBot(window._allClaims));
+                renderStats(cached);
+                renderPipeline(cached);
+                renderClaims(cached);
+            }
             if (typeof loadCounts === 'function') loadCounts();
             if (typeof loadData === 'function') loadData();
             // Refresh logs for the new service
@@ -1091,12 +1123,31 @@ window.scrollToEl = function(sel){
                     ? `${eobs.length} cheques · $${data.total_amount} · ${data.claims_matched}/${data.claims_total} claims matched`
                     : '';
                 if (!eobs.length) {
-                    body.innerHTML = '<tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Remittance to begin.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="11" class="empty-state">No EOBs captured yet. Send <strong>💰 Capture EOBs from Blue Shield</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr>';
                     return;
                 }
                 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-                body.innerHTML = eobs.map(e => `
-                    <tr>
+                const usd = v => v ? '$' + esc(v) : '—';
+                const how = m => ({pdf_account_number: 'EOB account #', subscriber_dos: 'subscriber + DOS'}[m] || '—');
+                const open = window._eobOpen || (window._eobOpen = new Set());
+                // Each cheque row opens onto the claims it paid; open rows
+                // stay open across refreshes.
+                body.innerHTML = eobs.map(e => {
+                    const claims = e.claims || [];
+                    const isOpen = open.has(String(e.check_eft));
+                    const claimRows = claims.map(c => `
+                        <tr>
+                          <td>${c.claim_id ? `<strong>${esc(c.claim_id)}</strong>` : '<span style="color:var(--warning)">unmatched</span>'}</td>
+                          <td>${esc(c.member_name)}</td>
+                          <td>${esc(c.dos)}</td>
+                          <td>${esc(c.bsc_claim_number)}</td>
+                          <td class="num">${usd(c.amount_billed)}</td>
+                          <td class="num">${usd(c.amount_paid)}</td>
+                          <td class="num">${usd(c.patient_resp)}</td>
+                          <td style="color:var(--text-muted)">${how(c.match_source)}</td>
+                        </tr>`).join('') || '<tr><td colspan="8" class="empty-state">No claims listed for this cheque.</td></tr>';
+                    return `
+                    <tr class="eob-row${isOpen ? ' open' : ''}" data-check="${esc(e.check_eft)}" onclick="toggleEob(this)">
                       <td><strong>${esc(e.check_eft)}</strong></td>
                       <td>${esc(e.check_date)}</td>
                       <td>${e.check_amount ? '$' + esc(e.check_amount) : '—'}</td>
@@ -1105,13 +1156,33 @@ window.scrollToEl = function(sel){
                       <td>${esc(e.payee_name)}</td>
                       <td>${esc(e.num_claims)}</td>
                       <td>${esc(e.claims_matched)}/${(e.claims || []).length}</td>
-                      <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
+                      <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
                       <td style="font-size:11px;color:var(--text-muted)">${esc(e.captured_at)}</td>
                       <td>${e.posted_in_ecw ? '<span style="color:var(--success)">posted</span>' : '<span style="color:var(--text-muted)">pending</span>'}</td>
-                    </tr>`).join('');
+                    </tr>
+                    <tr class="eob-claims"${isOpen ? '' : ' hidden'}>
+                      <td colspan="11">
+                        <table class="eob-claims-table">
+                          <thead><tr><th>Claim #</th><th>Member</th><th>DOS</th><th>BSC claim #</th>
+                            <th class="num">Billed</th><th class="num">Paid</th><th class="num">Pt resp</th><th>Matched by</th></tr></thead>
+                          <tbody>${claimRows}</tbody>
+                        </table>
+                      </td>
+                    </tr>`;
+                }).join('');
             } catch (e) {
                 console.error('loadEobs failed', e);
             }
+        }
+
+        function toggleEob(row) {
+            const open = window._eobOpen || (window._eobOpen = new Set());
+            const key = row.dataset.check;
+            const sub = row.nextElementSibling;
+            const nowOpen = !row.classList.contains('open');
+            row.classList.toggle('open', nowOpen);
+            if (sub) sub.hidden = !nowOpen;
+            if (nowOpen) open.add(key); else open.delete(key);
         }
 
         // ---- Date filter (hero card) ----
@@ -1849,6 +1920,8 @@ window.scrollToEl = function(sel){
         // a slower beat.
         setInterval(loadCounts, 4000);
         setInterval(loadData, 15000);
+        // The EOB list is small; keep it live while a capture is running.
+        setInterval(() => { if (window.activeBot === 'eob') loadEobs(); }, 15000);
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
     </script>
@@ -1893,6 +1966,32 @@ def api_claims():
         return jsonify({'claims': claims, 'tasks': tasks})
     except Exception as e:
         return jsonify({'claims': [], 'tasks': [], 'error': str(e)})
+
+
+@app.after_request
+def _gzip_large_responses(resp):
+    """Compress big JSON and HTML on the way out.
+
+    /api/claims is built in 0.6 s on the server and is 3.2 MB of JSON, which
+    took ~50 s to cross the network uncompressed — longer than the 15 s poll,
+    so the table was always a refresh behind and a tab switch kept showing the
+    previous tab's claims. JSON of this shape compresses about tenfold.
+    """
+    try:
+        if (resp.status_code == 200
+                and resp.mimetype in ('application/json', 'text/html')
+                and 'gzip' in request.headers.get('Accept-Encoding', '').lower()
+                and 'Content-Encoding' not in resp.headers
+                and not resp.direct_passthrough):
+            data = resp.get_data()
+            if len(data) > 2048:
+                import gzip
+                resp.set_data(gzip.compress(data, compresslevel=5))
+                resp.headers['Content-Encoding'] = 'gzip'
+                resp.headers['Vary'] = 'Accept-Encoding'
+    except Exception:
+        pass
+    return resp
 
 
 @app.route('/api/mfa-code', methods=['POST'])
