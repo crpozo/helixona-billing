@@ -1,5 +1,5 @@
 [Unit]
-Description=Helixona Billing Agent (Marea — EOB Bot)
+Description=Helixona Billing Agent (Remittance — EOB Bot)
 After=network.target xvfb@102.service
 # Wants (not Requires): a flapping display must not crash-loop the worker. See
 # helixona-agent.service for the rationale.

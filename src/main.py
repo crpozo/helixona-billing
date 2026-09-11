@@ -2874,7 +2874,7 @@ def _dump_insurance_grid(page, claim_id, aws_client):
 
 IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 
-# The EOB bot (Marea) reads what the payer sent back — it never submits, and
+# The EOB bot (Remittance) reads what the payer sent back — it never submits, and
 # the submitting bots never touch payments. Fenced both ways, like the IV bot.
 EOB_TASKS = {'eob_capture'}
 
@@ -11321,11 +11321,11 @@ def process_message(message: dict, aws_client: AWSClient):
                     ecw_manager.stop()
 
     elif task_type == 'eob_capture':
-        # Marea: capture Explanations of Benefits from the Blue Shield portal —
+        # Remittance: capture Explanations of Benefits from the Blue Shield portal —
         # finalized, paid claims; each cheque's transaction summary; the EOB
         # report PDF — and pin them to our claims. Read-only against the payer.
         # Posting the payments into eCW is a later, separately-gated step.
-        logger.info("═══ Marea — EOB capture from Blue Shield ═══")
+        logger.info("═══ Remittance — EOB capture from Blue Shield ═══")
         from src.eob.capture import run_eob_capture
         manager = BrowserManager().start()
         try:

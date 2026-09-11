@@ -1,6 +1,6 @@
 """The 2-step code hand-off from a person to a waiting bot.
 
-On 2026-09-10 Marea's first login stopped at Blue Shield's e-mail code: the
+On 2026-09-10 Remittance's first login stopped at Blue Shield's e-mail code: the
 practice Gmail refused its app password, and the operator, holding the code,
 had no way to give it to the bot. Now there is one — with two rules that keep
 it from doing harm: a code counts only if typed after the bot asked for one,
@@ -119,7 +119,7 @@ class TheDashboardHasTheBox(unittest.TestCase):
         self.assertIn("event.key==='Enter'", _read('dashboard.py'))
 
     def test_the_box_is_not_tied_to_one_bot(self):
-        # Sol and Luna hit the same 2-step on a fresh profile.
+        # Intake and Follow-up hit the same 2-step on a fresh profile.
         d = _read('dashboard.py')
         i = d.index('id="mfa-box"')
         self.assertNotIn('data-bot', d[i - 200:i + 300])

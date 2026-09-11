@@ -1,4 +1,4 @@
-"""Marea — the EOB bot: what it reads from Blue Shield, and what it may not do.
+"""Remittance — the EOB bot: what it reads from Blue Shield, and what it may not do.
 
 The recording of 2026-09-07 is the specification. The portal's claim-status
 results are read BY HEADER NAME because the Finalized view has an extra "EOB"
@@ -203,7 +203,7 @@ class TheRoleIsFencedBothWays(unittest.TestCase):
 
 
 class OneLoginSharedByEveryBot(unittest.TestCase):
-    """Two inline copies existed; a third for Marea was the point of no return."""
+    """Two inline copies existed; a third for Remittance was the point of no return."""
 
     def test_the_submissions_flow_calls_the_shared_login(self):
         src = _read('src/main.py')
@@ -248,7 +248,7 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn("_shot(page, 'results_unparsed')", _read('src/eob/capture.py'))
 
 
-class MareaHasItsPlaceOnTheDashboard(unittest.TestCase):
+class RemittanceHasItsPlaceOnTheDashboard(unittest.TestCase):
     def _dash(self):
         os.environ.setdefault('AWS_ACCESS_KEY_ID', 'test')
         os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'test')
@@ -259,11 +259,11 @@ class MareaHasItsPlaceOnTheDashboard(unittest.TestCase):
     def test_every_bot_has_a_name(self):
         d = self._dash()
         self.assertEqual({k: v['name'] for k, v in d.BOT_ROUTING.items()},
-                         {'submissions': 'Sol', 'resubmissions': 'Luna', 'eob': 'Marea'})
+                         {'submissions': 'Intake', 'resubmissions': 'Follow-up', 'eob': 'Remittance'})
 
     def test_the_names_are_on_the_tabs(self):
         html = self._dash().DASHBOARD_HTML
-        for label in ('☀️ Sol', '🌙 Luna', '🌊 Marea'):
+        for label in ('📋 Intake', '🩺 Follow-up', '🧾 Remittance'):
             self.assertIn(label, html)
 
     def test_marea_routes_to_its_own_unit_queue_and_screen(self):
@@ -305,7 +305,7 @@ class TheHostSideIsWiredToo(unittest.TestCase):
         u = _repo_only('infra/helixona-agent-eob.service')
         self.assertIn('Environment=DISPLAY=:102', u)
         self.assertIn('Environment=BOT_ROLE=eob', u)
-        self.assertIn('Marea', u)
+        self.assertIn('Remittance', u)
 
     def test_the_deploy_script_restarts_the_bots_that_exist(self):
         d = _read('deploy_code.sh')

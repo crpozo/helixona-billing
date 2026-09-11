@@ -36,32 +36,33 @@ KEY_FILE = "infra/helixona-agent-key.pem"
 # Each bot is its own systemd unit with its own X display, noVNC port, SQS
 # queue and Chrome profile. Keep this table in step with QUEUE_BY_ROLE in
 # src/aws/clients.py — the agent side of the same mapping.
-# Each bot also has a name the clinic knows it by. They follow the claim's
-# journey: Sol sends it out for the first time, Luna sends it again over one
-# already on file, Marea brings back what the payer returns — payments,
-# denials, explanations. One place to change them.
+# Each bot also has a name that says what it does, in the vocabulary of a
+# clinic visit: Intake takes a claim into the payer for the first time,
+# Follow-up returns to one already on file, Remittance brings back what the
+# payer remits — payments and the explanation of benefits. One place to
+# change them.
 BOT_ROUTING = {
     'submissions': {
         'queue_url': SQS_URL,
         'service': 'helixona-agent',
-        'name': 'Sol',
-        'emoji': '☀️',
+        'name': 'Intake',
+        'emoji': '📋',
         'label': 'Blue Shield Submissions',
         'novnc_port': 6080,
     },
     'resubmissions': {
         'queue_url': SQS_URL_RESUB,
         'service': 'helixona-agent-resub',
-        'name': 'Luna',
-        'emoji': '🌙',
+        'name': 'Follow-up',
+        'emoji': '🩺',
         'label': 'Blue Shield Resubmissions',
         'novnc_port': 6081,
     },
     'eob': {
         'queue_url': SQS_URL_EOB,
         'service': 'helixona-agent-eob',
-        'name': 'Marea',
-        'emoji': '🌊',
+        'name': 'Remittance',
+        'emoji': '🧾',
         'label': 'Blue Shield EOB',
         'novnc_port': 6083,
     },
@@ -436,9 +437,9 @@ tbody tr:last-child td{border-bottom:none}
 
     <!-- BOT TABS -->
     <div class="subtabs" id="bot-tabs">
-      <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">☀️ Sol · Blue Shield Submissions</div>
-      <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🌙 Luna · Blue Shield Resubmissions</div>
-      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🌊 Marea · EOB</div>
+      <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">📋 Intake · Blue Shield Submissions</div>
+      <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🩺 Follow-up · Blue Shield Resubmissions</div>
+      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · EOB</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -469,10 +470,10 @@ tbody tr:last-child td{border-bottom:none}
     <!-- MAIN: claims + admin rail -->
     <div class="main">
 
-      <!-- EOB TABLE (Marea) — one row per Check/EFT captured from Blue Shield -->
+      <!-- EOB TABLE (Remittance) — one row per Check/EFT captured from Blue Shield -->
       <div class="claims-section" id="eob-section" hidden>
         <div class="section-title">
-          🌊 Explanations of Benefits
+          🧾 Explanations of Benefits
           <span id="eob-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
           <button class="btn btn-refresh" onclick="loadEobs()">↻ Refresh</button>
         </div>
@@ -484,7 +485,7 @@ tbody tr:last-child td{border-bottom:none}
                 <th>Payee</th><th>Claims</th><th>Matched</th><th>EOB</th><th>Captured</th><th>eCW</th>
               </tr>
             </thead>
-            <tbody id="eob-body"><tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Marea to begin.</td></tr></tbody>
+            <tbody id="eob-body"><tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Remittance to begin.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -548,7 +549,7 @@ tbody tr:last-child td{border-bottom:none}
               <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
               <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
             </optgroup>
-            <optgroup label="🌊 Marea · EOB Bot" data-bot="eob">
+            <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
               <option value="eob_capture" data-bot="eob">💰 Capture EOBs from Blue Shield</option>
             </optgroup>
           </select>
@@ -858,7 +859,7 @@ window.scrollToEl = function(sel){
             const firstVisible = Array.from(sel.options).find(o => !o.hidden);
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             // The headline counts something different per bot: what each has
-            // sent, or — for Marea — how many sent claims have come back paid.
+            // sent, or — for Remittance — how many sent claims have come back paid.
             const denom = document.getElementById('hero-denom-label');
             if (denom) denom.textContent = bot === 'eob'
                 ? 'submitted claims with an EOB captured' : 'claims submitted';
@@ -1077,7 +1078,7 @@ window.scrollToEl = function(sel){
             }
         }
 
-        // ---- EOB table (Marea) ----
+        // ---- EOB table (Remittance) ----
         async function loadEobs() {
             const body = document.getElementById('eob-body');
             const meta = document.getElementById('eob-meta');
@@ -1090,7 +1091,7 @@ window.scrollToEl = function(sel){
                     ? `${eobs.length} cheques · $${data.total_amount} · ${data.claims_matched}/${data.claims_total} claims matched`
                     : '';
                 if (!eobs.length) {
-                    body.innerHTML = '<tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Marea to begin.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="11" class="empty-state">No EOBs captured yet. Send "Capture EOBs" to Remittance to begin.</td></tr>';
                     return;
                 }
                 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -1910,7 +1911,7 @@ def api_mfa_code():
 
 @app.route('/api/eobs')
 def api_eobs():
-    """Every cheque Marea has captured, newest check date first, sized for a
+    """Every cheque Remittance has captured, newest check date first, sized for a
     table: the PDF's parsed CPT lines stay out of this payload."""
     try:
         table = dynamodb.Table('helixona-eobs')
@@ -1993,7 +1994,7 @@ def api_claim_counts():
             return {'submitted': done, 'total': total}
 
         is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
-        # Marea's headline is not a slice of the submissions/resubmissions
+        # Remittance's headline is not a slice of the submissions/resubmissions
         # partition: of everything sent, how much has come back paid.
         sent = [r for r in items if r.get('symplisend_submitted')]
         with_eob = [r for r in sent if r.get('eob_check_eft')]

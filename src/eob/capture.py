@@ -1,4 +1,4 @@
-"""Marea — capturing Explanations of Benefits from the Blue Shield portal.
+"""Remittance — capturing Explanations of Benefits from the Blue Shield portal.
 
 This is the operator's own procedure (screen recording of 2026-09-07), step
 for step, up to the point where money would be posted into eCW:
@@ -437,7 +437,7 @@ def run_eob_capture(page, aws_client, body):
     limit = int(body.get('limit_checks') or 0)
     only = str(body.get('check_eft') or '').strip()
     force = bool(body.get('force'))
-    logger.info(f"Marea: since={since} limit={limit or 'none'} only={only or 'all'} force={force}")
+    logger.info(f"Remittance: since={since} limit={limit or 'none'} only={only or 'all'} force={force}")
 
     if not login_to_provider_portal(page, aws_client):
         logger.error("❌ Blue Shield login failed — nothing captured")
@@ -490,6 +490,6 @@ def run_eob_capture(page, aws_client, body):
             failed += 1
             logger.error(f"  ❌ Check {ck} failed: {e}")
             _shot(page, f'{ck}_error')
-    logger.info(f"═══ Marea complete: {captured} captured · {skipped} already on file · {failed} failed ═══")
+    logger.info(f"═══ Remittance complete: {captured} captured · {skipped} already on file · {failed} failed ═══")
     return {'ok': True, 'captured': captured, 'skipped': skipped, 'failed': failed,
             'checks': len(checks), 'rows': len(rows)}
