@@ -23,6 +23,7 @@ the first run is expected to teach us something.
 """
 import csv
 import hashlib
+import json
 import os
 import re
 import time
@@ -30,6 +31,7 @@ from datetime import datetime
 
 from src.aws.clients import scan_all
 from src.blueshield.session import login_to_provider_portal, CLAIM_STATUS_URL
+from src.eob.eob_pdf import read_eob_pdf
 from src.eob.parse import (
     dos_start, index_claims, match_claim, money, norm_text,
     parse_check_summary, parse_eob_pdf_text, rows_by_header,
@@ -309,6 +311,16 @@ def _download_eob_pdf(page, check):
     return ''
 
 
+def _fits_in_item(claims, limit=300_000):
+    """The parsed claims, lines and all, unless they would push the DynamoDB
+    item past its 400 KB cap; then the claims without their lines (the PDF
+    in S3 can always be re-read)."""
+    if len(json.dumps(claims, default=str)) <= limit:
+        return claims
+    logger.warning(f"  ⚠️ {len(claims)} claims' lines are too large for the item — storing claims only")
+    return [{k: v for k, v in c.items() if k != 'lines'} for c in claims]
+
+
 def _pdf_text(path):
     try:
         import pdfplumber
@@ -365,9 +377,22 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
         else:
             s3_path = aws_client.upload_to_s3(pdf_path, f'{S3_PREFIX}/{check}.pdf') or ''
         known_pdfs[sha] = (check, s3_path)
-        parsed = parse_eob_pdf_text(_pdf_text(pdf_path))
+        try:
+            parsed = read_eob_pdf(pdf_path)
+        except Exception as e:
+            logger.warning(f"  ⚠️ EOB report could not be read by position: {e}")
+            parsed = {}
+        if not parsed.get('parsed_ok'):
+            # The text reading still yields the account numbers that pin
+            # each payer claim to ours; the lines are left unknown.
+            problems = (parsed.get('problems') or []) + [
+                'the report was not read by position — its lines are unknown']
+            parsed = {**parse_eob_pdf_text(_pdf_text(pdf_path)), 'problems': problems}
         logger.info(f"  PDF: {os.path.getsize(pdf_path)} bytes · EOB {parsed.get('eob_number') or '?'} "
-                    f"· {len(parsed.get('claims', []))} account number(s) · parsed_ok={parsed.get('parsed_ok')}")
+                    f"· {len(parsed.get('claims', []))} claim(s) · parsed_ok={parsed.get('parsed_ok')} "
+                    f"· {len(parsed.get('problems') or [])} problem(s)")
+        for prob in (parsed.get('problems') or [])[:10]:
+            logger.warning(f"    ⚠️ {prob}")
 
     # Pin each claim the cheque paid to one of ours. The PDF's account number
     # is definitive when its claim number matches; otherwise subscriber+DOS.
@@ -405,10 +430,16 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
         'eob_number': parsed.get('eob_number', ''),
         'eob_issue_date': parsed.get('issue_date', ''),
         'approve_to_pay': parsed.get('approve_to_pay', ''),
+        'eob_interest': parsed.get('interest', ''),
+        'eob_offsets': parsed.get('offsets', ''),
+        'eob_check_amount': parsed.get('check_amount', ''),
+        'paid_to_member': bool(parsed.get('payment_issued_to')),
+        'eob_adjusted_claim': bool(parsed.get('adjusted_claim')),
+        'eob_problems': (parsed.get('problems') or [])[:50],
         'eob_pdf_s3_path': s3_path,
         'eob_pdf_sha256': sha,
         'eob_pdf_parsed_ok': bool(parsed.get('parsed_ok')),
-        'eob_lines': parsed.get('lines', [])[:200],
+        'eob_claims': _fits_in_item(parsed.get('claims', [])),
         'claims': claims_out,
         'claims_matched': matched,
         'details_url': page.url,

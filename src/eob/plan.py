@@ -54,6 +54,10 @@ def plan_cheque(parsed_eob, load_ecw_lines, claim_charges=None):
             plans.append({**base, 'status': 'needs_review', 'rows': [], 'unposted_ecw': [],
                           'reasons': ['EOB claim has no patient account number']})
             continue
+        if not c.get('lines'):
+            plans.append({**base, 'status': 'needs_review', 'rows': [], 'unposted_ecw': [],
+                          'reasons': [f'the EOB lines for claim {claim_id} were not read']})
+            continue
         ecw = load_ecw_lines(claim_id)
         if not ecw:
             plans.append({**base, 'status': 'needs_review', 'rows': [], 'unposted_ecw': [],
@@ -67,16 +71,31 @@ def plan_cheque(parsed_eob, load_ecw_lines, claim_charges=None):
             if _d(got) != _d(on_record):
                 extra.append(f'HCFA lines add up to {got}, the claim is on record at '
                              f'{_d(on_record):.2f} — a line was not read')
+        if c.get('adjusted_payment'):
+            extra.append(f"Blue Shield adjusted an earlier payment on this claim (adjusted payment "
+                         f"{c['adjusted_payment']}) — find the first posting in eCW before posting this one")
         status = 'needs_review' if (p['status'] != 'ready' or extra) else 'ready'
         plans.append({**base, **p, 'status': status, 'reasons': p['reasons'] + extra,
                       'ecw_lines': ecw})
 
-    paid = _sum(c.get('claim_paid') for c in parsed_eob.get('claims') or [])
+    claims = parsed_eob.get('claims') or []
+    paid = _sum(c.get('claim_paid') for c in claims)
     atp = _d(parsed_eob.get('approve_to_pay'))
     if atp is not None and paid != atp:
         reasons.append(f'claims paid add up to {paid:.2f}, the EOB approves {atp:.2f}')
     if not plans:
         reasons.append('the EOB lists no claims')
+    if parsed_eob.get('payment_issued_to'):
+        reasons.append(f"Blue Shield paid the member, not the clinic (check amount "
+                       f"{parsed_eob.get('check_amount') or '0.00'}) — there is no insurance payment to post")
+    offsets = _d(parsed_eob.get('offsets'))
+    if offsets:
+        reasons.append(f'Blue Shield took an offset of {offsets:.2f} out of this cheque — '
+                       f'the posting has to account for it')
+    if parsed_eob.get('adjusted_claim') and not any(c.get('adjusted_payment') for c in claims):
+        reasons.append('the EOB says it adjusts a previously processed claim')
+    # The report disagreeing with itself means something was misread.
+    reasons.extend(parsed_eob.get('problems') or [])
 
     ready = not reasons and all(p['status'] == 'ready' for p in plans)
     return {
@@ -90,3 +109,61 @@ def plan_cheque(parsed_eob, load_ecw_lines, claim_charges=None):
             'check_amount': parsed_eob.get('check_amount', ''),
         },
     }
+
+
+def _stored(item):
+    """What capture stored for a cheque, in plan_cheque's shape."""
+    return {
+        'eob_number': item.get('eob_number', ''),
+        'approve_to_pay': item.get('approve_to_pay', ''),
+        'interest': item.get('eob_interest', ''),
+        'offsets': item.get('eob_offsets', ''),
+        'check_amount': item.get('eob_check_amount', ''),
+        'payment_issued_to': 'the member' if item.get('paid_to_member') else '',
+        'adjusted_claim': bool(item.get('eob_adjusted_claim')),
+        'problems': list(item.get('eob_problems') or []),
+        'claims': list(item.get('eob_claims') or []),
+    }
+
+
+def plan_from_item(eob_item, get_claim, read_hcfa, read_eob=None):
+    """The plan for a stored cheque (a helixona-eobs item).
+
+    `get_claim(claim_id)` returns our claim record or None; `read_hcfa(s3_path)`
+    returns the HCFA's service lines; `read_eob(s3_path)` re-reads the EOB
+    report, so a cheque captured before a parser fix is planned from its
+    report rather than from what was stored at the time.
+    """
+    parsed, notes = None, []
+    pdf = eob_item.get('eob_pdf_s3_path') or ''
+    if read_eob and pdf:
+        try:
+            parsed = read_eob(pdf)
+        except Exception as e:
+            notes.append(f'the EOB report could not be re-read ({e}); planned from what was stored')
+        if parsed is not None and not parsed.get('parsed_ok'):
+            notes.append('the EOB report could not be read by position; planned from what was stored')
+            parsed = None
+    if parsed is None:
+        parsed = _stored(eob_item)
+
+    records = {}
+    for c in parsed.get('claims') or []:
+        cid = str(c.get('patient_account_number') or '').strip()
+        if cid and cid not in records:
+            records[cid] = get_claim(cid) or {}
+
+    def load(cid):
+        path = records.get(cid, {}).get('hcfa_s3_path') or ''
+        if not path:
+            return None
+        try:
+            return read_hcfa(path)
+        except Exception:
+            return None
+
+    charges = {cid: r['charges'] for cid, r in records.items() if r.get('charges') not in (None, '')}
+    plan = plan_cheque(parsed, load, claim_charges=charges)
+    plan.update({'check_eft': eob_item.get('check_eft', ''), 'eob_number': parsed.get('eob_number', ''),
+                 'notes': notes})
+    return plan

@@ -307,6 +307,19 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .eob-claims-table th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid var(--bdr)}
 .eob-claims-table td{font-size:12px;padding:8px 12px;border-bottom:1px solid var(--bdr)}
 .eob-claims-table tr:last-child td{border-bottom:none}
+.eob-plan{padding:10px 12px 14px;border-top:1px solid var(--bdr)}
+.eob-plan .btn-plan{font-size:12px;padding:5px 10px;border:1px solid var(--bdr);border-radius:6px;background:transparent;color:inherit;cursor:pointer}
+.eob-plan .plan-hint{font-size:11px;color:var(--text-muted);margin-left:8px}
+.plan-head{margin:10px 0 6px;font-size:12px}
+.plan-ok{color:var(--success);font-weight:600}
+.plan-held{color:var(--warning);font-weight:600}
+.plan-tot{color:var(--text-muted);margin-left:8px}
+.plan-reasons{margin:4px 0 8px 18px;padding:0;font-size:12px}
+.plan-reasons li{margin:2px 0}
+.plan-claim{margin-top:10px;padding-top:8px;border-top:1px dashed var(--bdr)}
+.plan-claim-h{font-size:12px;margin-bottom:4px}
+.plan-note{font-size:11px;color:var(--text-muted);margin-top:4px}
+.plan-err{color:var(--bad);font-size:12px;margin-top:8px}
 .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 table{width:100%;border-collapse:collapse}
 thead th{background:rgba(255,255,255,.015);padding:11px 14px;text-align:left;font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:2}
@@ -1130,6 +1143,7 @@ window.scrollToEl = function(sel){
                 const usd = v => v ? '$' + esc(v) : '—';
                 const how = m => ({pdf_account_number: 'EOB account #', subscriber_dos: 'subscriber + DOS'}[m] || '—');
                 const open = window._eobOpen || (window._eobOpen = new Set());
+                const plans = window._eobPlans || (window._eobPlans = {});
                 // Each cheque row opens onto the claims it paid; open rows
                 // stay open across refreshes.
                 body.innerHTML = eobs.map(e => {
@@ -1158,7 +1172,10 @@ window.scrollToEl = function(sel){
                       <td>${esc(e.claims_matched)}/${(e.claims || []).length}</td>
                       <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
                       <td style="font-size:11px;color:var(--text-muted)">${esc(e.captured_at)}</td>
-                      <td>${e.posted_in_ecw ? '<span style="color:var(--success)">posted</span>' : '<span style="color:var(--text-muted)">pending</span>'}</td>
+                      <td>${e.posted_in_ecw ? '<span style="color:var(--success)">posted</span>'
+                          : e.plan_status === 'ready' ? '<span style="color:var(--success)">plan ready</span>'
+                          : e.plan_status ? `<span style="color:var(--warning)">held · ${esc(e.plan_reasons)}</span>`
+                          : '<span style="color:var(--text-muted)">pending</span>'}</td>
                     </tr>
                     <tr class="eob-claims"${isOpen ? '' : ' hidden'}>
                       <td colspan="11">
@@ -1167,6 +1184,11 @@ window.scrollToEl = function(sel){
                             <th class="num">Billed</th><th class="num">Paid</th><th class="num">Pt resp</th><th>Matched by</th></tr></thead>
                           <tbody>${claimRows}</tbody>
                         </table>
+                        <div class="eob-plan" data-check="${esc(e.check_eft)}">
+                          <button class="btn-plan" data-check="${esc(e.check_eft)}" onclick="event.stopPropagation(); loadPlan(this.dataset.check)">🧮 Posting plan</button>
+                          <span class="plan-hint">What Remittance would enter in eCW, line by line. Nothing is posted.</span>
+                          <div class="plan-out">${plans[String(e.check_eft)] ? renderPlan(plans[String(e.check_eft)]) : ''}</div>
+                        </div>
                       </td>
                     </tr>`;
                 }).join('');
@@ -1183,6 +1205,54 @@ window.scrollToEl = function(sel){
             row.classList.toggle('open', nowOpen);
             if (sub) sub.hidden = !nowOpen;
             if (nowOpen) open.add(key); else open.delete(key);
+        }
+
+        // ---- Posting plan (Remittance) ----
+        // What would be entered in eCW for a cheque: per claim, per line, the
+        // allowed / deductible / co-pay / paid from the EOB, or why the claim
+        // is held. Read-only; plans are kept so the table refresh keeps them.
+        const eobEsc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+        function renderPlan(p) {
+            if (p.error) return `<div class="plan-err">${eobEsc(p.error)}</div>`;
+            const list = rs => (rs || []).length ? `<ul class="plan-reasons">${rs.map(r => `<li>${eobEsc(r)}</li>`).join('')}</ul>` : '';
+            const t = p.totals || {};
+            const claims = (p.claims || []).map(c => {
+                const rows = (c.rows || []).map(r => `
+                    <tr><td>${eobEsc(r.cpt)}</td><td>${eobEsc(r.ecw_drug)}</td>
+                      <td class="num">$${eobEsc(r.ecw_billed)}</td><td class="num">$${eobEsc(r.eob_billed)}</td>
+                      <td class="num">${eobEsc(r.allowed)}</td><td class="num">${eobEsc(r.deductible)}</td>
+                      <td class="num">${eobEsc(r.copay)}</td><td class="num"><strong>${eobEsc(r.paid)}</strong></td>
+                      <td style="color:var(--text-muted)">${eobEsc(r.how)}</td></tr>`).join('');
+                const unposted = (c.unposted_ecw || []).map(i => (c.ecw_lines || [])[i]).filter(Boolean)
+                    .map(l => `${eobEsc(l.cpt)} $${eobEsc(l.billed)}`).join(', ');
+                return `<div class="plan-claim">
+                    <div class="plan-claim-h"><strong>Claim ${eobEsc(c.claim_id || '?')}</strong> · BSC ${eobEsc(c.bsc_claim_number)}
+                      · paid $${eobEsc(c.claim_paid)} · ${c.status === 'ready' ? '<span class="plan-ok">ready</span>' : '<span class="plan-held">held</span>'}</div>
+                    ${list(c.reasons)}
+                    ${rows ? `<table class="eob-claims-table"><thead><tr><th>CPT</th><th>eCW drug</th><th class="num">eCW billed</th>
+                      <th class="num">EOB billed</th><th class="num">Allowed</th><th class="num">Deductible</th><th class="num">Co-pay</th>
+                      <th class="num">Paid</th><th>Matched by</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+                    ${unposted ? `<div class="plan-note">In eCW but not on this EOB (nothing posted to them): ${unposted}</div>` : ''}
+                  </div>`;
+            }).join('');
+            return `<div class="plan-head">${p.status === 'ready' ? '<span class="plan-ok">Ready to post</span>' : '<span class="plan-held">Held for review</span>'}
+                <span class="plan-tot">claims paid $${eobEsc(t.claims_paid)} · approve-to-pay $${eobEsc(t.approve_to_pay)}
+                · interest $${eobEsc(t.interest)} · check $${eobEsc(t.check_amount)}</span></div>
+                ${list(p.reasons)}${(p.notes || []).map(n => `<div class="plan-note">${eobEsc(n)}</div>`).join('')}${claims}`;
+        }
+
+        async function loadPlan(check) {
+            const plans = window._eobPlans || (window._eobPlans = {});
+            const out = () => document.querySelector(`.eob-plan[data-check="${CSS.escape(check)}"] .plan-out`);
+            if (out()) out().innerHTML = '<div class="plan-note">Reading the EOB report and each claim’s HCFA…</div>';
+            try {
+                const res = await fetch(`/api/eob/${encodeURIComponent(check)}/plan`);
+                plans[check] = await res.json();
+            } catch (e) {
+                plans[check] = {error: String(e)};
+            }
+            if (out()) out().innerHTML = renderPlan(plans[check]);
         }
 
         // ---- Date filter (hero card) ----
@@ -2008,6 +2078,47 @@ def api_mfa_code():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/eob/<check_eft>/plan')
+def api_eob_plan(check_eft):
+    """The posting plan for one cheque: what Remittance would type into eCW,
+    line by line, or why it will not. Read-only — nothing is posted here."""
+    try:
+        import tempfile
+        from src.eob.eob_pdf import read_eob_pdf
+        from src.eob.hcfa_lines import hcfa_lines_from_pdf
+        from src.eob.plan import plan_from_item
+        eobs = dynamodb.Table('helixona-eobs')
+        item = eobs.get_item(Key={'check_eft': check_eft}).get('Item')
+        if not item:
+            return jsonify({'error': f'cheque {check_eft} not found'}), 404
+        s3 = boto3.client('s3', region_name='us-west-2')
+        claims = dynamodb.Table('helixona-claims')
+
+        def fetch(s3_path, reader):
+            m = re.match(r's3://([^/]+)/(.+)', s3_path or '')
+            if not m:
+                return None
+            with tempfile.NamedTemporaryFile(suffix='.pdf') as fh:
+                s3.download_fileobj(m.group(1), m.group(2), fh)
+                fh.flush()
+                return reader(fh.name)
+
+        plan = plan_from_item(
+            item,
+            get_claim=lambda cid: claims.get_item(Key={'claim_id': cid}).get('Item'),
+            read_hcfa=lambda p: fetch(p, hcfa_lines_from_pdf),
+            read_eob=lambda p: fetch(p, read_eob_pdf))
+        held = len(plan['reasons']) + sum(len(c.get('reasons') or []) for c in plan['claims'])
+        eobs.update_item(
+            Key={'check_eft': check_eft},
+            UpdateExpression='SET plan_status = :s, plan_reasons = :r, planned_at = :t',
+            ExpressionAttributeValues={':s': plan['status'], ':r': held,
+                                       ':t': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')})
+        return jsonify(json.loads(json.dumps(plan, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/eobs')
 def api_eobs():
     """Every cheque Remittance has captured, newest check date first, sized for a
@@ -2025,7 +2136,7 @@ def api_eobs():
         total = Decimal('0')
         matched = claims_total = 0
         for it in items:
-            it = {k: v for k, v in it.items() if k != 'eob_lines'}
+            it = {k: v for k, v in it.items() if k not in ('eob_lines', 'eob_claims')}
             eobs.append(it)
             try:
                 total += Decimal(str(it.get('check_amount') or '0'))

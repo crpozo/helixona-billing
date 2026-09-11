@@ -161,6 +161,45 @@ class RepeatedCodesAreToldApart(unittest.TestCase):
         self.assertEqual(by['300.00']['paid'], '90.00')
         self.assertEqual(by['300.00']['how'], 'drug table')
 
+    def test_the_table_works_in_both_directions(self):
+        # Claim 2627's EOB bills J3490 at $300.00 — the Medicare amount —
+        # where eCW bills that ascorbic acid at $900.00, the Blue Shield one.
+        ecw = [C('J3490', '900.00', drug='50 ML ASCORBIC ACID (500MG/ML)'),
+               C('J3490', '100.00', drug='5 ML GLUTATHIONE 200 MG/ML')]
+        eob = [E('J3490', '300.00', paid='3.19'), E('J3490', '100.00', paid='24.00')]
+        p = plan_claim(eob, ecw)
+        self.assertEqual(p['status'], 'ready', p['reasons'])
+        by = {r['ecw_billed']: r for r in p['rows']}
+        self.assertEqual((by['900.00']['paid'], by['900.00']['how']), ('3.19', 'drug table'))
+        self.assertEqual(by['100.00']['paid'], '24.00')
+
+    def test_repeats_compare_per_unit(self):
+        ecw = [C('J3475', '20.00', units='1', drug='2 ML MAGNESIUM SULFATE (500MG/ML)'),
+               C('J3475', '90.00', units='1', drug='OTHER')]
+        eob = [E('J3475', '40.00', units='2', paid='0.49')]
+        p = plan_claim(eob, ecw)
+        self.assertEqual(p['status'], 'ready', p['reasons'])
+        self.assertEqual((p['rows'][0]['ecw_billed'], p['rows'][0]['how']), ('20.00', 'billed per unit'))
+
+    def test_claim_2627s_j3490s_hold_on_the_twenty_dollar_line(self):
+        # The real claim, amounts only: EOB J3490 $300 / $40 / $20 / $100
+        # against eCW B Complex $40, Methylcobalamin $125, Glutathione $100,
+        # Ascorbic Acid $900. $300 and $100 resolve; $20 has no counterpart
+        # on the claim or in the table, and $40 fits both B Complex (billed)
+        # and Methylcobalamin (table: $40 Medicare -> $125) — so even by
+        # elimination the $20 could be either drug, paying 4.80 or 9.60 onto
+        # the wrong one. Nothing is posted until the rule for it is known.
+        ecw = [C('J3490', '40.00', drug='1 ML B COMPLEX 100'),
+               C('J3490', '125.00', drug='0.2 ML METHYLCOBALAMIN (B-12) 5MG/ML'),
+               C('J3490', '100.00', drug='5 ML GLUTATHIONE 200 MG/ML'),
+               C('J3490', '900.00', drug='50 ML ASCORBIC ACID (500MG/ML)')]
+        eob = [E('J3490', '300.00', paid='3.19'), E('J3490', '40.00', paid='9.60'),
+               E('J3490', '20.00', paid='4.80'), E('J3490', '100.00', paid='24.00')]
+        p = plan_claim(eob, ecw)
+        self.assertEqual(p['status'], 'needs_review')
+        self.assertIn('EOB 20.00', p['reasons'][0])
+        self.assertEqual(p['rows'], [])
+
     def test_the_drug_must_agree_with_the_table(self):
         # EOB J3490 $125 is Methylcobalamin per the table (eCW $40.00). An eCW
         # $40.00 line that is B Complex must NOT receive it.

@@ -7,7 +7,7 @@ because a wrong posting puts dollars on the wrong line of the ledger.
 import os
 import unittest
 
-from src.eob.plan import plan_cheque
+from src.eob.plan import plan_cheque, plan_from_item
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -103,6 +103,72 @@ class IdenticalReportsAreStoredOnce(unittest.TestCase):
 
     def test_hashes_already_on_file_are_loaded_before_the_run(self):
         self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256'", self._capture())
+
+
+class AStoredChequeIsPlannedFromItsReport(unittest.TestCase):
+    CLAIMS = {'11': {'claim_id': '11', 'hcfa_s3_path': 's3://b/hcfa/11.pdf', 'charges': '197.00'}}
+
+    def _item(self, **kw):
+        return {'check_eft': '555', 'approve_to_pay': '50.00', 'eob_interest': '0.00', 'eob_offsets': '0.00',
+                'eob_check_amount': '50.00', 'eob_problems': [],
+                'eob_claims': [{'patient_account_number': '11', 'claim_paid': '50.00',
+                                'lines': [L('99213', '197.00', '50.00')]}], **kw}
+
+    def test_what_was_stored_is_used_when_there_is_no_report(self):
+        p = plan_from_item(self._item(), self.CLAIMS.get, lambda path: ECW['11'] if path.endswith('11.pdf') else None)
+        self.assertEqual(p['status'], 'ready', p)
+        self.assertEqual(p['check_eft'], '555')
+
+    def test_the_report_is_reread_when_it_can_be(self):
+        fresh = {'parsed_ok': True, 'eob_number': 'X1', 'approve_to_pay': '40.00', 'interest': '0.00',
+                 'offsets': '0.00', 'check_amount': '40.00', 'problems': [],
+                 'claims': [{'patient_account_number': '11', 'claim_paid': '40.00',
+                             'lines': [L('99213', '197.00', '40.00')]}]}
+        p = plan_from_item(self._item(eob_pdf_s3_path='s3://b/eobs/555.pdf'), self.CLAIMS.get,
+                           lambda path: ECW['11'], read_eob=lambda path: fresh)
+        self.assertEqual((p['eob_number'], p['claims'][0]['rows'][0]['paid']), ('X1', '40.00'))
+
+    def test_an_unreadable_report_falls_back_with_a_note(self):
+        p = plan_from_item(self._item(eob_pdf_s3_path='s3://b/eobs/555.pdf'), self.CLAIMS.get,
+                           lambda path: ECW['11'], read_eob=lambda path: {'parsed_ok': False})
+        self.assertEqual(p['status'], 'ready')
+        self.assertIn('could not be read by position', p['notes'][0])
+
+    def test_a_member_paid_cheque_stays_held_from_storage(self):
+        p = plan_from_item(self._item(paid_to_member=True), self.CLAIMS.get, lambda path: ECW['11'])
+        self.assertTrue(any('paid the member' in r for r in p['reasons']), p['reasons'])
+
+    def test_a_missing_hcfa_is_a_reason_not_a_crash(self):
+        def missing(path):
+            raise OSError('NoSuchKey')
+        p = plan_from_item(self._item(), self.CLAIMS.get, missing)
+        self.assertIn('no HCFA lines on file for claim 11', p['claims'][0]['reasons'])
+
+    def test_a_claim_whose_eob_lines_were_not_read_is_not_ready(self):
+        item = self._item(eob_claims=[{'patient_account_number': '11', 'claim_paid': '50.00', 'lines': []}])
+        p = plan_from_item(item, self.CLAIMS.get, lambda path: ECW['11'])
+        self.assertEqual(p['status'], 'needs_review')
+        self.assertIn('the EOB lines for claim 11 were not read', p['claims'][0]['reasons'])
+
+
+class ThePlanIsShownNotPosted(unittest.TestCase):
+    def _dash(self):
+        with open(os.path.join(REPO, 'dashboard.py'), encoding='utf-8') as fh:
+            return fh.read()
+
+    def test_the_plan_endpoint_only_reads(self):
+        d = self._dash()
+        i = d.index('def api_eob_plan')
+        body = d[i:d.index('@app.route', i)]
+        self.assertIn('plan_from_item', body)
+        self.assertNotIn('posted_in_ecw', body)
+
+    def test_each_cheque_can_show_its_plan(self):
+        d = self._dash()
+        self.assertIn("fetch(`/api/eob/${encodeURIComponent(check)}/plan`)", d)
+        self.assertIn('🧮 Posting plan', d)
+        # A plan survives the table's 15-second refresh.
+        self.assertIn('window._eobPlans', d)
 
 
 if __name__ == '__main__':

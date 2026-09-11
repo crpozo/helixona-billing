@@ -5,11 +5,13 @@ The operator's rule, made exact:
 * A code that appears once on each side is matched by code alone — even when
   the billed amounts differ, which they do (an adjusted claim bills 96375 at
   $250.00 on the EOB against $575.00 in eCW).
-* A code that repeats is told apart by billed amount; failing that, by
-  Vignesh's table (eCW bills these drugs at the Medicare amount, Blue Shield's
-  EOB shows the Blue Shield amount); the HCFA's drug text must agree with the
-  table's drug, so a $40.00 B Complex line is never taken for a Methylcobalamin
-  that Blue Shield priced at $125.00.
+* A code that repeats is told apart by billed amount (also per unit, since
+  one side can bill 2 units at $40.00 where the other bills 1 at $20.00);
+  failing that, by Vignesh's table of Medicare vs Blue Shield amounts. The
+  table is read BOTH ways: claim 2627's EOB bills an ascorbic acid at $300.00,
+  the Medicare amount, while eCW bills the same line at $900.00, the Blue
+  Shield amount. The HCFA's drug text must agree with the table's drug, so a
+  $40.00 B Complex line is never taken for a Methylcobalamin.
 * Among what is left, units break ties; lines identical in code, billed, units
   and drug are interchangeable.
 * Anything still undecided is NOT guessed. An EOB line posted to the wrong
@@ -60,12 +62,24 @@ def drug_key(text):
 
 
 def _table_candidates(code, eob_billed):
-    """(eCW billed, drug key) pairs Vignesh's table allows for this EOB line."""
+    """(eCW billed, drug key) pairs Vignesh's table allows for this EOB line,
+    whichever of the two amounts each side happens to carry."""
     out = []
-    for c, drug, ecw, bsc in DRUG_TABLE:
-        if c == code and _d(bsc) == eob_billed:
-            out.append((_d(ecw), drug_key(drug)))
+    for c, drug, medicare, bsc in DRUG_TABLE:
+        if c != code:
+            continue
+        if _d(bsc) == eob_billed:
+            out.append((_d(medicare), drug_key(drug)))
+        if _d(medicare) == eob_billed:
+            out.append((_d(bsc), drug_key(drug)))
     return out
+
+
+def _per_unit(billed, units):
+    b, u = _d(billed), _d(units)
+    if b is None or not u:
+        return None
+    return (b / u).quantize(Decimal('0.01'))
 
 
 def _candidates(e, ecw_lines, idxs):
@@ -77,6 +91,10 @@ def _candidates(e, ecw_lines, idxs):
         cb = _d(c.get('billed'))
         if eb is not None and cb == eb:
             cands[i] = 'billed'
+            continue
+        epu, cpu = _per_unit(e.get('billed'), e.get('units')), _per_unit(c.get('billed'), c.get('units'))
+        if epu is not None and epu == cpu and str(e.get('units') or '') != str(c.get('units') or ''):
+            cands[i] = 'billed per unit'
             continue
         ck = drug_key(c.get('drug'))
         for tb, tk in table:
