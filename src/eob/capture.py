@@ -22,6 +22,7 @@ the selectors here were written from a recording, not from the live DOM, and
 the first run is expected to teach us something.
 """
 import csv
+import hashlib
 import os
 import re
 import time
@@ -318,7 +319,15 @@ def _pdf_text(path):
         return ''
 
 
-def _capture_check(page, aws_client, check, href, result_rows, claim_idx):
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
     if href:
         page.goto(href, wait_until='domcontentloaded', timeout=60000)
@@ -343,9 +352,19 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx):
     logger.info(f"  summary: {summary} · claims table: {len(detail_rows)} row(s)")
 
     pdf_path = _download_eob_pdf(page, check)
-    s3_path, parsed = '', {}
+    s3_path, parsed, sha = '', {}, ''
     if pdf_path:
-        s3_path = aws_client.upload_to_s3(pdf_path, f'{S3_PREFIX}/{check}.pdf') or ''
+        # The operator's step 2: the same report downloaded twice is one
+        # report. Identical bytes are stored once and shared.
+        sha = _sha256(pdf_path)
+        dup = known_pdfs.get(sha)
+        if dup and dup[0] != check and dup[1]:
+            s3_path = dup[1]
+            logger.info(f"  ♻️ EOB report is byte-identical to check {dup[0]}'s — "
+                        f"reusing it, not storing a second copy")
+        else:
+            s3_path = aws_client.upload_to_s3(pdf_path, f'{S3_PREFIX}/{check}.pdf') or ''
+        known_pdfs[sha] = (check, s3_path)
         parsed = parse_eob_pdf_text(_pdf_text(pdf_path))
         logger.info(f"  PDF: {os.path.getsize(pdf_path)} bytes · EOB {parsed.get('eob_number') or '?'} "
                     f"· {len(parsed.get('claims', []))} account number(s) · parsed_ok={parsed.get('parsed_ok')}")
@@ -387,6 +406,7 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx):
         'eob_issue_date': parsed.get('issue_date', ''),
         'approve_to_pay': parsed.get('approve_to_pay', ''),
         'eob_pdf_s3_path': s3_path,
+        'eob_pdf_sha256': sha,
         'eob_pdf_parsed_ok': bool(parsed.get('parsed_ok')),
         'eob_lines': parsed.get('lines', [])[:200],
         'claims': claims_out,
@@ -469,10 +489,13 @@ def run_eob_capture(page, aws_client, body):
     claim_idx = index_claims(scan_all(
         aws_client.dynamodb.Table(CLAIMS_TABLE),
         ProjectionExpression='claim_id, subscriber_id, service_date, dos, charges'))
-    done = {}
+    done, known_pdfs = {}, {}
     for it in scan_all(aws_client.dynamodb.Table(EOB_TABLE),
-                       ProjectionExpression='check_eft, eob_pdf_s3_path'):
+                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256'):
         done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path'))
+        if it.get('eob_pdf_sha256'):
+            known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
+                                                     str(it.get('eob_pdf_s3_path') or ''))
 
     captured, skipped, failed = 0, 0, 0
     for ck, info in checks.items():
@@ -484,7 +507,7 @@ def run_eob_capture(page, aws_client, body):
             skipped += 1
             continue
         try:
-            _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx)
+            _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx, known_pdfs)
             captured += 1
         except Exception as e:
             failed += 1
