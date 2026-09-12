@@ -1,17 +1,27 @@
-"""Vignesh's table: what a drug is billed at in eCW versus on a Blue Shield EOB.
+"""Vignesh's table: what one drug line is billed at on each side.
 
-eCW bills these unlisted-drug codes at the Medicare amount; Blue Shield's EOB
-shows the claim billed at the Blue Shield amount. So when a J3490 or J7999
-appears more than once on a claim, the EOB line's billed amount does not equal
-any eCW line's billed amount, and this table is the only way to tell which
-eCW line an EOB line belongs to. Source: Vignesh's e-mail to the practice,
-2026-09-09 ("This is the table you need to post the payment for J3490 when
-billed amount in EOB and ECW are different").
+The clinic bills these unlisted-drug codes in eCW at Blue Shield's amount, and
+Blue Shield's EOB comes back billed at the Medicare amount. So when a J3490 or
+J7999 appears more than once on a claim, an EOB line's billed amount matches no
+eCW line's, and this table is the only thing that says which eCW line an EOB
+line belongs to.
 
-Amounts are line totals as shown in the table, kept as exact-cents strings.
+The operator's lookup, seen in the 2026-09-09 recording: take the eCW line's
+billed amount, find it in "Blue Shield Amount", read "Medicare Billed Amount"
+across from it, and post the EOB line billed that — eCW's $900.00 ascorbic acid
+is the EOB's $300.00 line. Claims are also matched the other way round, so both
+columns are searched.
+
+The code is part of the key: Methylcobalamin is listed twice, once as J3490 and
+once as J7999, with the same pair of amounts.
+
+Source: Vignesh's e-mail to the practice, 2026-09-09 ("This is the table you
+need to post the payment for J3490 when billed amount in EOB and ECW are
+different"). Amounts are line totals, kept as exact-cents strings.
 """
+from decimal import Decimal, InvalidOperation
 
-# (code, drug, eCW billed amount, Blue Shield billed amount)
+# (code, drug, Medicare amount — what the EOB bills, Blue Shield amount — what eCW bills)
 DRUG_TABLE = [
     ('J3490', 'Ascorbic Acid - 10000 mG',  '120.00',  '360.00'),
     ('J3490', 'Ascorbic Acid - 100000 mG', '1200.00', '3600.00'),
@@ -30,13 +40,28 @@ DRUG_TABLE = [
 ]
 
 
-def ecw_amounts_for(code: str, eob_billed: str):
-    """Every eCW billed amount the table allows for an EOB line of `code`
-    billed at `eob_billed`, with the drug each would mean.
+def _d(v):
+    try:
+        return Decimal(str(v).replace('$', '').replace(',', '').strip())
+    except (InvalidOperation, ValueError):
+        return None
 
-    Several drugs can share an EOB amount (J7999 $40.00 is Dexpanthenol at
-    $40.00 in eCW, but Pyridoxine at $20.00 bills $40.00 to Blue Shield too),
-    so this returns all of them; the matcher decides using the other lines.
+
+def counterpart_amounts(code, amount):
+    """What the other side bills for `code` at `amount`, and the drug it means.
+
+    Several drugs share an amount — a J7999 billed $40.00 on the EOB is
+    Dexpanthenol at $40.00 in eCW, but Pyridoxine bills $40.00 there too — so
+    every candidate is returned and the matcher decides from the rest of the
+    claim.
     """
-    return [(ecw, drug) for c, drug, ecw, bsc in DRUG_TABLE
-            if c == code and bsc == eob_billed]
+    want, out = _d(amount), []
+    if want is None:
+        return out
+    for c, drug, medicare, blue_shield in DRUG_TABLE:
+        if c != code:
+            continue
+        for here, there in ((blue_shield, medicare), (medicare, blue_shield)):
+            if _d(here) == want and (there, drug) not in out:
+                out.append((there, drug))
+    return out

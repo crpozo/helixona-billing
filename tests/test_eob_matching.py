@@ -7,7 +7,7 @@ the real forms have, no patient data.
 """
 import unittest
 
-from src.eob.drug_table import DRUG_TABLE, ecw_amounts_for
+from src.eob.drug_table import DRUG_TABLE, counterpart_amounts
 from src.eob.hcfa_lines import parse_hcfa_lines, total_billed
 from src.eob.matching import drug_key, plan_claim
 
@@ -103,9 +103,12 @@ class DrugsAreComparable(unittest.TestCase):
 
     def test_the_table_is_vigneshs(self):
         self.assertEqual(len(DRUG_TABLE), 14)
-        self.assertIn(('300.00', 'Ascorbic Acid - 25000 mG'), ecw_amounts_for('J3490', '900.00'))
-        # Two drugs share J7999 $40.00 on the EOB.
-        self.assertEqual({d for _, d in ecw_amounts_for('J7999', '40.00')}, {'Dexpanthenol', 'Pyridoxine'})
+        # The operator's own lookup: eCW's $900.00 line is the EOB's $300.00 one.
+        self.assertIn(('300.00', 'Ascorbic Acid - 25000 mG'), counterpart_amounts('J3490', '900.00'))
+        # $40.00 on a J7999 is three drugs: Dexpanthenol either side, Pyridoxine
+        # billed $20.00 in eCW, Methylcobalamin billed $125.00 there.
+        self.assertEqual({d for _, d in counterpart_amounts('J7999', '40.00')},
+                         {'Dexpanthenol', 'Pyridoxine', 'Methylcobalamin'})
 
 
 def E(cpt, billed, paid='0.00', units='1', allowed='0.00', deductible='0.00', copay='0.00'):
@@ -199,6 +202,48 @@ class RepeatedCodesAreToldApart(unittest.TestCase):
         self.assertEqual(p['status'], 'needs_review')
         self.assertIn('EOB 20.00', p['reasons'][0])
         self.assertEqual(p['rows'], [])
+
+    def test_the_three_rows_the_operator_actually_filled(self):
+        # From the 2026-09-09 recording, claim 2627's J3490 rows in eCW:
+        # $125.00 Methylcobalamin took the EOB's $40.00 line (table), $100.00
+        # Glutathione the EOB's $100.00 (billed), $900.00 Ascorbic Acid the
+        # EOB's $300.00 (table). Same answers, reached the same way.
+        ecw = [C('J3490', '125.00', drug='0.2 ML METHYLCOBALAMIN (B-12) 5MG/ML'),
+               C('J3490', '100.00', drug='5 ML GLUTATHIONE 200 MG/ML'),
+               C('J3490', '900.00', drug='50 ML ASCORBIC ACID (500MG/ML)')]
+        eob = [E('J3490', '300.00', allowed='5.32', copay='2.13', paid='3.19'),
+               E('J3490', '40.00', allowed='16.00', copay='6.40', paid='9.60'),
+               E('J3490', '100.00', allowed='40.00', copay='16.00', paid='24.00')]
+        p = plan_claim(eob, ecw)
+        self.assertEqual(p['status'], 'ready', p['reasons'])
+        by = {r['ecw_billed']: (r['allowed'], r['copay'], r['paid']) for r in p['rows']}
+        self.assertEqual(by, {'125.00': ('16.00', '6.40', '9.60'),
+                              '100.00': ('40.00', '16.00', '24.00'),
+                              '900.00': ('5.32', '2.13', '3.19')})
+
+    def test_an_eob_line_with_nowhere_to_go_stops_the_claim(self):
+        # The same three eCW rows against all FOUR of the EOB's J3490 lines —
+        # the case on camera. The $20.00 line has no row to receive it, and on
+        # the recording it was never posted: the claim is short $4.80.
+        ecw = [C('J3490', '125.00', drug='0.2 ML METHYLCOBALAMIN (B-12) 5MG/ML'),
+               C('J3490', '100.00', drug='5 ML GLUTATHIONE 200 MG/ML'),
+               C('J3490', '900.00', drug='50 ML ASCORBIC ACID (500MG/ML)')]
+        eob = [E('J3490', '300.00', paid='3.19'), E('J3490', '40.00', paid='9.60'),
+               E('J3490', '20.00', paid='4.80'), E('J3490', '100.00', paid='24.00')]
+        p = plan_claim(eob, ecw)
+        self.assertEqual(p['status'], 'needs_review')
+        self.assertIn('EOB has 4 lines, eCW only 3', p['reasons'][0])
+        self.assertEqual(p['rows'], [])
+
+    def test_the_money_is_never_divided_by_units(self):
+        # The EOB bills J3475 as 2 units at $40.00; eCW has one 1-unit row at
+        # $20.00. The operator posts the EOB's amounts whole.
+        ecw = [C('J3475', '20.00', units='1', drug='2 ML MAGNESIUM SULFATE (500MG/ML)')]
+        eob = [E('J3475', '40.00', units='2', allowed='0.82', copay='0.33', paid='0.49')]
+        p = plan_claim(eob, ecw)
+        self.assertEqual(p['status'], 'ready', p['reasons'])
+        r = p['rows'][0]
+        self.assertEqual((r['allowed'], r['copay'], r['paid']), ('0.82', '0.33', '0.49'))
 
     def test_the_drug_must_agree_with_the_table(self):
         # EOB J3490 $125 is Methylcobalamin per the table (eCW $40.00). An eCW

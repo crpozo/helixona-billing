@@ -13,7 +13,9 @@ The operator's rule, made exact:
   Shield amount. The HCFA's drug text must agree with the table's drug, so a
   $40.00 B Complex line is never taken for a Methylcobalamin.
 * Among what is left, units break ties; lines identical in code, billed, units
-  and drug are interchangeable.
+  and drug are interchangeable. Units only ever identify a line: the money is
+  posted exactly as the EOB prints it, never divided — the operator puts an
+  EOB line of 2 units onto a 1-unit eCW row whole.
 * Anything still undecided is NOT guessed. An EOB line posted to the wrong
   service puts money on the wrong line of the ledger, so the claim is marked
   needs_review with the reason, and nothing is posted for it.
@@ -22,7 +24,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from itertools import permutations
 
-from src.eob.drug_table import DRUG_TABLE
+from src.eob.drug_table import counterpart_amounts
 
 POSTED_FIELDS = ('allowed', 'deductible', 'copay', 'paid')
 
@@ -62,17 +64,9 @@ def drug_key(text):
 
 
 def _table_candidates(code, eob_billed):
-    """(eCW billed, drug key) pairs Vignesh's table allows for this EOB line,
-    whichever of the two amounts each side happens to carry."""
-    out = []
-    for c, drug, medicare, bsc in DRUG_TABLE:
-        if c != code:
-            continue
-        if _d(bsc) == eob_billed:
-            out.append((_d(medicare), drug_key(drug)))
-        if _d(medicare) == eob_billed:
-            out.append((_d(bsc), drug_key(drug)))
-    return out
+    """(eCW billed, drug key) pairs Vignesh's table allows for this EOB line."""
+    return [(_d(amount), drug_key(drug))
+            for amount, drug in counterpart_amounts(code, eob_billed)]
 
 
 def _per_unit(billed, units):
