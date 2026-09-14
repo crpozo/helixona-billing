@@ -190,7 +190,7 @@ class TheEobPdfGivesUpTheAccountNumber(unittest.TestCase):
 class TheRoleIsFencedBothWays(unittest.TestCase):
     def test_the_eob_bot_only_runs_eob_tasks(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'eob_capture'}", src)
+        self.assertIn("EOB_TASKS = {'eob_capture', 'eob_post'}", src)
         self.assertIn("_settings.bot_role == 'eob' and task_type not in EOB_TASKS", src)
 
     def test_the_other_bots_never_run_eob_tasks(self):

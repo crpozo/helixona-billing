@@ -184,6 +184,10 @@ input,textarea,select,button{font-family:'Inter',sans-serif}
 
 .novnc-link{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;font-size:11px;color:var(--text-secondary);background:var(--card);border:1px solid var(--bdr);transition:all .2s}
 .novnc-link:hover{border-color:var(--accent);color:var(--accent)}
+.live-screen{margin:0 24px 14px;border:1px solid var(--bdr);border-radius:12px;background:var(--card);overflow:hidden}
+.live-screen-bar{display:flex;align-items:center;gap:14px;padding:8px 14px;font-size:12px;border-bottom:1px solid var(--bdr)}
+.live-screen-bar a{color:var(--accent);font-size:11px;margin-left:auto}
+.live-screen iframe{display:block;width:100%;height:min(72vh,820px);border:0;background:#000}
 
 .status-badge{display:flex;align-items:center;gap:7px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);padding:6px 12px;border-radius:30px;font-size:11px;color:var(--success);font-weight:500}
 .status-dot{width:6px;height:6px;background:var(--success);border-radius:50%;animation:p 2s infinite}
@@ -458,6 +462,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="tb-l">
         <button id="stopBtn" class="stop-btn" onclick="stopAgent()">⛔ Stop Agent</button>
         <a id="novnc-link" href="http://54.189.175.233:6080/vnc.html" target="_blank" class="novnc-link">🖥️ noVNC</a>
+        <button id="live-toggle" class="novnc-link" onclick="toggleLiveScreen()" title="Watch the active bot's browser here">👁️ Live screen</button>
       </div>
       <div class="tb-r">
         <div class="status-badge"><div class="status-dot"></div>Agent Running · 54.189.175.233</div>
@@ -497,6 +502,16 @@ tbody tr:last-child td{border-bottom:none}
       <div class="hero-progress"><div class="hero-progress-fill" id="hero-progress-fill"></div></div>
     </div>
 
+
+    <!-- LIVE SCREEN — the active bot's noVNC display, embedded -->
+    <div class="live-screen" id="live-screen" hidden>
+      <div class="live-screen-bar">
+        <span id="live-screen-title">🖥️ Live screen</span>
+        <a id="live-screen-open" href="#" target="_blank">open in a new tab ↗</a>
+        <button class="btn" onclick="toggleLiveScreen()">✕ Hide</button>
+      </div>
+      <iframe id="live-screen-frame" title="Bot screen (noVNC)"></iframe>
+    </div>
 
     <!-- MAIN: claims + admin rail -->
     <div class="main">
@@ -582,6 +597,7 @@ tbody tr:last-child td{border-bottom:none}
             </optgroup>
             <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
               <option value="eob_capture" data-bot="eob">💰 Capture EOBs from Blue Shield</option>
+              <option value="eob_post" data-bot="eob">🏦 Enter EOB payments into eCW</option>
             </optgroup>
           </select>
 
@@ -809,6 +825,13 @@ window.scrollToEl = function(sel){
                 since: "07/01/2025",
                 limit_checks: 0,
                 note: "Blue Shield → Claims → Check claim status: Finalized, Claim amount paid ≥ $0.01, status/payment date from `since`. For every Check/EFT: transaction summary, claims paid, EOB report PDF. Read-only. limit_checks > 0 captures only that many cheques (a test run)."
+            }, null, 2),
+            eob_post: JSON.stringify({
+                post: false,
+                check_eft: "",
+                limit_checks: 1,
+                since: "07/01/2025",
+                note: "eCW → Billing → Payments for every captured cheque whose posting plan is READY (held cheques are skipped). post:false is a DRY RUN: the Payments popup is filled and screenshotted, then cancelled — Payment Advisory is never clicked, so nothing is saved. post:true clicks Payment Advisory (creates the payment), types the grid and Auto Posts. check_eft enters one cheque; limit_checks caps the run."
             }, null, 2)
         };
 
@@ -836,6 +859,11 @@ window.scrollToEl = function(sel){
                 title: 'Capture EOBs from Blue Shield',
                 desc: 'Logs into the Blue Shield provider portal, searches finalized claims with a payment, opens every Check/EFT, downloads the EOB report and pins each paid claim to ours. Nothing is written to eCW.',
                 steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → transaction summary + claims paid', 'Download EOB report (PDF → S3)', 'Match claims by patient account number / subscriber + DOS']
+            },
+            eob_post: {
+                title: 'Enter EOB payments into eCW',
+                desc: 'Plans every captured cheque first (the same 🧮 Posting plan you can open in the table) and enters only the ones that are ready. Dry run unless post:true — the save is the Payment Advisory click, and a dry run stops before it.',
+                steps: ['Billing → Payments → Rcvd Pmt Dts from 07/01/2025 → Check # → Lookup (rows = already posted)', 'Single Ins Payment (F4) → Claim No = EOB patient account number → Get Insurance → Blue Shield of California → OK', 'Popup: Type Check · Check No. · Amount $ = approve-to-pay · Check Date · EOB Date · Deposit Date = cashed date', 'DRY RUN STOPS HERE (screenshot, Cancel)', 'post:true → Payment Advisory (saves) → Claim ID → Go (F3) → Allowed / Deduct / CoPay / Paid per planned line → Auto Post (F2) → Yes']
             }
         };
 
@@ -874,6 +902,7 @@ window.scrollToEl = function(sel){
             // screen while claiming to show another's.
             const vnc = document.getElementById('novnc-link');
             if (vnc) vnc.href = `http://54.189.175.233:${BOT_NOVNC[bot]}/vnc.html`;
+            if (typeof syncLiveScreen === 'function') syncLiveScreen();
             // Tab styling
             document.querySelectorAll('#bot-tabs .subtab').forEach(el => {
                 el.classList.toggle('on', el.dataset.bot === bot);
@@ -1125,7 +1154,56 @@ window.scrollToEl = function(sel){
             }
         }
 
+        // ---- Live screen (noVNC, embedded) ----
+        // Follows the active bot tab: Intake :6080, Follow-up :6081,
+        // Remittance :6083. view_only keeps a watcher from typing into the bot.
+        function liveScreenUrl() {
+            const bot = window.activeBot || 'submissions';
+            const port = BOT_NOVNC[bot] || 6080;
+            return `http://54.189.175.233:${port}/vnc.html?autoconnect=true&resize=scale&view_only=true&reconnect=true`;
+        }
+        function syncLiveScreen() {
+            const panel = document.getElementById('live-screen');
+            if (!panel || panel.hidden) return;
+            const url = liveScreenUrl();
+            const fr = document.getElementById('live-screen-frame');
+            if (fr && fr.src !== url) fr.src = url;
+            const a = document.getElementById('live-screen-open');
+            if (a) a.href = url;
+            const t = document.getElementById('live-screen-title');
+            const name = (typeof BOT_NAMES !== 'undefined' && BOT_NAMES[window.activeBot]) || window.activeBot || '';
+            if (t) t.textContent = `🖥️ Live screen · ${name}`;
+        }
+        function toggleLiveScreen() {
+            const panel = document.getElementById('live-screen');
+            if (!panel) return;
+            panel.hidden = !panel.hidden;
+            if (panel.hidden) {
+                const fr = document.getElementById('live-screen-frame');
+                if (fr) fr.src = 'about:blank';
+            } else {
+                syncLiveScreen();
+            }
+            try { localStorage.setItem('liveScreen', panel.hidden ? '0' : '1'); } catch (e) {}
+        }
+        try { if (localStorage.getItem('liveScreen') === '1') setTimeout(toggleLiveScreen, 300); } catch (e) {}
+
         // ---- EOB table (Remittance) ----
+        // The eCW column: posted, or what the last eob_post attempt found,
+        // or the plan's verdict, in that order of authority.
+        function postCell(e, esc) {
+            if (e.posted_in_ecw) return `<span style="color:var(--success)" title="${esc((e.post_result || {}).reason || '')}">posted${(e.post_result || {}).payment_id ? ' · #' + esc(e.post_result.payment_id) : ''}</span>`;
+            const r = e.post_result;
+            if (r && r.status) {
+                const label = {dry_run: 'dry run ok', held: 'held', incomplete: 'INCOMPLETE — finish in eCW', failed: 'failed'}[r.status] || r.status;
+                const color = r.status === 'dry_run' ? 'var(--accent)' : r.status === 'held' ? 'var(--warning)' : 'var(--bad)';
+                return `<span style="color:${color};cursor:help" title="${esc(r.at || '')}\n${esc(r.reason || '')}">${esc(label)}</span>`;
+            }
+            if (e.plan_status === 'ready') return '<span style="color:var(--success)">plan ready</span>';
+            if (e.plan_status) return `<span style="color:var(--warning)">held · ${esc(e.plan_reasons)}</span>`;
+            return '<span style="color:var(--text-muted)">pending</span>';
+        }
+
         async function loadEobs() {
             const body = document.getElementById('eob-body');
             const meta = document.getElementById('eob-meta');
@@ -1174,10 +1252,7 @@ window.scrollToEl = function(sel){
                       <td>${esc(e.claims_matched)}/${(e.claims || []).length}</td>
                       <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
                       <td style="font-size:11px;color:var(--text-muted)">${esc(e.captured_at)}</td>
-                      <td>${e.posted_in_ecw ? '<span style="color:var(--success)">posted</span>'
-                          : e.plan_status === 'ready' ? '<span style="color:var(--success)">plan ready</span>'
-                          : e.plan_status ? `<span style="color:var(--warning)">held · ${esc(e.plan_reasons)}</span>`
-                          : '<span style="color:var(--text-muted)">pending</span>'}</td>
+                      <td>${postCell(e, esc)}</td>
                     </tr>
                     <tr class="eob-claims"${isOpen ? '' : ' hidden'}>
                       <td colspan="11">
