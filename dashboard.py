@@ -184,6 +184,10 @@ input,textarea,select,button{font-family:'Inter',sans-serif}
 
 .novnc-link{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;font-size:11px;color:var(--text-secondary);background:var(--card);border:1px solid var(--bdr);transition:all .2s}
 .novnc-link:hover{border-color:var(--accent);color:var(--accent)}
+.live-screen{margin:0 24px 14px;border:1px solid var(--bdr);border-radius:12px;background:var(--card);overflow:hidden}
+.live-screen-bar{display:flex;align-items:center;gap:14px;padding:8px 14px;font-size:12px;border-bottom:1px solid var(--bdr)}
+.live-screen-bar a{color:var(--accent);font-size:11px;margin-left:auto}
+.live-screen iframe{display:block;width:100%;height:min(72vh,820px);border:0;background:#000}
 
 .status-badge{display:flex;align-items:center;gap:7px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);padding:6px 12px;border-radius:30px;font-size:11px;color:var(--success);font-weight:500}
 .status-dot{width:6px;height:6px;background:var(--success);border-radius:50%;animation:p 2s infinite}
@@ -427,6 +431,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="tb-l">
         <button id="stopBtn" class="stop-btn" onclick="stopAgent()">⛔ Stop Agent</button>
         <a id="novnc-link" href="http://54.189.175.233:6080/vnc.html" target="_blank" class="novnc-link">🖥️ noVNC</a>
+        <button id="live-toggle" class="novnc-link" onclick="toggleLiveScreen()" title="Watch the bot's browser here">👁️ Live screen</button>
       </div>
       <div class="tb-r">
         <div class="status-badge"><div class="status-dot"></div>Agent Running · 54.189.175.233</div>
@@ -466,6 +471,16 @@ tbody tr:last-child td{border-bottom:none}
       <div class="hero-progress"><div class="hero-progress-fill" id="hero-progress-fill"></div></div>
     </div>
 
+
+    <!-- LIVE SCREEN — the active bot's noVNC display, embedded -->
+    <div class="live-screen" id="live-screen" hidden>
+      <div class="live-screen-bar">
+        <span id="live-screen-title">🖥️ Live screen</span>
+        <a id="live-screen-open" href="#" target="_blank">open in a new tab ↗</a>
+        <button class="btn" onclick="toggleLiveScreen()">✕ Hide</button>
+      </div>
+      <iframe id="live-screen-frame" title="Bot screen (noVNC)" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
 
     <!-- MAIN: claims + admin rail -->
     <div class="main">
@@ -551,6 +566,7 @@ tbody tr:last-child td{border-bottom:none}
             </optgroup>
             <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
               <option value="eob_capture" data-bot="eob">💰 Capture EOBs from Blue Shield</option>
+              <option value="eob_post" data-bot="eob">🏦 Post EOB payments into eCW</option>
             </optgroup>
           </select>
 
@@ -778,6 +794,13 @@ window.scrollToEl = function(sel){
                 since: "07/01/2025",
                 limit_checks: 0,
                 note: "Blue Shield → Claims → Check claim status: Finalized, Claim amount paid ≥ $0.01, status/payment date from `since`. For every Check/EFT: transaction summary, claims paid, EOB report PDF. Read-only. limit_checks > 0 captures only that many cheques (a test run)."
+            }, null, 2),
+            eob_post: JSON.stringify({
+                post: false,
+                check_eft: "",
+                limit_checks: 1,
+                since: "07/01/2025",
+                note: "eCW → Billing → Payments for every captured cheque with a pinned claim. post:false is a DRY RUN — the payment and its advisory are filled in and screenshotted, then cancelled. Set post:true to click Post (writes the ledger). check_eft posts one cheque; limit_checks caps the run."
             }, null, 2)
         };
 
@@ -804,7 +827,12 @@ window.scrollToEl = function(sel){
             eob_capture: {
                 title: 'Capture EOBs from Blue Shield',
                 desc: 'Logs into the Blue Shield provider portal, searches finalized claims with a payment, opens every Check/EFT, downloads the EOB report and pins each paid claim to ours. Nothing is written to eCW.',
-                steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → transaction summary + claims paid', 'Download EOB report (PDF → S3)', 'Match claims by patient account number / subscriber + DOS']
+                steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → transaction summary + claims paid', 'Download EOB report (PDF → S3; duplicates removed)', 'Match claims by patient account number / subscriber + DOS']
+            },
+            eob_post: {
+                title: 'Post EOB payments into eCW',
+                desc: 'For every captured cheque: Billing → Payments, look the Check # up (already there = already posted), else a Single insurance payment on the claim whose number is the EOB patient account number, then the Payment Advisory line by line. Dry run unless post:true.',
+                steps: ['Payments → Rcvd Pmt Dts from 07/01/2025 → Check # → Lookup', 'Single insurance payment → claim number (EOB patient account number)', 'Amount = approve-to-pay · check/EOB date · deposit = cashed date · Type Check · Check No', 'Payment Advisory → Go F3 → Allowed / CoPay / Deductible / Paid per CPT from the EOB', 'Repeated codes: pair by billed amount, then the J3490 drug table', 'Post (only with post:true)']
             }
         };
 
@@ -843,6 +871,7 @@ window.scrollToEl = function(sel){
             // screen while claiming to show another's.
             const vnc = document.getElementById('novnc-link');
             if (vnc) vnc.href = `http://54.189.175.233:${BOT_NOVNC[bot]}/vnc.html`;
+            if (typeof syncLiveScreen === 'function') syncLiveScreen();
             // Tab styling
             document.querySelectorAll('#bot-tabs .subtab').forEach(el => {
                 el.classList.toggle('on', el.dataset.bot === bot);
@@ -1078,7 +1107,57 @@ window.scrollToEl = function(sel){
             }
         }
 
+        // ---- Live screen (noVNC, embedded) ----
+        // Follows the active bot tab: Intake :6080, Follow-up :6081,
+        // Remittance :6083. view_only keeps a watcher from typing into the bot.
+        function liveScreenUrl() {
+            const bot = window.activeBot || 'submissions';
+            const port = BOT_NOVNC[bot] || 6080;
+            return `http://54.189.175.233:${port}/vnc.html?autoconnect=true&resize=scale&view_only=true&reconnect=true`;
+        }
+        function syncLiveScreen() {
+            const panel = document.getElementById('live-screen');
+            if (!panel || panel.hidden) return;
+            const url = liveScreenUrl();
+            const fr = document.getElementById('live-screen-frame');
+            if (fr && fr.src !== url) fr.src = url;
+            const a = document.getElementById('live-screen-open');
+            if (a) a.href = url;
+            const t = document.getElementById('live-screen-title');
+            const name = (typeof BOT_NAMES !== 'undefined' && BOT_NAMES[window.activeBot]) || window.activeBot || '';
+            if (t) t.textContent = `🖥️ Live screen · ${name}`;
+        }
+        function toggleLiveScreen() {
+            const panel = document.getElementById('live-screen');
+            if (!panel) return;
+            panel.hidden = !panel.hidden;
+            if (panel.hidden) {
+                const fr = document.getElementById('live-screen-frame');
+                if (fr) fr.src = 'about:blank';
+            } else {
+                syncLiveScreen();
+            }
+            try { localStorage.setItem('liveScreen', panel.hidden ? '0' : '1'); } catch (e) {}
+        }
+        try { if (localStorage.getItem('liveScreen') === '1') setTimeout(toggleLiveScreen, 300); } catch (e) {}
+
         // ---- EOB table (Remittance) ----
+        // The eCW column: posted / what the last attempt found per claim.
+        function postCell(e) {
+            const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+            if (e.posted_in_ecw) return '<span style="color:var(--success)">posted</span>';
+            const r = e.post_results || {};
+            const ids = Object.keys(r);
+            if (!ids.length) return '<span style="color:var(--text-muted)">pending</span>';
+            const tip = ids.map(id => `${id}: ${r[id].status} — ${r[id].reason || ''}`).join('\\n');
+            const st = ids.map(id => r[id].status);
+            const label = st.every(s => s === 'dry_run') ? 'dry run ok'
+                : st.some(s => s === 'unresolved') ? 'needs a person'
+                : st.some(s => s === 'failed') ? 'failed' : st.join(', ');
+            const color = label === 'dry run ok' ? 'var(--accent)' : 'var(--bad)';
+            return `<span style="color:${color};cursor:help" title="${esc(tip)}">${esc(label)}</span>`;
+        }
+
         async function loadEobs() {
             const body = document.getElementById('eob-body');
             const meta = document.getElementById('eob-meta');
@@ -1107,7 +1186,7 @@ window.scrollToEl = function(sel){
                       <td>${esc(e.claims_matched)}/${(e.claims || []).length}</td>
                       <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
                       <td style="font-size:11px;color:var(--text-muted)">${esc(e.captured_at)}</td>
-                      <td>${e.posted_in_ecw ? '<span style="color:var(--success)">posted</span>' : '<span style="color:var(--text-muted)">pending</span>'}</td>
+                      <td>${postCell(e)}</td>
                     </tr>`).join('');
             } catch (e) {
                 console.error('loadEobs failed', e);
@@ -1927,6 +2006,8 @@ def api_eobs():
         matched = claims_total = 0
         for it in items:
             it = {k: v for k, v in it.items() if k != 'eob_lines'}
+            # Per-claim CPT lines are for eob_post, not for the table.
+            it['claims'] = [{k: v for k, v in c.items() if k != 'lines'} for c in (it.get('claims') or [])]
             eobs.append(it)
             try:
                 total += Decimal(str(it.get('check_amount') or '0'))

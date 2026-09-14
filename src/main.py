@@ -2874,9 +2874,10 @@ def _dump_insurance_grid(page, claim_id, aws_client):
 
 IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 
-# The EOB bot (Remittance) reads what the payer sent back — it never submits, and
-# the submitting bots never touch payments. Fenced both ways, like the IV bot.
-EOB_TASKS = {'eob_capture'}
+# The EOB bot (Remittance) reads what the payer sent back and posts it into
+# eCW — it never submits, and the submitting bots never touch payments. Fenced
+# both ways, like the IV bot.
+EOB_TASKS = {'eob_capture', 'eob_post'}
 
 
 def process_message(message: dict, aws_client: AWSClient):
@@ -11324,7 +11325,7 @@ def process_message(message: dict, aws_client: AWSClient):
         # Remittance: capture Explanations of Benefits from the Blue Shield portal —
         # finalized, paid claims; each cheque's transaction summary; the EOB
         # report PDF — and pin them to our claims. Read-only against the payer.
-        # Posting the payments into eCW is a later, separately-gated step.
+        # Posting the payments into eCW is `eob_post`, separately gated.
         logger.info("═══ Remittance — EOB capture from Blue Shield ═══")
         from src.eob.capture import run_eob_capture
         manager = BrowserManager().start()
@@ -11333,6 +11334,23 @@ def process_message(message: dict, aws_client: AWSClient):
             run_eob_capture(page, aws_client, body)
         except Exception as e:
             logger.error(f"EOB capture failed: {e}")
+        finally:
+            manager.stop()
+
+    elif task_type == 'eob_post':
+        # Remittance: post the captured EOBs into eCW — Billing → Payments,
+        # single insurance payment per claim, payment advisory line by line.
+        # Without `"post": true` in the body it is a dry run: everything is
+        # filled and photographed, nothing is saved. eCW has no IP block, so
+        # no proxy — same as every other eCW task.
+        logger.info("═══ Remittance — posting EOBs into eCW ═══")
+        from src.eob.post import run_eob_post
+        manager = BrowserManager().start(proxy_config=None)
+        try:
+            page = manager.new_page()
+            run_eob_post(page, aws_client, body, login=_perform_ecw_login)
+        except Exception as e:
+            logger.error(f"EOB posting failed: {e}")
         finally:
             manager.stop()
 

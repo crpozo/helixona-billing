@@ -200,14 +200,63 @@ _CPT_LINE = re.compile(
     r'(?P<amounts>(?:-?[\d,]+\.\d{2}\s+){3,8}-?[\d,]+\.\d{2})'
 )
 
+# Column names as the EOB prints them (upper-cased, in order of appearance)
+# -> the key a payment posting wants. The header is looked for in the text;
+# when it is missing the six-column Blue Shield layout below is assumed.
+_COLUMN_WORDS = [
+    (re.compile(r'BILLED'), 'billed'),
+    (re.compile(r'ALLOWED|ALLOWABLE'), 'allowed'),
+    (re.compile(r'NOT[- ]?COVERED|DISALLOW|NON[- ]?COVERED'), 'not_covered'),
+    (re.compile(r'DEDUCT'), 'deductible'),
+    (re.compile(r'CO-?PAY|CO-?INS'), 'copay'),
+    (re.compile(r'PAID|PAYMENT'), 'paid'),
+]
+# Blue Shield's professional EOB: BILLED · ALLOWED · NOT COVERED · DEDUCTIBLE ·
+# COPAY/COINSURANCE · PAID. Verified on the sample: 250.00 − 153.65 = 96.35
+# (not covered) and 153.65 − 61.54 = 92.11 (paid).
+_DEFAULT_SIX = ['billed', 'allowed', 'not_covered', 'deductible', 'copay', 'paid']
+
+
+def _column_layout(flat):
+    """Column keys in print order, read from the EOB's own header line when
+    it has one; None when it does not."""
+    m = re.search(r'(BILLED[^\n]{0,160}?(?:PAID|PAYMENT)\b[^\n]{0,20})', flat, re.I)
+    if not m:
+        return None
+    header = m.group(1).upper()
+    found = []
+    for rx, key in _COLUMN_WORDS:
+        hm = rx.search(header)
+        if hm:
+            found.append((hm.start(), key))
+    keys = [k for _, k in sorted(found)]
+    return keys if len(keys) >= 3 and keys[0] == 'billed' else None
+
+
+def _line_amounts(amts, layout):
+    """Name the amounts of one CPT line. Billed is always first and paid always
+    last; the middle columns are named from the layout when the count fits,
+    otherwise only allowed (second) is trusted."""
+    out = {'billed': amts[0] if amts else '', 'paid': amts[-1] if amts else '',
+           'allowed': amts[1] if len(amts) > 1 else '',
+           'not_covered': '', 'deductible': '', 'copay': ''}
+    keys = layout if layout and len(layout) == len(amts) else (
+        _DEFAULT_SIX if len(amts) == 6 else None)
+    if keys:
+        for k, v in zip(keys, amts):
+            out[k] = v
+    return out
+
 
 def parse_eob_pdf_text(text):
     """Best-effort structure from an EOB report's text.
 
     What is reliable: the EOB number, the issue date, the statement totals,
-    and every PATIENT ACCOUNT NUMBER / CLAIM NUMBER pair. What is best-effort:
-    the CPT lines — their column set is inferred from the amounts present.
-    The raw text is stored alongside, so a better parser can re-read it.
+    and every PATIENT ACCOUNT NUMBER / CLAIM NUMBER pair. The CPT lines are
+    assigned to the claim whose header precedes them in the text, and their
+    amounts are named from the column header when the EOB prints one (else
+    the six-column Blue Shield layout). The raw text is stored alongside, so a
+    better parser can re-read it.
     """
     t = text or ''
     flat = norm_text(t)
@@ -217,6 +266,7 @@ def parse_eob_pdf_text(text):
         'approve_to_pay': '',
         'check_amount': '',
         'claims': [],
+        'lines': [],
         'parsed_ok': False,
     }
     m = re.search(r'EOB NUMBER:?\s*([A-Z0-9]{8,})', flat, re.I)
@@ -235,6 +285,7 @@ def parse_eob_pdf_text(text):
     # Each claim block names the patient, then the account number (our
     # claim_id) and the payer's claim number. Account numbers are short
     # integers; claim numbers are 12 digits.
+    starts = []
     for bm in re.finditer(r'(\d{1,7})\s+(\d{12})\b', flat):
         acct, claim_no = bm.group(1), bm.group(2)
         out['claims'].append({
@@ -242,22 +293,21 @@ def parse_eob_pdf_text(text):
             'bsc_claim_number': claim_no,
             'lines': [],
         })
+        starts.append(bm.start())
 
-    lines = []
+    layout = _column_layout(flat)
     for lm in _CPT_LINE.finditer(flat):
         amts = [money(a) for a in lm.group('amounts').split()]
-        lines.append({
-            'dos': lm.group('dos'),
-            'cpt': lm.group('cpt'),
-            'units': lm.group('units'),
-            'billed': amts[0] if amts else '',
-            'allowed': amts[1] if len(amts) > 1 else '',
-            'paid': amts[-1] if amts else '',
-            'amounts': amts,
-        })
-    if out['claims'] and lines:
-        # Without positions inside the PDF the lines cannot be assigned to
-        # claims with certainty; keep them at the statement level.
-        out['lines'] = lines
+        line = {'dos': lm.group('dos'), 'cpt': lm.group('cpt'), 'units': lm.group('units'),
+                'amounts': amts}
+        line.update(_line_amounts(amts, layout))
+        out['lines'].append(line)
+        # The claim whose header is the last one before this line.
+        owner = None
+        for i, s in enumerate(starts):
+            if s < lm.start():
+                owner = i
+        if owner is not None:
+            out['claims'][owner]['lines'].append(line)
     out['parsed_ok'] = bool(out['eob_number'] and out['claims'])
     return out

@@ -182,6 +182,27 @@ class TheEobPdfGivesUpTheAccountNumber(unittest.TestCase):
         self.assertIn('96375', cpts)
         self.assertIn('J3490', cpts)
 
+    def test_the_lines_belong_to_the_claim_printed_above_them(self):
+        two = (self.TEXT.replace('RECAPITULATION', 'JOHN DOE 2628 260703051602 '
+                                 '01/24/26 99213 1 100.00 80.00 20.00 0.00 10.00 70.00 RECAPITULATION'))
+        p = parse_eob_pdf_text(two)
+        self.assertEqual([l['cpt'] for l in p['claims'][0]['lines']], ['96375', 'J3490'])
+        self.assertEqual([l['cpt'] for l in p['claims'][1]['lines']], ['99213'])
+
+    def test_the_six_blue_shield_columns_are_named(self):
+        # 250.00 − 153.65 = 96.35 not covered; 153.65 − 61.54 = 92.11 paid.
+        l = parse_eob_pdf_text(self.TEXT)['claims'][0]['lines'][0]
+        self.assertEqual((l['billed'], l['allowed'], l['not_covered'], l['deductible'], l['copay'], l['paid']),
+                         ('250.00', '153.65', '96.35', '0.00', '61.54', '92.11'))
+
+    def test_a_printed_header_wins_over_the_assumed_layout(self):
+        text = ('EOB NUMBER: 26125B10001420245467 BILLED ALLOWED DEDUCTIBLE COPAY PAID '
+                'CASSANDRA GRAY 2627 260703051601 01/23/26 96375 1 250.00 153.65 0.00 61.54 92.11')
+        l = parse_eob_pdf_text(text)['claims'][0]['lines'][0]
+        self.assertEqual((l['allowed'], l['deductible'], l['copay'], l['paid']),
+                         ('153.65', '0.00', '61.54', '92.11'))
+        self.assertEqual(l['not_covered'], '')
+
     def test_garbage_in_is_not_parsed_ok(self):
         self.assertFalse(parse_eob_pdf_text('')['parsed_ok'])
         self.assertFalse(parse_eob_pdf_text('EXPLANATION OF BENEFITS')['parsed_ok'])
@@ -190,7 +211,7 @@ class TheEobPdfGivesUpTheAccountNumber(unittest.TestCase):
 class TheRoleIsFencedBothWays(unittest.TestCase):
     def test_the_eob_bot_only_runs_eob_tasks(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'eob_capture'}", src)
+        self.assertIn("EOB_TASKS = {'eob_capture', 'eob_post'}", src)
         self.assertIn("_settings.bot_role == 'eob' and task_type not in EOB_TASKS", src)
 
     def test_the_other_bots_never_run_eob_tasks(self):
