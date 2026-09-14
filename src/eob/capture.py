@@ -12,21 +12,18 @@ for step, up to the point where money would be posted into eCW:
        NUMBER — the eCW claim number, our `claim_id` — and the CPT-level
        amounts a payment posting needs.
 
-Read-only against the payer, and never touches eCW. Posting the money into
-eCW is `eob_post` (src/eob/post.py), its own task with its own gate, because
-it writes into the practice's ledger.
+Read-only against the payer. Posting into eCW is a separate task with its
+own gate, because it writes money into the practice's ledger.
 
-Duplicates: a Check/EFT already on file with its PDF is skipped, and a PDF
-whose bytes match one already stored under another cheque (the portal serves
-the same statement from every claim it covers) is removed rather than stored
-twice — the item points at the copy already in S3.
-
-Every miss leaves a screenshot in /tmp and a log line naming it —
+Idempotent by cheque: a Check/EFT already stored with its PDF is skipped, so a
+run can be repeated after a crash or a portal outage without re-downloading
+anything. Every miss leaves a screenshot in /tmp and a log line naming it —
 the selectors here were written from a recording, not from the live DOM, and
 the first run is expected to teach us something.
 """
 import csv
 import hashlib
+import json
 import os
 import re
 import time
@@ -34,6 +31,7 @@ from datetime import datetime
 
 from src.aws.clients import scan_all
 from src.blueshield.session import login_to_provider_portal, CLAIM_STATUS_URL
+from src.eob.eob_pdf import read_eob_pdf
 from src.eob.parse import (
     dos_start, index_claims, match_claim, money, norm_text,
     parse_check_summary, parse_eob_pdf_text, rows_by_header,
@@ -313,12 +311,14 @@ def _download_eob_pdf(page, check):
     return ''
 
 
-def _sha256(path):
-    h = hashlib.sha256()
-    with open(path, 'rb') as fh:
-        for chunk in iter(lambda: fh.read(1 << 16), b''):
-            h.update(chunk)
-    return h.hexdigest()
+def _fits_in_item(claims, limit=300_000):
+    """The parsed claims, lines and all, unless they would push the DynamoDB
+    item past its 400 KB cap; then the claims without their lines (the PDF
+    in S3 can always be re-read)."""
+    if len(json.dumps(claims, default=str)) <= limit:
+        return claims
+    logger.warning(f"  ⚠️ {len(claims)} claims' lines are too large for the item — storing claims only")
+    return [{k: v for k, v in c.items() if k != 'lines'} for c in claims]
 
 
 def _pdf_text(path):
@@ -331,7 +331,15 @@ def _pdf_text(path):
         return ''
 
 
-def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs=None):
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
     if href:
         page.goto(href, wait_until='domcontentloaded', timeout=60000)
@@ -356,30 +364,40 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
     logger.info(f"  summary: {summary} · claims table: {len(detail_rows)} row(s)")
 
     pdf_path = _download_eob_pdf(page, check)
-    s3_path, parsed, sha, duplicate_of = '', {}, '', ''
+    s3_path, parsed, sha = '', {}, ''
     if pdf_path:
+        # The operator's step 2: the same report downloaded twice is one
+        # report. Identical bytes are stored once and shared.
         sha = _sha256(pdf_path)
-        parsed = parse_eob_pdf_text(_pdf_text(pdf_path))
-        twin = (known_pdfs or {}).get(sha)
-        if twin and twin.get('check_eft') != check and twin.get('s3_path'):
-            # Same file, already stored under another cheque: keep one copy.
-            duplicate_of = twin['check_eft']
-            s3_path = twin['s3_path']
-            os.remove(pdf_path)
-            logger.info(f"  ♻️ EOB PDF is byte-identical to cheque {duplicate_of}'s — removed, reusing its S3 copy")
+        dup = known_pdfs.get(sha)
+        if dup and dup[0] != check and dup[1]:
+            s3_path = dup[1]
+            logger.info(f"  ♻️ EOB report is byte-identical to check {dup[0]}'s — "
+                        f"reusing it, not storing a second copy")
         else:
             s3_path = aws_client.upload_to_s3(pdf_path, f'{S3_PREFIX}/{check}.pdf') or ''
-            if known_pdfs is not None and s3_path:
-                known_pdfs[sha] = {'check_eft': check, 's3_path': s3_path}
+        known_pdfs[sha] = (check, s3_path)
+        try:
+            parsed = read_eob_pdf(pdf_path)
+        except Exception as e:
+            logger.warning(f"  ⚠️ EOB report could not be read by position: {e}")
+            parsed = {}
+        if not parsed.get('parsed_ok'):
+            # The text reading still yields the account numbers that pin
+            # each payer claim to ours; the lines are left unknown.
+            problems = (parsed.get('problems') or []) + [
+                'the report was not read by position — its lines are unknown']
+            parsed = {**parse_eob_pdf_text(_pdf_text(pdf_path)), 'problems': problems}
         logger.info(f"  PDF: {os.path.getsize(pdf_path)} bytes · EOB {parsed.get('eob_number') or '?'} "
-                    f"· {len(parsed.get('claims', []))} account number(s) · parsed_ok={parsed.get('parsed_ok')}")
+                    f"· {len(parsed.get('claims', []))} claim(s) · parsed_ok={parsed.get('parsed_ok')} "
+                    f"· {len(parsed.get('problems') or [])} problem(s)")
+        for prob in (parsed.get('problems') or [])[:10]:
+            logger.warning(f"    ⚠️ {prob}")
 
     # Pin each claim the cheque paid to one of ours. The PDF's account number
     # is definitive when its claim number matches; otherwise subscriber+DOS.
     acct_by_bsc = {c['bsc_claim_number']: c['patient_account_number']
                    for c in parsed.get('claims', []) if c.get('bsc_claim_number')}
-    lines_by_bsc = {c['bsc_claim_number']: c.get('lines', [])
-                    for c in parsed.get('claims', []) if c.get('bsc_claim_number')}
     claims_out, matched = [], 0
     source_rows = detail_rows or result_rows
     for r in source_rows:
@@ -398,9 +416,6 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
             'patient_resp': money(r.get('patient_resp')),
             'claim_id': cid,
             'match_source': 'pdf_account_number' if acct_by_bsc.get(bsc) else ('subscriber_dos' if cid else ''),
-            # The CPT lines the EOB prints under this claim — what eob_post
-            # copies into eCW's payment advisory.
-            'lines': lines_by_bsc.get(bsc, [])[:60],
         })
 
     now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
@@ -415,11 +430,16 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
         'eob_number': parsed.get('eob_number', ''),
         'eob_issue_date': parsed.get('issue_date', ''),
         'approve_to_pay': parsed.get('approve_to_pay', ''),
+        'eob_interest': parsed.get('interest', ''),
+        'eob_offsets': parsed.get('offsets', ''),
+        'eob_check_amount': parsed.get('check_amount', ''),
+        'paid_to_member': bool(parsed.get('payment_issued_to')),
+        'eob_adjusted_claim': bool(parsed.get('adjusted_claim')),
+        'eob_problems': (parsed.get('problems') or [])[:50],
         'eob_pdf_s3_path': s3_path,
         'eob_pdf_sha256': sha,
-        'eob_pdf_duplicate_of': duplicate_of,
         'eob_pdf_parsed_ok': bool(parsed.get('parsed_ok')),
-        'eob_lines': parsed.get('lines', [])[:200],
+        'eob_claims': _fits_in_item(parsed.get('claims', [])),
         'claims': claims_out,
         'claims_matched': matched,
         'details_url': page.url,
@@ -502,11 +522,11 @@ def run_eob_capture(page, aws_client, body):
         ProjectionExpression='claim_id, subscriber_id, service_date, dos, charges'))
     done, known_pdfs = {}, {}
     for it in scan_all(aws_client.dynamodb.Table(EOB_TABLE),
-                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, eob_pdf_duplicate_of'):
+                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256'):
         done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path'))
-        if it.get('eob_pdf_sha256') and it.get('eob_pdf_s3_path') and not it.get('eob_pdf_duplicate_of'):
-            known_pdfs[str(it['eob_pdf_sha256'])] = {'check_eft': str(it['check_eft']),
-                                                     's3_path': str(it['eob_pdf_s3_path'])}
+        if it.get('eob_pdf_sha256'):
+            known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
+                                                     str(it.get('eob_pdf_s3_path') or ''))
 
     captured, skipped, failed = 0, 0, 0
     for ck, info in checks.items():

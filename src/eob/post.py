@@ -1,45 +1,55 @@
-"""Remittance — posting a captured EOB into eCW.
+"""Remittance — entering a planned cheque into eCW.
 
-The operator's procedure (2026-09-14), step for step, for every cheque the
-capture stored with at least one claim pinned to ours:
+The clicking, and only the clicking. Every number typed here was decided by
+src/eob/plan.py (which eCW line gets which EOB money) and src/eob/ecw_payment.py
+(the popup's values, the grid's cells); a cheque whose plan is not `ready` is
+never opened. docs/ecw_posting.md is the procedure, read off the operator's
+two recordings, and the order below is that order.
 
-    1. Billing → Payments. Rcvd Pmt Dts from 07/01/2025, Check # = the
-       Check/EFT number from Blue Shield → Lookup. A payment already there
-       under that cheque means it was posted before: nothing to do.
-    2. Otherwise "Single insurance payment", and the claim is found by its
-       claim number — the PATIENT ACCOUNT NUMBER printed on the EOB.
-    3. The payment popup: amount = what the EOB approves to pay; check date
-       and EOB date = the Check/EFT date from Blue Shield's Check/EFT
-       details; deposit date = the check cashed date from the same page;
-       Type = Check; Check No = the cheque number. Then "Payment Advisory".
-    4. The advisory: Go (F3), then for every CPT line copy Allowed, CoPay,
-       Deductible and Paid from the EOB's line for that code. When the same
-       code is on the claim more than once, the billed amount tells the lines
-       apart, and where the EOB and eCW disagree on the billed amount the
-       drug table (fee_table.py) translates between them. A line that cannot
-       be paired with certainty stops the claim: it is left for a person,
-       with the reason on the dashboard.
-    5. Post.
+    Billing → Payments · Rcvd Pmt Dts from 07/01/2025 · Check # · Lookup
+        rows → a payment for this cheque exists: nothing to do
+        none → Single Ins Payment (F4) → Claim No: = the EOB's PATIENT ACCOUNT
+               NUMBER (our claim id) → Get Insurance → the radio beside
+               "Blue Shield of California" → OK
+    the Payments popup: Type Check · Check No. · Amount $ = APPROVE-TO-PAY ·
+        Check Date · EOB Date (the check date again) · Deposit Date = cashed
+        date, ticked and corrected
+    ── a DRY RUN stops here: screenshot, Cancel, nothing saved ──
+    Payment Advisory  ← THIS CLICK SAVES THE PAYMENT and mints its Payment ID
+    Claim ID → Go (F3) → the Alert about the fee schedule is dismissed
+    the Payment Posting grid: Allowed · Deduct · CoPay · Paid typed on each
+        planned line, after the line's Code and Billed are seen to be the
+        plan's; Adjust is eCW's own arithmetic
+    Auto Post (F2) → Yes on the balance / "Assign claim to" dialog
 
-The gate: a task body without `"post": true` is a DRY RUN. Everything up to
-and including the advisory is filled in and photographed, then the popup is
-cancelled and nothing is saved. Only `post: true` clicks Post. Posting writes
-money into the practice's ledger, and this module was written from the
-operator's description, not from eCW's live DOM — the first real run is
-expected to teach us something, and it should teach us on a dry run.
+The gate: without `"post": true` in the task body nothing is saved — the
+popup is filled and photographed, then cancelled. With it, the two writes
+happen. A payment whose advisory then cannot be completed (a grid row that is
+not what the plan expects) is left as eCW shows it — created, lines unposted —
+and the result says so, with the Payment ID when it was read, so a person can
+finish or delete it. That is the one state this module can leave behind that
+needs a hand; it is reported, never hidden.
 
 Every element is found by its LABEL (the text beside it, its placeholder,
 its aria-label, its ng-model), never by position, and every miss leaves a
-screenshot in /tmp and a log line that names what was looked for.
+screenshot in /tmp and a log line that names what was looked for. The DOM
+itself has not been seen — the recordings show the screens — so the first
+real run is expected to teach us something, on a dry run.
 """
 import os
 import re
+import tempfile
 import time
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
+import boto3
 
 from src.aws.clients import scan_all
-from src.eob.fee_table import match_lines
-from src.eob.parse import money
+from src.eob.ecw_payment import grid_rows, payment_header, posting_total
+from src.eob.eob_pdf import read_eob_pdf
+from src.eob.hcfa_lines import hcfa_lines_from_pdf
+from src.eob.plan import plan_from_item
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,6 +58,7 @@ DEFAULT_SINCE = '07/01/2025'
 EOB_TABLE = 'helixona-eobs'
 CLAIMS_TABLE = 'helixona-claims'
 DIAG_DIR = '/tmp'
+PAYER_RADIO = 'Blue Shield of California'
 
 # The Payments screen, as eCW routes it. Clicking Billing → Payments in the
 # menu is tried first; these are the fallbacks, in order.
@@ -56,16 +67,17 @@ PAYMENT_HASHES = [
     '/mobiledoc/jsp/webemr/webpm/paymentsLookup.jsp',
     '/mobiledoc/jsp/webemr/webpm/payments.jsp',
 ]
-PAYMENTS_MARKERS = ('Rcvd Pmt', 'Received Payment', 'Payment Lookup', 'Single Insurance')
+PAYMENTS_MARKERS = ('Rcvd Pmt', 'Single Ins Payment', 'Payment Lookup', 'Single Insurance')
 
-# Advisory grid columns, by header text.
+# The Payment Posting grid's columns (docs/ecw_posting.md):
+#   Service Dt | POS | Units | Code | Billed | Allowed | Deduct | CoIns | CoPay | Paid | Adjust | Withheld | Code
 GRID_COLUMNS = {
-    'cpt': re.compile(r'^(cpt|code|proc)', re.I),
-    'billed': re.compile(r'(billed|charge|amount)$|^(billed|charges?)', re.I),
-    'allowed': re.compile(r'allow', re.I),
-    'copay': re.compile(r'co-?pay|co-?ins', re.I),
-    'deductible': re.compile(r'deduct|^ded', re.I),
-    'paid': re.compile(r'^paid|payment|pmt', re.I),
+    'code': re.compile(r'^(code|cpt|proc)', re.I),
+    'billed': re.compile(r'^billed|^charge', re.I),
+    'Allowed': re.compile(r'^allow', re.I),
+    'Deduct': re.compile(r'^deduct', re.I),
+    'CoPay': re.compile(r'^co-?pay', re.I),
+    'Paid': re.compile(r'^paid', re.I),
 }
 
 
@@ -81,6 +93,13 @@ def _shot(page, name):
 
 def _now():
     return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+
+def _d(v):
+    try:
+        return Decimal(str(v).replace('$', '').replace(',', '').strip())
+    except (InvalidOperation, ValueError):
+        return None
 
 
 # ------------------------------------------------------------ DOM helpers
@@ -122,7 +141,8 @@ def _js(arrow_src):
 
 def _click_text(page, labels, timeout=8.0, what='', after_target=False):
     """Click the first visible button/link/menu item whose text is one of
-    `labels` (case-insensitive). Polls every frame until `timeout`.
+    `labels` (case-insensitive; a trailing "(F4)" style key hint on the
+    element is ignored). Polls every frame until `timeout`.
 
     `after_target` prefers the candidate that FOLLOWS the field _set_field
     last filled (data-helixona="target"): a screen with a Lookup button per
@@ -134,9 +154,13 @@ def _click_text(page, labels, timeout=8.0, what='', after_target=False):
             try:
                 hit = frm.evaluate(_js(r"""
                     ([wanted, afterTarget]) => {
+                        const norm = s => s.toLowerCase().replace(/\s*\(f\d+\)\s*$/, '').trim();
                         const els = document.querySelectorAll(
                             'button, input[type="button"], input[type="submit"], a, li, span, div[role], td, label, option');
-                        const cands = Array.from(els).filter(el => wanted.includes(txt(el).toLowerCase()) && vis(el));
+                        const cands = Array.from(els).filter(el => {
+                            const t = txt(el); if (!t || t.length > 60) return false;
+                            return (wanted.includes(t.toLowerCase()) || wanted.includes(norm(t))) && vis(el);
+                        });
                         if (!cands.length) return null;
                         const target = afterTarget ? document.querySelector('[data-helixona="target"]') : null;
                         let pick = cands[0];
@@ -145,7 +169,7 @@ def _click_text(page, labels, timeout=8.0, what='', after_target=False):
                             if (after) pick = after;
                         }
                         pick.click();
-                        return txt(pick).toLowerCase();
+                        return txt(pick);
                     }"""), [wanted, after_target])
             except Exception:
                 hit = None
@@ -163,7 +187,7 @@ def _mark_field(page, label_rx, kinds='input, textarea, select', prefer='first')
     data-helixona="target" and return (frame, description). None if absent.
 
     `prefer='last'` takes the LAST visible match: eCW appends its popups to
-    the end of the document, so a popup's "Check No" sits after the lookup
+    the end of the document, so a popup's "Check No." sits after the lookup
     screen's "Check #", and both are on screen at once."""
     for frm in page.frames:
         try:
@@ -171,8 +195,9 @@ def _mark_field(page, label_rx, kinds='input, textarea, select', prefer='first')
                 ([rx, kinds, prefer]) => {
                     const re = new RegExp(rx, 'i');
                     document.querySelectorAll('[data-helixona]').forEach(e => e.removeAttribute('data-helixona'));
-                    const skip = kinds.includes('checkbox') ? ['hidden', 'button', 'submit', 'image']
-                                                            : ['hidden', 'button', 'submit', 'checkbox', 'radio', 'image'];
+                    const skip = kinds.includes('checkbox') || kinds.includes('radio')
+                        ? ['hidden', 'button', 'submit', 'image']
+                        : ['hidden', 'button', 'submit', 'checkbox', 'radio', 'image'];
                     let found = null;
                     for (const el of document.querySelectorAll(kinds)) {
                         const type = (el.type || '').toLowerCase();
@@ -235,33 +260,89 @@ def _set_field(page, label_rx, value, what='', prefer='first'):
         return False
 
 
-def _page_has(page, markers):
-    for frm in page.frames:
-        try:
-            body = frm.evaluate("() => (document.body && document.body.innerText) || ''")
-        except Exception:
-            continue
-        if any(m.lower() in body.lower() for m in markers):
-            return True
-    return False
+def _tick(page, label_rx, what=''):
+    """Tick the checkbox labelled `label_rx` if it is not already ticked."""
+    frm, desc = _mark_field(page, label_rx, kinds='input[type="checkbox"]', prefer='last')
+    if frm is None:
+        return False
+    try:
+        cb = frm.query_selector('[data-helixona="target"]')
+        if cb is not None and not cb.is_checked():
+            cb.check()
+        logger.info(f"  ✅ {what or label_rx} ✓  ← {desc}")
+        return True
+    except Exception as e:
+        logger.warning(f"  ⚠️ could not tick {what or label_rx}: {str(e)[:80]}")
+        return False
 
 
-def _dismiss_ok(page):
-    """eCW's OK-only popups (data loading error, information)."""
+def _choose_radio(page, beside_text):
+    """Select the radio button in the same row / label as `beside_text`."""
     for frm in page.frames:
         try:
-            if frm.evaluate(_js(r"""() => {
-                const body = txt(document.body).toLowerCase();
-                if (!/data loading error|information|eclinicalworks/.test(body)) return false;
-                for (const b of document.querySelectorAll('button, input[type="button"]')) {
-                    if (['ok', 'close'].includes(txt(b).toLowerCase()) && vis(b)) { b.click(); return true; }
+            ok = frm.evaluate(_js(r"""(wanted) => {
+                const w = wanted.toLowerCase();
+                for (const r of document.querySelectorAll('input[type="radio"]')) {
+                    if (!vis(r)) continue;
+                    const row = r.closest('tr, label, li, div');
+                    if (row && txt(row).toLowerCase().includes(w)) { r.click(); return true; }
                 }
-                return false; }""")):
-                time.sleep(0.5)
-                return True
+                return false; }"""), beside_text)
+        except Exception:
+            ok = False
+        if ok:
+            logger.info(f"  ✅ radio beside {beside_text!r}")
+            return True
+    logger.warning(f"  ⚠️ no radio beside {beside_text!r}")
+    return False
+
+
+def _page_text(page):
+    out = []
+    for frm in page.frames:
+        try:
+            out.append(frm.evaluate("() => (document.body && document.body.innerText) || ''"))
         except Exception:
             continue
-    return False
+    return '\n'.join(out)
+
+
+def _page_has(page, markers):
+    body = _page_text(page).lower()
+    return any(m.lower() in body for m in markers)
+
+
+def _dismiss_dialogs(page, answer='Yes', rounds=3):
+    """eCW's small dialogs: the fee-schedule Alert (OK), the balance /
+    "Assign claim to" question (Yes), the data-loading error (OK). Answers
+    `answer` to a Yes/No, OK to the rest. Returns the texts seen."""
+    seen = []
+    for _ in range(rounds):
+        got = None
+        for frm in page.frames:
+            try:
+                got = frm.evaluate(_js(r"""(answer) => {
+                    const btns = Array.from(document.querySelectorAll('button, input[type="button"]')).filter(vis);
+                    const by = t => btns.find(b => txt(b).toLowerCase() === t.toLowerCase());
+                    const yes = by(answer), ok = by('OK') || by('Ok');
+                    const pick = yes || ok;
+                    if (!pick) return null;
+                    const box = pick.closest('[role="dialog"], .modal, .ui-dialog, .popup, div');
+                    const text = box ? txt(box).slice(0, 200) : '';
+                    // Only dialogs: something short with a question or alert in it.
+                    if (!/alert|warning|continue|sure|error|schedule|balance|assign/i.test(text)) return null;
+                    pick.click();
+                    return text; }"""), answer)
+            except Exception:
+                got = None
+            if got:
+                break
+        if not got:
+            break
+        logger.info(f"  💬 dialog answered {answer if answer.lower() in got.lower() else 'OK'}: {got[:120]!r}")
+        seen.append(got)
+        time.sleep(1.0)
+    return seen
 
 
 # ------------------------------------------------------------ the screens
@@ -290,8 +371,9 @@ def open_payments(page):
 
 
 def payment_exists(page, check_eft, since):
-    """Lookup by Check # on the Payments screen; True when a payment already
-    carries this cheque number."""
+    """Lookup by Check # on the Payments screen. True when a payment already
+    carries this cheque number, False when the grid comes back empty, None
+    when the screen could not be worked."""
     logger.info(f"🔎 Payments lookup: Rcvd Pmt Dts from {since}, Check # {check_eft}")
     _set_field(page, r'rcvd\s*pmt|received.*(from|date)|from\s*date|start', since, what='Rcvd Pmt Dts from')
     if not _set_field(page, r'check\s*#|check\s*no|check\s*num|chk', check_eft, what='Check #'):
@@ -318,90 +400,85 @@ def payment_exists(page, check_eft, since):
 
 
 def open_single_insurance_payment(page, claim_id):
-    """'Single insurance payment', then the claim by its eCW claim number."""
-    logger.info(f"➕ Single insurance payment for claim {claim_id}")
-    if not _click_text(page, ['Single Insurance Payment', 'Single insurance payment', 'Single Ins. Payment',
-                              'Single Insurance Pmt'], timeout=6, what='new payment'):
-        # It can sit under a "New" menu.
-        if _click_text(page, ['New', 'New Payment', '+'], timeout=4, what='new menu'):
-            time.sleep(1)
-            if not _click_text(page, ['Single Insurance Payment', 'Single insurance payment'], timeout=5):
-                _shot(page, f'{claim_id}_no_single_ins')
-                return False
-        else:
-            _shot(page, f'{claim_id}_no_single_ins')
-            return False
+    """Single Ins Payment (F4) → Claim No: → Get Insurance → Blue Shield → OK."""
+    logger.info(f"➕ Single Ins Payment for claim {claim_id}")
+    if not _click_text(page, ['Single Ins Payment', 'Single Insurance Payment', 'Single Ins. Payment'],
+                       timeout=6, what='new payment'):
+        _shot(page, f'{claim_id}_no_single_ins')
+        return False
     time.sleep(2.5)
-    if not _set_field(page, r'claim\s*(no|#|num|id)|invoice|account\s*(no|#)|_InvId', claim_id, what='Claim No',
-                      prefer='last'):
+    if not _set_field(page, r'claim\s*(no|#|num|id)|_InvId', claim_id, what='Claim No', prefer='last'):
         _shot(page, f'{claim_id}_no_claim_field')
         return False
-    if not _click_text(page, ['Lookup', 'Look Up', 'Search', 'Go', 'OK'], timeout=4, what='find claim',
-                       after_target=True):
+    if not _click_text(page, ['Get Insurance', 'Get Ins'], timeout=5, what='Get Insurance', after_target=True):
         page.keyboard.press('Enter')
-    time.sleep(3)
-    _dismiss_ok(page)
-    if not _page_has(page, (str(claim_id),)):
-        logger.warning(f"  ⚠️ claim {claim_id} did not appear after the lookup")
-        _shot(page, f'{claim_id}_claim_not_shown')
+    time.sleep(2.5)
+    if not _choose_radio(page, PAYER_RADIO):
+        _shot(page, f'{claim_id}_no_payer_radio')
         return False
-    logger.info(f"  ✅ claim {claim_id} is up")
+    if not _click_text(page, ['OK', 'Ok'], timeout=5, what='OK', after_target=True):
+        _shot(page, f'{claim_id}_no_ok')
+        return False
+    time.sleep(3)
+    if not _page_has(page, ('Payment Advisory', 'Payment ID')):
+        logger.warning("  ⚠️ the Payments popup did not open")
+        _shot(page, f'{claim_id}_no_popup')
+        return False
+    logger.info("  ✅ Payments popup is up")
     return True
 
 
-def fill_payment_header(page, amount, check_date, cashed_date, check_eft):
-    """Amount · Check date · EOB date · Deposit date · Type=Check · Check No."""
-    logger.info(f"🧾 Payment header: ${amount} · check {check_date} · deposit {cashed_date} · #{check_eft}")
-    # The popup is the newest DOM on screen: every field here prefers the
-    # last match, so the lookup screen's Check # underneath is not refilled.
-    ok = _set_field(page, r'^(amount|amt|payment\s*amount|check\s*amount|total)|amount', amount, what='Amount',
-                    prefer='last')
-    _set_field(page, r'check\s*date|chk\s*date|pmt\s*date|payment\s*date|received', check_date, what='Check date',
-               prefer='last')
-    _set_field(page, r'eob\s*date|remit.*date', check_date, what='EOB date', prefer='last')
-    if cashed_date:
-        _set_field(page, r'deposit', cashed_date, what='Deposit date', prefer='last')
-        # A "Deposited" tick beside the date, when eCW shows one.
-        frm, _ = _mark_field(page, r'deposit', kinds='input[type="checkbox"]', prefer='last')
-        if frm is not None:
-            try:
-                cb = frm.query_selector('[data-helixona="target"]')
-                if cb is not None and not cb.is_checked():
-                    cb.check()
-                    logger.info("  ✅ Deposited ✓")
-            except Exception:
-                pass
-    _set_field(page, r'^type|pmt\s*type|payment\s*type|method', 'Check', what='Type', prefer='last')
-    _set_field(page, r'check\s*(no|#|num)|chk\s*(no|#)|reference', check_eft, what='Check No', prefer='last')
-    return ok
+def fill_payment_popup(page, fields):
+    """The Payments popup from ecw_payment.payment_header: None means leave
+    alone. Every field prefers the last match — the popup is the newest DOM."""
+    logger.info(f"🧾 Payments popup: {{k: v for k, v in fields.items() if v is not None}}")
+    ok = True
+    if fields.get('Type'):
+        ok &= _set_field(page, r'^type|pmt\s*type|payment\s*type', fields['Type'], what='Type', prefer='last')
+    if fields.get('Check No.'):
+        ok &= _set_field(page, r'check\s*no|check\s*#|chk\s*no', fields['Check No.'], what='Check No.', prefer='last')
+    if fields.get('Amount $'):
+        ok &= _set_field(page, r'^amount|amount\s*\$|amt', fields['Amount $'], what='Amount $', prefer='last')
+    if fields.get('Check Date'):
+        ok &= _set_field(page, r'check\s*date|chk\s*date', fields['Check Date'], what='Check Date', prefer='last')
+    if fields.get('EOB Date'):
+        ok &= _set_field(page, r'eob\s*date', fields['EOB Date'], what='EOB Date', prefer='last')
+    if fields.get('Deposit Date'):
+        # Ticking fills today's date; the cashed date then overwrites it.
+        _tick(page, r'deposit', what='Deposit')
+        ok &= _set_field(page, r'deposit\s*date|deposit', fields['Deposit Date'], what='Deposit Date', prefer='last')
+    return bool(ok)
 
 
-def open_advisory(page):
-    if not _click_text(page, ['Payment Advisory', 'Payment advisory', 'Pmt Advisory', 'Advisory'],
-                       timeout=8, what='advisory'):
-        _shot(page, 'no_advisory_button')
+def read_payment_id(page):
+    m = re.search(r'Payment\s*ID\s*:?\s*(\d+)', _page_text(page), re.I)
+    return m.group(1) if m else ''
+
+
+def open_advisory_for_claim(page, claim_id):
+    """In the advisory window: Claim ID → Go (F3); the fee-schedule Alert
+    is dismissed. True when the Payment Posting grid is up."""
+    if not _set_field(page, r'claim\s*id|claim\s*no|claim\s*#', claim_id, what='Claim ID', prefer='last'):
+        _shot(page, f'{claim_id}_no_claim_id_field')
         return False
-    time.sleep(3)
-    _dismiss_ok(page)
-    if not _click_text(page, ['Go', 'Go F3', 'Go (F3)', 'F3'], timeout=6, what='Go F3'):
+    if not _click_text(page, ['Go', 'Go (F3)'], timeout=6, what='Go F3', after_target=True):
         page.keyboard.press('F3')
-        logger.info("  pressed F3")
     time.sleep(3)
-    _dismiss_ok(page)
-    return True
+    _dismiss_dialogs(page, answer='OK')
+    frm, cols, rows = read_posting_grid(page)
+    return bool(rows)
 
 
-def read_advisory_grid(page):
-    """The advisory's CPT grid: (frame, header keys by column, rows). Each row:
-    {'idx', 'cpt', 'billed', 'cells', 'inputs': {col: n}} — inputs are the
-    editable cells, by column index."""
+def read_posting_grid(page):
+    """The Payment Posting grid: (frame, header keys by column, rows). Each
+    row: {'idx', 'code', 'billed', 'cells', 'inputs': {col index}}."""
     for frm in page.frames:
         try:
             data = frm.evaluate(_js(r"""() => {
                 const tables = Array.from(document.querySelectorAll('table')).filter(vis);
                 for (const tb of tables) {
                     const hdrs = Array.from(tb.querySelectorAll('th, thead td')).map(txt);
-                    if (!hdrs.some(h => /cpt|code|proc/i.test(h)) || !hdrs.some(h => /allow/i.test(h))) continue;
+                    if (!hdrs.some(h => /^(code|cpt)/i.test(h)) || !hdrs.some(h => /^allow/i.test(h))) continue;
                     const rows = [];
                     const trs = Array.from(tb.querySelectorAll('tbody tr, tr')).filter(tr => tr.querySelector('td'));
                     trs.forEach((tr, i) => {
@@ -428,49 +505,75 @@ def read_advisory_grid(page):
                     break
         rows = []
         for r in data['rows']:
-            cpt = r['cells'][cols['cpt']] if 'cpt' in cols and cols['cpt'] < len(r['cells']) else ''
-            cpt = re.sub(r'[^A-Z0-9]', '', cpt.upper())[:5]
-            if not re.fullmatch(r'[A-Z]?\d{4,5}', cpt or ''):
+            code = r['cells'][cols['code']] if 'code' in cols and cols['code'] < len(r['cells']) else ''
+            code = re.sub(r'[^A-Z0-9]', '', code.upper())[:5]
+            if not re.fullmatch(r'[A-Z]?\d{4,5}', code or ''):
                 continue
-            billed = money(r['cells'][cols['billed']]) if 'billed' in cols and cols['billed'] < len(r['cells']) else ''
-            rows.append({'idx': r['idx'], 'cpt': cpt, 'billed': billed, 'cells': r['cells'],
+            billed = r['cells'][cols['billed']] if 'billed' in cols and cols['billed'] < len(r['cells']) else ''
+            rows.append({'idx': r['idx'], 'code': code, 'billed': billed, 'cells': r['cells'],
                          'inputs': {int(k) for k in r['inputs']}})
-        logger.info(f"  📊 advisory grid: columns {hdrs} → {cols}; {len(rows)} CPT row(s)")
+        logger.info(f"  📊 posting grid: {hdrs} → {cols}; {len(rows)} service line(s)")
         return frm, cols, rows
-    _shot(page, 'no_advisory_grid')
-    logger.warning("  ⚠️ no CPT grid with an Allowed column found")
+    _shot(page, 'no_posting_grid')
+    logger.warning("  ⚠️ no grid with Code and Allowed columns found")
     return None, {}, []
 
 
-def fill_grid(page, frm, cols, pairs):
-    """Copy allowed / copay / deductible / paid from each EOB line into its
-    eCW row. Returns the number of cells written."""
-    written = 0
-    for p in pairs:
-        row, line = p['ecw'], p['eob']
-        for key in ('allowed', 'copay', 'deductible', 'paid'):
-            col = cols.get(key)
-            val = line.get(key, '')
-            if col is None or val == '' or col not in row['inputs']:
-                if val != '' and col is not None:
-                    logger.warning(f"    row {row['idx']} {row['cpt']}: {key} cell is not editable")
+def locate_rows(grid, planned):
+    """Pin each planned line to a grid row, or say why not.
+
+    The plan's ecw_index is the line's position on the claim, and the grid
+    keeps the claim's order — so the row at that index should carry the
+    plan's code and billed amount. When it does not, the row is found by
+    code + billed if that pair is unique in the grid. Otherwise nothing is
+    typed on this claim: (None, reason).
+    """
+    out, used = [], set()
+    for p in planned:
+        want_code, want_billed = str(p.get('cpt') or '').upper(), _d(p.get('ecw_billed'))
+        i = p.get('ecw_index')
+        row = grid[i] if isinstance(i, int) and 0 <= i < len(grid) else None
+        if row is None or row['code'] != want_code or _d(row['billed']) != want_billed or row['idx'] in used:
+            same = [r for r in grid if r['code'] == want_code and _d(r['billed']) == want_billed
+                    and r['idx'] not in used]
+            if len(same) != 1:
+                return None, (f"{want_code} billed {p.get('ecw_billed')}: the grid row at position {i} is "
+                              f"{(row or {}).get('code')} billed {(row or {}).get('billed')}, and "
+                              f"{len(same)} other row(s) match — not typed")
+            row = same[0]
+        used.add(row['idx'])
+        out.append((row, p))
+    return out, ''
+
+
+def type_grid(page, frm, cols, located):
+    """Type Allowed / Deduct / CoPay / Paid into each located row. Returns
+    (cells written, problems)."""
+    written, problems = 0, []
+    for row, p in located:
+        for key in ('Allowed', 'Deduct', 'CoPay', 'Paid'):
+            col, val = cols.get(key), p['values'].get(key, '')
+            if col is None:
+                problems.append(f"{p['cpt']}: the grid has no {key} column")
+                continue
+            if col not in row['inputs']:
+                problems.append(f"{p['cpt']}: the {key} cell is not editable")
                 continue
             try:
-                handle = frm.query_selector(
-                    f'tr[data-helixona-row="{row["idx"]}"] td:nth-child({col + 1}) input')
+                handle = frm.query_selector(f'tr[data-helixona-row="{row["idx"]}"] td:nth-child({col + 1}) input')
                 if handle is None:
+                    problems.append(f"{p['cpt']}: no input in the {key} cell")
                     continue
                 handle.click()
                 page.keyboard.press('Control+a')
-                page.keyboard.type(val, delay=20)
+                page.keyboard.type(str(val), delay=20)
                 page.keyboard.press('Tab')
                 written += 1
             except Exception as e:
-                logger.warning(f"    row {row['idx']} {key}: {str(e)[:80]}")
-        logger.info(f"    {row['cpt']} billed {row['billed']} ← EOB billed {line.get('billed')} "
-                    f"allowed {line.get('allowed')} copay {line.get('copay')} ded {line.get('deductible')} "
-                    f"paid {line.get('paid')}  [{p['how']}]")
-    return written
+                problems.append(f"{p['cpt']} {key}: {str(e)[:80]}")
+        logger.info(f"    {p['cpt']} billed {p['ecw_billed']}{' ' + p['drug'] if p.get('drug') else ''} ← "
+                    + ' '.join(f"{k} {v}" for k, v in p['values'].items()))
+    return written, problems
 
 
 def cancel_popups(page):
@@ -480,40 +583,22 @@ def cancel_popups(page):
         time.sleep(1)
 
 
-# ------------------------------------------------------------- one claim
-def claim_amount(item, claim):
-    """What this claim's payment is: its own paid amount when the cheque paid
-    several claims, else the statement's approve-to-pay (then the cheque)."""
-    paid = money(claim.get('amount_paid'))
-    if paid and paid != '0.00':
-        return paid
-    if len([c for c in item.get('claims', []) if c.get('claim_id')]) == 1:
-        return money(item.get('approve_to_pay')) or money(item.get('check_amount'))
-    return ''
-
-
-def lines_for(item, claim):
-    """The EOB's CPT lines for this claim: its own when the PDF was parsed
-    per claim, else the statement's lines when the cheque paid one claim."""
-    lines = claim.get('lines') or []
-    if lines:
-        return lines
-    if len(item.get('claims', [])) == 1:
-        return item.get('eob_lines') or []
-    return []
-
-
-def post_claim(page, item, claim, since, post):
+# ------------------------------------------------------------- one cheque
+def post_cheque(page, item, plan, since, post):
+    """Enter one planned cheque. Returns the result dict stored on the item."""
     check = str(item['check_eft'])
-    cid = str(claim['claim_id'])
-    amount = claim_amount(item, claim)
-    lines = lines_for(item, claim)
-    logger.info(f"═══ Cheque {check} → claim {cid} · ${amount or '?'} · {len(lines)} EOB line(s) · "
-                f"{'POST' if post else 'DRY RUN'} ═══")
-    if not amount:
-        return {'status': 'skipped', 'reason': 'no paid amount for this claim'}
-    if not lines:
-        return {'status': 'skipped', 'reason': 'no CPT lines parsed from the EOB for this claim'}
+    claims = plan.get('claims') or []
+    logger.info(f"═══ Cheque {check} · approve-to-pay ${plan['totals'].get('approve_to_pay')} · "
+                f"{len(claims)} claim(s) · {'POST' if post else 'DRY RUN'} ═══")
+    fields, problems = payment_header({'approve_to_pay': plan['totals'].get('approve_to_pay')}, item)
+    if problems:
+        return {'status': 'held', 'reason': '; '.join(problems)}
+    typed = {}
+    for c in claims:
+        rows, probs = grid_rows(c)
+        if probs or not rows:
+            return {'status': 'held', 'reason': f"claim {c.get('claim_id')}: " + ('; '.join(probs) or 'nothing to type')}
+        typed[str(c['claim_id'])] = rows
 
     if not open_payments(page):
         return {'status': 'failed', 'reason': 'Payments screen not reached'}
@@ -523,49 +608,90 @@ def post_claim(page, item, claim, since, post):
     if exists is None:
         return {'status': 'failed', 'reason': 'Check # field not found on the Payments screen'}
 
-    if not open_single_insurance_payment(page, cid):
+    first = str(claims[0]['claim_id'])
+    if not open_single_insurance_payment(page, first):
         cancel_popups(page)
-        return {'status': 'failed', 'reason': 'Single insurance payment / claim lookup failed'}
-    if not fill_payment_header(page, amount, item.get('check_date', ''), item.get('cashed_date', ''), check):
-        _shot(page, f'{check}_{cid}_header')
+        return {'status': 'failed', 'reason': 'Single Ins Payment / claim lookup did not open the popup'}
+    if not fill_payment_popup(page, fields):
+        _shot(page, f'{check}_popup')
         cancel_popups(page)
-        return {'status': 'failed', 'reason': 'Amount field not found in the payment popup'}
-    if not open_advisory(page):
-        cancel_popups(page)
-        return {'status': 'failed', 'reason': 'Payment Advisory did not open'}
-
-    frm, cols, rows = read_advisory_grid(page)
-    if not rows:
-        cancel_popups(page)
-        return {'status': 'failed', 'reason': 'advisory grid not read'}
-    pairs, unresolved = match_lines(rows, lines)
-    for u in unresolved:
-        logger.warning(f"    ❓ {u['reason']}")
-    bad = [u for u in unresolved if 'eob' in u]
-    if bad:
-        _shot(page, f'{check}_{cid}_unresolved')
-        cancel_popups(page)
-        return {'status': 'unresolved', 'reason': '; '.join(u['reason'] for u in bad)[:400],
-                'pairs': len(pairs)}
-
-    written = fill_grid(page, frm, cols, pairs)
-    logger.info(f"  ✍️ {written} advisory cell(s) filled for {len(pairs)} line(s)")
-    _shot(page, f'{check}_{cid}_filled')
+        return {'status': 'failed', 'reason': 'a field of the Payments popup was not found (see screenshot)'}
+    _shot(page, f'{check}_popup_filled')
 
     if not post:
+        # Payment Advisory is the save. A dry run does not click it.
         cancel_popups(page)
-        return {'status': 'dry_run', 'reason': f'{len(pairs)} line(s) matched, {written} cells filled; not posted',
-                'pairs': len(pairs)}
-    if not _click_text(page, ['Post', 'Post Payment', 'Save & Post', 'Save'], timeout=8, what='post'):
-        _shot(page, f'{check}_{cid}_no_post')
+        n = sum(len(r) for r in typed.values())
+        return {'status': 'dry_run', 'reason': f'popup filled for ${fields["Amount $"]}, {n} line(s) planned '
+                                               f'across {len(claims)} claim(s); not saved'}
+
+    # ── first write ──
+    if not _click_text(page, ['Payment Advisory'], timeout=8, what='Payment Advisory — saves the payment'):
+        _shot(page, f'{check}_no_advisory')
         cancel_popups(page)
-        return {'status': 'failed', 'reason': 'Post button not found'}
+        return {'status': 'failed', 'reason': 'Payment Advisory button not found; nothing saved'}
     time.sleep(3)
-    _dismiss_ok(page)
-    return {'status': 'posted', 'reason': f'{len(pairs)} line(s)', 'pairs': len(pairs)}
+    _dismiss_dialogs(page, answer='OK')
+    payment_id = read_payment_id(page)
+    logger.info(f"  💾 payment saved · Payment ID {payment_id or '?'}")
+
+    posted, left = [], []
+    for c in claims:
+        cid = str(c['claim_id'])
+        if not open_advisory_for_claim(page, cid):
+            left.append(f'claim {cid}: the Payment Posting grid did not open')
+            continue
+        frm, cols, grid = read_posting_grid(page)
+        located, why = locate_rows(grid, typed[cid])
+        if located is None:
+            _shot(page, f'{check}_{cid}_grid_mismatch')
+            left.append(f'claim {cid}: {why}')
+            continue
+        written, probs = type_grid(page, frm, cols, located)
+        if probs:
+            _shot(page, f'{check}_{cid}_grid_problems')
+            left.append(f'claim {cid}: ' + '; '.join(probs))
+            continue
+        _shot(page, f'{check}_{cid}_grid_typed')
+        # ── second write ──
+        if not _click_text(page, ['Auto Post', 'Auto Post (F2)'], timeout=6, what='Auto Post F2'):
+            page.keyboard.press('F2')
+        time.sleep(2)
+        _dismiss_dialogs(page, answer='Yes')
+        posted.append(f'{cid} (${posting_total(typed[cid])}, {written} cells)')
+        logger.info(f"  ✅ claim {cid}: {written} cells, paid ${posting_total(typed[cid])}, Auto Post")
+
+    if left:
+        _shot(page, f'{check}_incomplete')
+        return {'status': 'incomplete', 'payment_id': payment_id,
+                'reason': f"payment {payment_id or '?'} was created; posted {', '.join(posted) or 'nothing'}; "
+                          f"NOT posted: {'; '.join(left)} — finish or delete it in eCW"}
+    return {'status': 'posted', 'payment_id': payment_id,
+            'reason': f"payment {payment_id or '?'}: {', '.join(posted)}"}
 
 
 # ------------------------------------------------------------------- run
+def make_readers(aws_client):
+    """The S3-backed readers plan_from_item wants, the dashboard's way."""
+    s3 = boto3.client('s3', region_name='us-west-2')
+    claims = aws_client.dynamodb.Table(CLAIMS_TABLE)
+
+    def fetch(s3_path, reader):
+        m = re.match(r's3://([^/]+)/(.+)', s3_path or '')
+        if not m:
+            return None
+        with tempfile.NamedTemporaryFile(suffix='.pdf') as fh:
+            s3.download_fileobj(m.group(1), m.group(2), fh)
+            fh.flush()
+            return reader(fh.name)
+
+    return {
+        'get_claim': lambda cid: claims.get_item(Key={'claim_id': cid}).get('Item'),
+        'read_hcfa': lambda p: fetch(p, hcfa_lines_from_pdf),
+        'read_eob': lambda p: fetch(p, read_eob_pdf),
+    }
+
+
 def run_eob_post(page, aws_client, body, login):
     """`login(page, creds, aws_client) -> bool` is eCW's Turnstile-aware login
     from src.main, handed in so this module never imports the agent."""
@@ -577,6 +703,7 @@ def run_eob_post(page, aws_client, body, login):
                 f"limit={limit or 'none'} since={since}")
 
     eobs = aws_client.dynamodb.Table(EOB_TABLE)
+    readers = make_readers(aws_client)
     todo = []
     for it in scan_all(eobs):
         ck = str(it.get('check_eft', ''))
@@ -584,54 +711,72 @@ def run_eob_post(page, aws_client, body, login):
             continue
         if it.get('posted_in_ecw') and not only:
             continue
-        claims = [c for c in it.get('claims', []) if c.get('claim_id')]
-        if not claims:
+        if not it.get('eob_pdf_s3_path'):
             continue
         todo.append(it)
     todo.sort(key=lambda it: str(it.get('check_date', '')))
-    logger.info(f"📋 {len(todo)} cheque(s) with pinned claims to post")
-    if not todo:
-        return {'ok': True, 'checks': 0}
+    logger.info(f"📋 {len(todo)} cheque(s) to consider")
+
+    # Plan first, so a run with nothing ready never opens eCW.
+    ready = []
+    counts = {'posted': 0, 'dry_run': 0, 'existing': 0, 'held': 0, 'incomplete': 0, 'failed': 0}
+    for it in todo:
+        ck = str(it['check_eft'])
+        try:
+            plan = plan_from_item(it, **readers)
+        except Exception as e:
+            plan = {'status': 'needs_review', 'reasons': [f'planning failed: {e}'], 'claims': [], 'totals': {}}
+        held = plan['reasons'] + [r for c in plan.get('claims', []) for r in (c.get('reasons') or [])]
+        eobs.update_item(
+            Key={'check_eft': ck},
+            UpdateExpression='SET plan_status = :s, plan_reasons = :r, planned_at = :t',
+            ExpressionAttributeValues={':s': plan['status'], ':r': len(held), ':t': _now()})
+        if plan['status'] != 'ready':
+            counts['held'] += 1
+            logger.info(f"  ⏸ cheque {ck} held: {held[:3]}")
+            _record(eobs, ck, {'status': 'held', 'reason': '; '.join(held)[:600]}, post)
+            continue
+        ready.append((it, plan))
+    logger.info(f"🧮 {len(ready)} cheque(s) ready to enter, {counts['held']} held for review")
+    if not ready:
+        return dict({'ok': True, 'checks': len(todo)}, **counts)
 
     creds = aws_client.get_secret('ecw_credentials')
     if not login(page, creds, aws_client):
-        logger.error("❌ eCW login failed — nothing posted")
+        logger.error("❌ eCW login failed — nothing entered")
         return {'ok': False, 'reason': 'login'}
 
-    counts = {'posted': 0, 'dry_run': 0, 'existing': 0, 'unresolved': 0, 'failed': 0, 'skipped': 0}
     done = 0
-    for it in todo:
+    for it, plan in ready:
         if limit and done >= limit:
             break
         done += 1
         ck = str(it['check_eft'])
-        results = {}
-        for c in it.get('claims', []):
-            if not c.get('claim_id'):
-                continue
-            cid = str(c['claim_id'])
-            try:
-                res = post_claim(page, it, c, since, post)
-            except Exception as e:
-                res = {'status': 'failed', 'reason': str(e)[:300]}
-                logger.error(f"  ❌ cheque {ck} claim {cid}: {e}")
-                _shot(page, f'{ck}_{cid}_error')
-                cancel_popups(page)
-            results[cid] = dict(res, at=_now())
-            counts[res['status']] = counts.get(res['status'], 0) + 1
-            logger.info(f"  → claim {cid}: {res['status']} — {res.get('reason', '')}")
-            if res['status'] in ('posted', 'existing'):
-                aws_client.update_claim_status(cid, {
-                    'payment_posted': True,
-                    'payment_posted_at': _now(),
-                    'payment_check_eft': ck,
-                    'payment_post_status': res['status'],
+        try:
+            res = post_cheque(page, it, plan, since, post)
+        except Exception as e:
+            res = {'status': 'failed', 'reason': str(e)[:300]}
+            logger.error(f"  ❌ cheque {ck}: {e}")
+            _shot(page, f'{ck}_error')
+            cancel_popups(page)
+        counts[res['status']] = counts.get(res['status'], 0) + 1
+        logger.info(f"  → cheque {ck}: {res['status']} — {res.get('reason', '')}")
+        _record(eobs, ck, res, post)
+        if res['status'] in ('posted', 'existing'):
+            for c in plan.get('claims', []):
+                aws_client.update_claim_status(str(c['claim_id']), {
+                    'payment_posted': True, 'payment_posted_at': _now(),
+                    'payment_check_eft': ck, 'payment_post_status': res['status'],
+                    'payment_ecw_id': res.get('payment_id', ''),
                 })
-        all_in = bool(results) and all(r['status'] in ('posted', 'existing') for r in results.values())
-        eobs.update_item(
-            Key={'check_eft': ck},
-            UpdateExpression='SET posted_in_ecw = :p, post_results = :r, post_attempted_at = :t, post_mode = :m',
-            ExpressionAttributeValues={':p': all_in, ':r': results, ':t': _now(),
-                                       ':m': 'post' if post else 'dry_run'})
     logger.info(f"═══ Remittance → eCW complete: {counts} ═══")
     return dict({'ok': True, 'checks': done}, **counts)
+
+
+def _record(eobs, check, res, post):
+    eobs.update_item(
+        Key={'check_eft': check},
+        UpdateExpression='SET posted_in_ecw = :p, post_result = :r, post_attempted_at = :t, post_mode = :m',
+        ExpressionAttributeValues={':p': res['status'] in ('posted', 'existing'),
+                                   ':r': dict(res, at=_now()), ':t': _now(),
+                                   ':m': 'post' if post else 'dry_run'})
