@@ -18,11 +18,18 @@ EC2_IP=$1
 KEY_FILE="infra/helixona-agent-key.pem"
 REMOTE_DIR="/opt/helixona-agent"
 
-echo "─── Running tests locally ───"
-python3 run_tests.py || {
-    echo "❌ Tests failed. Nothing was deployed."
-    exit 1
-}
+# SKIP_LOCAL_TESTS=1 skips the first run only — a laptop without the bot's
+# dependencies can hang or fail on import. The run on the host still gates
+# the restart, so nothing broken can go live this way.
+if [ -n "$SKIP_LOCAL_TESTS" ]; then
+    echo "─── Skipping local tests (SKIP_LOCAL_TESTS set); the host run still gates the restart ───"
+else
+    echo "─── Running tests locally ───"
+    python3 run_tests.py || {
+        echo "❌ Tests failed. Nothing was deployed."
+        exit 1
+    }
+fi
 
 echo
 echo "Deploying Helixona Billing Agent to $EC2_IP..."
