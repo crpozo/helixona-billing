@@ -339,12 +339,58 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _open_check_link(page, check):
+    """Click the cheque's link in the search results.
+
+    The results came from the portal's export, so there is no href to go to —
+    the link has to be clicked on screen. After one cheque's details page the
+    results are gone from the screen, and clicking the next link there timed
+    out on every cheque but the first (2026-09-15). So: back to the results
+    first ("Back to search results" on the details page, else the browser's
+    back), then "Show more claims" until this cheque's link is on the page.
+    """
+    link = f'a:has-text("{check}")'
+
+    def visible():
+        try:
+            el = page.query_selector(link)
+            return bool(el and el.is_visible())
+        except Exception:
+            return False
+
+    if not visible():
+        back = page.query_selector('a:has-text("Back to search results"), button:has-text("Back to search results")')
+        if back and back.is_visible():
+            back.click()
+            logger.info("  ↩ Back to search results")
+        else:
+            page.go_back(wait_until='domcontentloaded', timeout=30000)
+            logger.info("  ↩ browser back to the results")
+        try:
+            page.wait_for_load_state('networkidle', timeout=15000)
+        except Exception:
+            pass
+        time.sleep(2)
+    for _ in range(80):
+        if visible():
+            break
+        more = page.query_selector('button:has-text("Show more claims")')
+        if not (more and more.is_visible()):
+            break
+        more.click()
+        time.sleep(2.5)
+    if not visible():
+        _shot(page, f'{check}_link_missing')
+        raise RuntimeError(f'the link for cheque {check} is not on the results page')
+    page.click(link, timeout=10000)
+
+
 def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
     if href:
         page.goto(href, wait_until='domcontentloaded', timeout=60000)
     else:
-        page.click(f'a:has-text("{check}")', timeout=10000)
+        _open_check_link(page, check)
     try:
         page.wait_for_load_state('networkidle', timeout=15000)
     except Exception:

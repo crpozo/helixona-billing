@@ -253,6 +253,17 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn("'0.01'", c)
         self.assertIn("DEFAULT_SINCE = '07/01/2025'", c)
 
+    def test_the_next_cheque_is_opened_from_the_results_not_the_details_page(self):
+        # Export rows carry no href; after one details page the results are
+        # gone, and clicking the next link there timed out on every cheque but
+        # the first (2026-09-15).
+        c = _read('src/eob/capture.py')
+        self.assertIn('def _open_check_link(page, check):', c)
+        self.assertIn('Back to search results', c)
+        self.assertIn("page.go_back(", c)
+        self.assertLess(c.index('Back to search results'), c.index('page.click(link, timeout=10000)'))
+        self.assertIn('_open_check_link(page, check)', c[c.index('def _capture_check('):])
+
     def test_a_miss_leaves_a_screenshot(self):
         self.assertIn("_shot(page, 'results_unparsed')", _read('src/eob/capture.py'))
 
