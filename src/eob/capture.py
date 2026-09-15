@@ -345,14 +345,10 @@ def _open_check_link(page, check):
 
 def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
-    # A real address is followed; a fragment on the results page itself, or a
-    # javascript: link, is not an address — the link is clicked instead.
-    usable = (str(href or '').startswith('http')
-              and href.split('#')[0] != page.url.split('#')[0])
-    if usable:
-        page.goto(href, wait_until='domcontentloaded', timeout=60000)
-    else:
-        _open_check_link(page, check)
+    # Always the click, never the href: every cheque's link points at the same
+    # /claims/checkeftDetails (the portal's markup, 2026-09-15) and the app
+    # decides which cheque to show from the click itself.
+    _open_check_link(page, check)
     try:
         page.wait_for_load_state('networkidle', timeout=15000)
     except Exception:

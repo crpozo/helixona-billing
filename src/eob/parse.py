@@ -233,6 +233,12 @@ def parse_check_summary(text):
     return {k: v.strip() for k, v in out.items()}
 
 
+def subscriber_key(s):
+    """A subscriber ID as a matching key: upper-case, without the member
+    suffix the portal appends ("909151452-01" is subscriber 909151452)."""
+    return re.sub(r'-\d{1,3}$', '', norm_text(s).upper())
+
+
 def index_claims(claims):
     """Our claims by (subscriber_id, DOS start) for matching portal rows.
 
@@ -242,7 +248,7 @@ def index_claims(claims):
     """
     idx = {}
     for c in claims:
-        sid = norm_text(c.get('subscriber_id')).upper()
+        sid = subscriber_key(c.get('subscriber_id'))
         dos = dos_start(c.get('service_date') or c.get('dos'))
         if sid and dos:
             idx.setdefault((sid, dos), []).append(c)
@@ -255,7 +261,7 @@ def match_claim(row, idx):
     Never guesses between candidates: an EOB pinned to the wrong claim would
     post a payment against the wrong service.
     """
-    sid = norm_text(row.get('subscriber_id')).upper()
+    sid = subscriber_key(row.get('subscriber_id'))
     dos = dos_start(row.get('dos'))
     cands = idx.get((sid, dos), [])
     if len(cands) == 1:

@@ -196,6 +196,12 @@ class ClaimsArePinnedOnlyWhenCertain(unittest.TestCase):
         row = {'subscriber_id': '909681878', 'dos': '01/23/2026–01/23/2026', 'amount_billed': '$999.00'}
         self.assertEqual(match_claim(row, idx), '')
 
+    def test_the_portals_member_suffix_does_not_hide_a_match(self):
+        # The portal shows "909151452-01"; our record says 909151452.
+        idx = index_claims([{'claim_id': '77', 'subscriber_id': '909151452', 'service_date': '02/24/2026', 'charges': '643.50'}])
+        row = {'subscriber_id': '909151452-01', 'dos': '02/24/2026–02/24/2026', 'amount_billed': '$643.50'}
+        self.assertEqual(match_claim(row, idx), '77')
+
     def test_a_stranger_matches_nothing(self):
         idx = index_claims(self.CLAIMS)
         self.assertEqual(match_claim({'subscriber_id': 'X', 'dos': '01/01/2020'}, idx), '')
@@ -373,6 +379,14 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         d = _read('dashboard.py')
         self.assertIn("'ResponseContentType': 'application/pdf'", d)
         self.assertIn("'ResponseContentDisposition': f'inline; filename=\"eob_{check_eft}.pdf\"'", d)
+
+    def test_the_cheque_is_always_opened_by_clicking_its_link(self):
+        # Every cheque's href is the same /claims/checkeftDetails; the app
+        # picks the cheque from the click. Navigating to the href shows nothing.
+        c = _read('src/eob/capture.py')
+        body = c[c.index('def _capture_check('):c.index('def run_eob_capture(')]
+        self.assertIn('_open_check_link(page, check)', body)
+        self.assertNotIn('page.goto(href', body)
 
     def test_a_miss_leaves_a_screenshot(self):
         self.assertIn("_shot(page, 'results_unparsed')", _read('src/eob/capture.py'))
