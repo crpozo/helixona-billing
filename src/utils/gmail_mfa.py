@@ -81,6 +81,12 @@ def fetch_mfa_code(gmail_user: str, gmail_app_password: str,
 
         except Exception as e:
             logger.warning(f"IMAP poll error: {e}")
+            if 'AUTHENTICATIONFAILED' in str(e).upper():
+                # An expired app password will not come back within the wait;
+                # hand over to the dashboard / a person right away.
+                logger.error("Gmail rejected the app password — renew prod/helixona/gmail_credentials. "
+                             "Not polling further; a person can supply the code.")
+                return None
 
         elapsed = int(time.time() - start_time)
         logger.info(f"No MFA code yet... ({elapsed}s / {max_wait_seconds}s)")

@@ -100,7 +100,7 @@ class TheLoginFallsBackToThePerson(unittest.TestCase):
     def test_gmail_is_tried_first_then_the_dashboard(self):
         s = _read('src/blueshield/session.py')
         i = s.index('mfa_code = fetch_mfa_code(')
-        j = s.index('wait_for_manual_code(aws_client.dynamodb, code_requested_at)')
+        j = s.index('wait_for_manual_code(aws_client.dynamodb, code_requested_at,')
         self.assertLess(i, j)
         self.assertIn('if not mfa_code:', s[i:j])
 
@@ -127,3 +127,55 @@ class TheDashboardHasTheBox(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class APersonCanFinishTheTwoStepOnScreen(unittest.TestCase):
+    """The bot waits for a dashboard code; meanwhile someone may type the code
+    straight into the portal over noVNC. The wait must notice and move on."""
+
+    def test_the_wait_stops_when_until_says_so(self):
+        import time as _t
+        from src.utils import mfa_relay
+
+        class _Table:
+            def get_item(self, Key):
+                return {}
+
+        class _DB:
+            def Table(self, name):
+                return _Table()
+
+        t0 = _t.time()
+        code = mfa_relay.wait_for_manual_code(_DB(), '2026-01-01T00:00:00Z', timeout_s=30,
+                                              poll_s=1, until=lambda: True)
+        self.assertEqual(code, '')
+        self.assertLess(_t.time() - t0, 5)
+
+    def test_the_login_continues_when_the_screen_moved_on(self):
+        import os
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               'src', 'blueshield', 'session.py'), encoding='utf-8') as fh:
+            s = fh.read()
+        self.assertIn('until=lambda: _past_mfa(page)', s)
+        self.assertIn('if not mfa_code and _past_mfa(page):', s)
+        self.assertIn("2-step completed on screen by a person", s)
+
+
+class GmailGivesUpOnABadAppPassword(unittest.TestCase):
+    def test_authentication_failure_ends_the_poll_at_once(self):
+        import time as _t
+        from unittest import mock
+        from src.utils import gmail_mfa
+
+        class _Boom:
+            def __init__(self, *a, **k):
+                pass
+
+            def login(self, *a):
+                raise Exception("b'[AUTHENTICATIONFAILED] Invalid credentials (Failure)'")
+
+        t0 = _t.time()
+        with mock.patch.object(gmail_mfa.imaplib, 'IMAP4_SSL', _Boom):
+            code = gmail_mfa.fetch_mfa_code('u@x', 'bad', max_wait_seconds=60, poll_interval=1)
+        self.assertIsNone(code)
+        self.assertLess(_t.time() - t0, 5)

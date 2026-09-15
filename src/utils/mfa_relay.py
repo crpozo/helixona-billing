@@ -38,15 +38,23 @@ def post_manual_code(dynamodb, code: str) -> dict:
 
 
 def wait_for_manual_code(dynamodb, requested_at: str, timeout_s: int = 240,
-                         poll_s: int = 3) -> str:
+                         poll_s: int = 3, until=None) -> str:
     """Poll for a code submitted after `requested_at` (ISO UTC). Consumes it.
 
-    Returns '' when the wait runs out. Never raises: a table hiccup here must
-    read as "no code", not as a crashed login.
+    Returns '' when the wait runs out, or as soon as `until()` returns True —
+    the caller's sign that the code is no longer needed, e.g. a person typed
+    it straight into the portal over the VNC. Never raises: a table hiccup
+    here must read as "no code", not as a crashed login.
     """
     deadline = time.time() + timeout_s
     announced = False
     while time.time() < deadline:
+        try:
+            if until is not None and until():
+                logger.info("  the 2-step screen is gone — someone completed it on screen; not waiting for a code")
+                return ''
+        except Exception:
+            pass
         try:
             table = dynamodb.Table(TABLE)
             item = table.get_item(Key={'task_id': RELAY_KEY}).get('Item') or {}

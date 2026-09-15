@@ -23,6 +23,18 @@ logger = get_logger(__name__)
 CLAIM_STATUS_URL = "https://www.blueshieldca.com/providerwebapp/claims/claimStatus"
 
 
+def _past_mfa(page) -> bool:
+    """True once the 2-step screen is no longer showing — the code was typed,
+    by the bot or by a person watching over the VNC."""
+    try:
+        if 'providerwebapp' in urlparse(page.url).path:
+            return True
+        text = page.inner_text('body').lower()
+        return not any(kw in text for kw in ('2-step', 'verification code', 'enter that code'))
+    except Exception:
+        return False
+
+
 def login_to_provider_portal(page, aws_client) -> bool:
     """Leave `page` inside the portal (a `providerwebapp` path), or return False.
 
@@ -216,10 +228,14 @@ def login_to_provider_portal(page, aws_client) -> bool:
                 # AUTHENTICATIONFAILED and yields nothing). The operator can
                 # type the code into the dashboard's 🔐 MFA code box instead.
                 logger.warning("⌛ No code from Gmail — waiting up to 4 minutes for one typed "
-                               "into the dashboard (🔐 MFA code box on any bot tab)")
-                mfa_code = wait_for_manual_code(aws_client.dynamodb, code_requested_at)
+                               "into the dashboard (🔐 MFA code box on any bot tab), or for the "
+                               "2-step to be completed by hand on the bot's screen (noVNC)")
+                mfa_code = wait_for_manual_code(aws_client.dynamodb, code_requested_at,
+                                                until=lambda: _past_mfa(page))
 
-            if mfa_code:
+            if not mfa_code and _past_mfa(page):
+                logger.info("✅ 2-step completed on screen by a person — continuing")
+            elif mfa_code:
                 logger.info(f"✅ MFA code: {mfa_code}")
                 code_field = page.query_selector(
                     'input[name="pf.challengeResponse"], '
