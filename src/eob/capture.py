@@ -21,7 +21,6 @@ anything. Every miss leaves a screenshot in /tmp and a log line naming it —
 the selectors here were written from a recording, not from the live DOM, and
 the first run is expected to teach us something.
 """
-import csv
 import hashlib
 import json
 import os
@@ -211,63 +210,49 @@ def _rows_with_links(hdrs, raw_rows):
     return rows
 
 
-def _try_export(page):
-    """The portal's Export gives every result (up to 5,000) in one file; the
-    on-screen list stops at 1,000. Returns parsed rows or None."""
-    try:
-        with page.expect_download(timeout=20000) as dl:
-            page.click('text=Export', timeout=5000)
-        path = os.path.join(DIAG_DIR, 'eob_export' + os.path.splitext(dl.value.suggested_filename or '.csv')[1])
-        dl.value.save_as(path)
-        logger.info(f"  ✅ Export downloaded: {path}")
-    except Exception as e:
-        logger.info(f"  (no export: {str(e)[:80]})")
-        return None
-    try:
-        if path.lower().endswith('.csv'):
-            with open(path, newline='', encoding='utf-8-sig') as fh:
-                reader = csv.reader(fh)
-                table = [r for r in reader if any(c.strip() for c in r)]
-        else:
-            import openpyxl
-            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            table = [[str(c) if c is not None else '' for c in row]
-                     for row in wb.active.iter_rows(values_only=True)]
-        if len(table) < 2:
-            return None
-        rows = rows_by_header(table[0], table[1:])
-        logger.info(f"  export columns: {table[0]}")
-        return rows
-    except Exception as e:
-        logger.warning(f"  ⚠️ export file unreadable: {e}")
-        return None
+def _check_no(row):
+    """The row's Check/EFT number, or '' when the cell is not one."""
+    ck = norm_text(row.get('check_eft'))
+    return ck if re.fullmatch(r'\d{5,}', ck) else ''
 
 
-def _collect_results(page):
-    rows = _try_export(page)
-    if rows:
-        return rows, 'export'
-    clicks = 0
-    while clicks < 80:
-        btn = page.query_selector('button:has-text("Show more claims")')
-        if not (btn and btn.is_visible()):
-            break
-        btn.click()
-        clicks += 1
-        time.sleep(3)
-    if clicks:
-        logger.info(f"  loaded {clicks} more pages")
+def _visible_results(page):
+    """The rows on screen right now, with the cheque links they carry."""
     hdrs, raw = _read_table(page)
-    rows = _rows_with_links(hdrs, raw)
-    if not rows:
-        body = page.inner_text('body')
-        if any(m in body.lower() for m in NO_RESULTS_MARKERS):
-            logger.info("  portal reports no claims for these filters")
-            return [], 'empty'
-        logger.warning(f"  ⚠️ no rows parsed. headers seen: {hdrs[:20]}; "
-                       f"raw rows: {len(raw)}; first raw: {raw[0]['cells'][:12] if raw else None}")
-        _shot(page, 'results_unparsed')
-    return rows, 'dom'
+    return _rows_with_links(hdrs, raw), hdrs, raw
+
+
+def _show_more(page):
+    """Load the next page of results. False when there is no more to load."""
+    btn = page.query_selector('button:has-text("Show more claims")')
+    if not (btn and btn.is_visible()):
+        return False
+    btn.scroll_into_view_if_needed()
+    btn.click()
+    time.sleep(3)
+    return True
+
+
+def _back_to_results(page):
+    """Leave a Check/EFT details page for the results list, when on one."""
+    try:
+        back = page.query_selector('a:has-text("Back to search results"), button:has-text("Back to search results")')
+        on_details = (back and back.is_visible()) or 'Check/EFT details' in page.inner_text('body')
+    except Exception:
+        return
+    if not on_details:
+        return
+    if back and back.is_visible():
+        back.click()
+        logger.info("  ↩ Back to search results")
+    else:
+        page.go_back(wait_until='domcontentloaded', timeout=30000)
+        logger.info("  ↩ browser back to the results")
+    try:
+        page.wait_for_load_state('networkidle', timeout=15000)
+    except Exception:
+        pass
+    time.sleep(2)
 
 
 # --------------------------------------------------------- per-cheque work
@@ -342,12 +327,11 @@ def _sha256(path):
 def _open_check_link(page, check):
     """Click the cheque's link in the search results.
 
-    The results came from the portal's export, so there is no href to go to —
-    the link has to be clicked on screen. After one cheque's details page the
-    results are gone from the screen, and clicking the next link there timed
-    out on every cheque but the first (2026-09-15). So: back to the results
-    first ("Back to search results" on the details page, else the browser's
-    back), then "Show more claims" until this cheque's link is on the page.
+    Rows are read off the screen page by page, and the portal's cheque link
+    is not always a plain href — so the link is clicked. If a details page is
+    still up from the previous cheque, back to the results first; then "Show
+    more claims" until this cheque's link is on the page (the portal may
+    reset to the first page after a back).
     """
     link = f'a:has-text("{check}")'
 
@@ -359,30 +343,12 @@ def _open_check_link(page, check):
             return False
 
     if not visible():
-        # Only leave a DETAILS page. On the results page itself the link is
-        # simply further down, and the browser's back would drop the search.
-        back = page.query_selector('a:has-text("Back to search results"), button:has-text("Back to search results")')
-        on_details = (back and back.is_visible()) or 'Check/EFT details' in page.inner_text('body')
-        if on_details:
-            if back and back.is_visible():
-                back.click()
-                logger.info("  ↩ Back to search results")
-            else:
-                page.go_back(wait_until='domcontentloaded', timeout=30000)
-                logger.info("  ↩ browser back to the results")
-            try:
-                page.wait_for_load_state('networkidle', timeout=15000)
-            except Exception:
-                pass
-            time.sleep(2)
+        _back_to_results(page)
     for _ in range(80):
         if visible():
             break
-        more = page.query_selector('button:has-text("Show more claims")')
-        if not (more and more.is_visible()):
+        if not _show_more(page):
             break
-        more.click()
-        time.sleep(2.5)
     if not visible():
         _shot(page, f'{check}_link_missing')
         raise RuntimeError(f'the link for cheque {check} is not on the results page')
@@ -558,22 +524,8 @@ def run_eob_capture(page, aws_client, body):
     time.sleep(2)
 
     _apply_filters(page, since)
-    rows, how = _collect_results(page)
-    logger.info(f"📋 {len(rows)} finalized/paid row(s) via {how}")
-    if not rows:
-        return {'ok': True, 'checks': 0, 'rows': 0}
 
-    checks = {}
-    for r in rows:
-        ck = norm_text(r.get('check_eft'))
-        if not re.fullmatch(r'\d{5,}', ck):
-            continue
-        checks.setdefault(ck, {'href': '', 'rows': []})
-        checks[ck]['rows'].append(r)
-        if r.get('check_href') and not checks[ck]['href']:
-            checks[ck]['href'] = r['check_href']
-    logger.info(f"🧾 {len(checks)} distinct Check/EFT number(s)")
-
+    # What is already on file, so a run can be repeated and only does new work.
     claim_idx = index_claims(scan_all(
         aws_client.dynamodb.Table(CLAIMS_TABLE),
         ProjectionExpression='claim_id, subscriber_id, service_date, dos, charges'))
@@ -584,23 +536,80 @@ def run_eob_capture(page, aws_client, body):
         if it.get('eob_pdf_sha256'):
             known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
                                                      str(it.get('eob_pdf_s3_path') or ''))
+    logger.info(f"💾 {len(done)} cheque(s) already on file")
 
-    captured, skipped, failed = 0, 0, 0
-    for ck, info in checks.items():
-        if only and ck != only:
-            continue
-        if limit and captured + failed >= limit:
+    # Page by page through the results on screen. Every cheque is saved the
+    # moment it is captured, so a crash or a portal hiccup loses nothing and
+    # the next run picks up where this one stopped. No export: the portal's
+    # file did not line up with the screen.
+    seen, pages = set(), 0
+    captured, skipped, failed, rows_seen = 0, 0, 0, 0
+    stop = False
+    while not stop:
+        _back_to_results(page)
+        rows, hdrs, raw = _visible_results(page)
+        if not rows and pages == 0:
+            body = page.inner_text('body')
+            if any(m in body.lower() for m in NO_RESULTS_MARKERS):
+                logger.info("  portal reports no claims for these filters")
+            else:
+                logger.warning(f"  ⚠️ no rows parsed. headers seen: {hdrs[:20]}; "
+                               f"raw rows: {len(raw)}; first raw: {raw[0]['cells'][:12] if raw else None}")
+                _shot(page, 'results_unparsed')
             break
-        if done.get(ck) and not force:
-            skipped += 1
-            continue
-        try:
-            _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx, known_pdfs)
-            captured += 1
-        except Exception as e:
-            failed += 1
-            logger.error(f"  ❌ Check {ck} failed: {e}")
-            _shot(page, f'{ck}_error')
-    logger.info(f"═══ Remittance complete: {captured} captured · {skipped} already on file · {failed} failed ═══")
+        rows_seen = max(rows_seen, len(rows))
+
+        checks = {}
+        for r in rows:
+            ck = _check_no(r)
+            if not ck:
+                continue
+            checks.setdefault(ck, {'href': '', 'rows': []})
+            checks[ck]['rows'].append(r)
+            if r.get('check_href') and not checks[ck]['href']:
+                checks[ck]['href'] = r['check_href']
+        new = [ck for ck in checks if ck not in seen]
+        logger.info(f"📄 results page {pages + 1}: {len(rows)} row(s) on screen, {len(new)} cheque(s) not yet looked at")
+
+        for ck in new:
+            seen.add(ck)
+            info = checks[ck]
+            if only and ck != only:
+                continue
+            if done.get(ck) and not force:
+                skipped += 1
+                continue
+            if limit and captured + failed >= limit:
+                stop = True
+                break
+            try:
+                _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx, known_pdfs)
+                captured += 1
+                done[ck] = True
+            except Exception as e:
+                failed += 1
+                logger.error(f"  ❌ Check {ck} failed: {e}")
+                _shot(page, f'{ck}_error')
+            logger.info(f"  progress: {captured} captured · {skipped} on file · {failed} failed")
+        if stop:
+            break
+
+        # Next page of results. After a back the portal may be at the first
+        # page again, so keep loading until something unseen appears.
+        _back_to_results(page)
+        found_new = False
+        for _ in range(200):
+            if not _show_more(page):
+                break
+            pages += 1
+            rows, _h, _r = _visible_results(page)
+            if any(_check_no(r) and _check_no(r) not in seen for r in rows):
+                found_new = True
+                break
+        if not found_new:
+            break
+
+    logger.info(f"═══ Remittance complete: {captured} captured · {skipped} already on file · {failed} failed "
+                f"· {len(seen)} cheque(s) seen over {pages + 1} page(s) ═══")
     return {'ok': True, 'captured': captured, 'skipped': skipped, 'failed': failed,
-            'checks': len(checks), 'rows': len(rows)}
+            'checks': len(seen), 'rows': rows_seen}

@@ -292,6 +292,20 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn("on_details = ", c)
         self.assertIn('_open_check_link(page, check)', c[c.index('def _capture_check('):])
 
+    def test_results_are_walked_on_screen_page_by_page_not_exported(self):
+        # The operator's call (2026-09-15): the export did not line up with the
+        # screen. Cheques are read off the results as shown, "Show more claims"
+        # at a time, and each one is saved as soon as it is captured.
+        c = _read('src/eob/capture.py')
+        self.assertNotIn('_try_export', c)
+        self.assertNotIn("page.click('text=Export'", c)
+        self.assertIn('def _show_more(page):', c)
+        self.assertIn('def _back_to_results(page):', c)
+        run = c[c.index('def run_eob_capture('):]
+        self.assertIn('_capture_check(page, aws_client, ck, info[\'href\'], info[\'rows\'], claim_idx, known_pdfs)', run)
+        self.assertIn("done[ck] = True", run)
+        self.assertIn('results page {pages + 1}', run)
+
     def test_a_miss_leaves_a_screenshot(self):
         self.assertIn("_shot(page, 'results_unparsed')", _read('src/eob/capture.py'))
 
