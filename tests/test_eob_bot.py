@@ -217,6 +217,15 @@ class OneLoginSharedByEveryBot(unittest.TestCase):
     def test_the_eob_bot_uses_it_too(self):
         self.assertIn('login_to_provider_portal(page, aws_client)', _read('src/eob/capture.py'))
 
+    def test_forms_are_submitted_through_the_prototype(self):
+        # Blue Shield's pages carry <input name="submit">, which shadows
+        # form.submit() — "form.submit is not a function" killed a capture.
+        s = _read('src/blueshield/session.py')
+        self.assertNotIn('form.submit()', s)
+        self.assertNotIn('f.submit()', s)
+        self.assertIn('HTMLFormElement.prototype.submit.call(form)', s)
+        self.assertNotIn('?.submit()', _read('src/main.py'))
+
     def test_the_shared_login_keeps_the_whole_sequence(self):
         s = _read('src/blueshield/session.py')
         for step in ('pf.username', 'Send code', 'fetch_mfa_code', 'Trust/Remember page detected',

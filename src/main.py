@@ -2052,7 +2052,7 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
                     submit_btn.click()
                     logger.info("✅ Clicked submit on re-auth page")
                 else:
-                    reauth_frame.evaluate('document.querySelector("form")?.submit()')
+                    reauth_frame.evaluate('(f => f && HTMLFormElement.prototype.submit.call(f))(document.querySelector("form"))')
                     logger.info("✅ Submitted re-auth form programmatically")
                 time.sleep(random.uniform(3, 5))
                 post_url = page.url
@@ -3340,7 +3340,7 @@ def process_message(message: dict, aws_client: AWSClient):
                                 submit_btn.click()
                                 logger.info("✅ Clicked submit on re-auth page")
                             else:
-                                reauth_frame.evaluate('document.querySelector("form")?.submit()')
+                                reauth_frame.evaluate('(f => f && HTMLFormElement.prototype.submit.call(f))(document.querySelector("form"))')
                                 logger.info("✅ Submitted re-auth form programmatically")
 
                             time.sleep(random.uniform(3, 5))
@@ -4588,7 +4588,7 @@ def process_message(message: dict, aws_client: AWSClient):
                         if submit_btn:
                             submit_btn.click()
                         else:
-                            reauth_frame.evaluate('document.querySelector("form")?.submit()')
+                            reauth_frame.evaluate('(f => f && HTMLFormElement.prototype.submit.call(f))(document.querySelector("form"))')
                         time.sleep(random.uniform(3, 5))
 
                 # Handle V12 Plugin popup

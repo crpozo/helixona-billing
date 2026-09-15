@@ -1156,11 +1156,12 @@ window.scrollToEl = function(sel){
 
         // ---- Live screen (noVNC, embedded) ----
         // Follows the active bot tab: Intake :6080, Follow-up :6081,
-        // Remittance :6083. view_only keeps a watcher from typing into the bot.
+        // Remittance :6083. Interactive: a person can take over the bot's browser
+        // (type a code, close a dialog) — the bot is not paused by it.
         function liveScreenUrl() {
             const bot = window.activeBot || 'submissions';
             const port = BOT_NOVNC[bot] || 6080;
-            return `http://54.189.175.233:${port}/vnc.html?autoconnect=true&resize=scale&view_only=true&reconnect=true`;
+            return `http://54.189.175.233:${port}/vnc.html?autoconnect=true&resize=scale&reconnect=true`;
         }
         function syncLiveScreen() {
             const panel = document.getElementById('live-screen');

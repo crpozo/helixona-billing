@@ -134,7 +134,7 @@ def login_to_provider_portal(page, aws_client) -> bool:
                     if (form) {
                         const okField = document.querySelector('input[name="pf.ok"]');
                         if (okField) okField.value = "clicked";
-                        form.submit();
+                        HTMLFormElement.prototype.submit.call(form);
                     }
                 }''')
                 logger.info("✅ Form submitted (fallback)")
@@ -166,7 +166,7 @@ def login_to_provider_portal(page, aws_client) -> bool:
                     if (form) {
                         const okField = document.querySelector('input[name="pf.ok"]');
                         if (okField) okField.value = "clicked";
-                        form.submit();
+                        HTMLFormElement.prototype.submit.call(form);
                     }
                 }''')
                 time.sleep(random.uniform(2, 4))
@@ -200,7 +200,7 @@ def login_to_provider_portal(page, aws_client) -> bool:
                 page.click('text=Send code', timeout=5000)
                 logger.info("✅ Clicked 'Send code'")
             except Exception:
-                page.evaluate('() => { const f = document.querySelector("form"); if (f) f.submit(); }')
+                page.evaluate('() => { const f = document.querySelector("form"); if (f) HTMLFormElement.prototype.submit.call(f); }')
 
             time.sleep(3)
 
@@ -244,7 +244,7 @@ def login_to_provider_portal(page, aws_client) -> bool:
                         if 'providerwebapp' in page.url:
                             break
                         if page.title() == 'Sign On':
-                            page.evaluate('() => { const f = document.querySelector("form"); if (f) f.submit(); }')
+                            page.evaluate('() => { const f = document.querySelector("form"); if (f) HTMLFormElement.prototype.submit.call(f); }')
                             time.sleep(3)
                         else:
                             break
@@ -263,14 +263,20 @@ def login_to_provider_portal(page, aws_client) -> bool:
         # Handle ping-ext / SSO pass-through pages
         if 'ping-ext' in cur_url or page.title() == 'Sign On':
             logger.info(f"Intermediate page: {page.title()} — auto-submitting")
-            page.evaluate('''() => {
-                const form = document.querySelector('form');
-                if (form) {
-                    const okField = document.querySelector('input[name="pf.ok"]');
-                    if (okField) okField.value = "clicked";
-                    form.submit();
-                }
-            }''')
+            # The form is submitted through the prototype: Blue Shield's pages
+            # carry an <input name="submit">, which shadows form.submit() and
+            # made this throw "form.submit is not a function" (2026-09-15).
+            try:
+                page.evaluate('''() => {
+                    const form = document.querySelector('form');
+                    if (form) {
+                        const okField = document.querySelector('input[name="pf.ok"]');
+                        if (okField) okField.value = "clicked";
+                        HTMLFormElement.prototype.submit.call(form);
+                    }
+                }''')
+            except Exception as e:
+                logger.warning(f"  auto-submit did not run ({str(e)[:80]}); the page may have moved on")
             time.sleep(3)
             continue
 
@@ -292,7 +298,7 @@ def login_to_provider_portal(page, aws_client) -> bool:
                 # Fallback: submit any form
                 page.evaluate('''() => {
                     const form = document.querySelector('form');
-                    if (form) form.submit();
+                    if (form) HTMLFormElement.prototype.submit.call(form);
                 }''')
                 logger.info("✅ Auto-submitted trust page form")
             time.sleep(3)
@@ -301,7 +307,7 @@ def login_to_provider_portal(page, aws_client) -> bool:
         # Unknown page — log and try submitting form
         logger.info(f"Unknown intermediate page: {page.title()[:50]} | {cur_url[:80]}")
         try:
-            page.evaluate('() => { const f = document.querySelector("form"); if (f) f.submit(); }')
+            page.evaluate('() => { const f = document.querySelector("form"); if (f) HTMLFormElement.prototype.submit.call(f); }')
         except Exception:
             pass
         time.sleep(3)

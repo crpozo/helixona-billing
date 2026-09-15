@@ -138,7 +138,8 @@ class TheLiveScreenIsOnTheDashboard(unittest.TestCase):
     def test_the_panel_follows_the_active_bot(self):
         d = _read('dashboard.py')
         self.assertIn('id="live-screen-frame"', d)
-        self.assertIn('view_only=true', d)
+        # Interactive on purpose: a person must be able to take over the bot's browser.
+        self.assertNotIn('view_only=true', d)
         self.assertIn('const port = BOT_NOVNC[bot] || 6080;', d)
         self.assertIn("if (typeof syncLiveScreen === 'function') syncLiveScreen();", d)
 
