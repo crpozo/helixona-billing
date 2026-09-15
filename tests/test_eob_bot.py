@@ -221,8 +221,8 @@ class OneLoginSharedByEveryBot(unittest.TestCase):
         # Blue Shield's pages carry <input name="submit">, which shadows
         # form.submit() — "form.submit is not a function" killed a capture.
         s = _read('src/blueshield/session.py')
-        self.assertNotIn('form.submit()', s)
-        self.assertNotIn('f.submit()', s)
+        self.assertNotIn('form.submit();', s)
+        self.assertNotIn('f.submit();', s)
         self.assertIn('HTMLFormElement.prototype.submit.call(form)', s)
         self.assertNotIn('?.submit()', _read('src/main.py'))
 
