@@ -33,7 +33,7 @@ from src.blueshield.session import login_to_provider_portal, CLAIM_STATUS_URL
 from src.eob.eob_pdf import read_eob_pdf
 from src.eob.parse import (
     dos_start, index_claims, match_claim, money, norm_text,
-    parse_check_summary, parse_eob_pdf_text, rows_by_header,
+    parse_check_summary, parse_eob_pdf_text, rows_by_header, rows_with_links,
 )
 from src.utils.logger import get_logger
 
@@ -50,25 +50,32 @@ DIAG_DIR = '/tmp'
 NO_RESULTS_MARKERS = ("couldn't find any claims", "couldn’t find any claims",
                       "we couldn't find", "we couldn’t find")
 
-# One DOM read for any Angular-Material or plain table on the page: header
-# texts, then each row's cell texts and links. Parsed BY HEADER NAME in
-# parse.rows_by_header, never by position.
+# One DOM read of the results table: header texts, then each row's cell
+# texts and links. Parsed BY HEADER NAME in parse.rows_by_header, never by
+# position. Headers are kept as they are, EMPTY ONES INCLUDED, so they line
+# up with the cells; the table with the most rows is the results table, the
+# rest of the page (filters, pagers) is left alone.
 TABLE_JS = r"""(() => {
-    const txt = el => (el.innerText || el.textContent || '').trim();
-    const hdrs = Array.from(document.querySelectorAll(
-        'th, [role="columnheader"], mat-header-cell')).map(txt).filter(Boolean);
-    const rowEls = Array.from(document.querySelectorAll(
-        'tbody tr, tr[mat-row], mat-row, [role="row"]'));
-    const rows = [];
-    for (const r of rowEls) {
-        const cells = Array.from(r.querySelectorAll(
-            'td, mat-cell, [role="cell"], [role="gridcell"]')).map(txt);
-        if (cells.length < 3) continue;
-        const links = Array.from(r.querySelectorAll('a[href]')).map(a => ({
-            text: txt(a), href: a.href }));
-        rows.push({ cells, links });
+    const txt = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    const read = c => {
+        const hdrs = Array.from(c.querySelectorAll('th, [role="columnheader"], mat-header-cell')).map(txt);
+        const rows = [];
+        for (const r of c.querySelectorAll('tbody tr, tr[mat-row], mat-row, [role="row"]')) {
+            const cells = Array.from(r.querySelectorAll('td, mat-cell, [role="cell"], [role="gridcell"]')).map(txt);
+            if (cells.length < 3) continue;
+            const links = Array.from(r.querySelectorAll('a, button')).map(a => ({ text: txt(a), href: a.href || '' }));
+            rows.push({ cells, links });
+        }
+        return { hdrs, rows };
+    };
+    let best = null;
+    for (const c of document.querySelectorAll('table, mat-table, [role="table"], [role="grid"]')) {
+        const got = read(c);
+        if (!got.rows.length) continue;
+        if (!best || got.rows.length > best.rows.length
+            || (got.rows.length === best.rows.length && got.hdrs.length < best.hdrs.length)) best = got;
     }
-    return { hdrs, rows };
+    return best || read(document);
 })"""
 
 
@@ -191,25 +198,6 @@ def _read_table(page):
     return data.get('hdrs', []), data.get('rows', [])
 
 
-def _rows_with_links(hdrs, raw_rows):
-    rows = rows_by_header(hdrs, [r['cells'] for r in raw_rows])
-    # rows_by_header drops non-claim rows, so re-pair links by claim number.
-    by_claim = {}
-    for r in raw_rows:
-        cells = ' '.join(r['cells'])
-        m = re.search(r'\b(\d{12})\b', cells)
-        if m:
-            by_claim[m.group(1)] = r['links']
-    for row in rows:
-        links = by_claim.get(row.get('bsc_claim_number'), [])
-        for l in links:
-            if row.get('check_eft') and l['text'] == row['check_eft']:
-                row['check_href'] = l['href']
-            elif 'eob' in l['text'].lower():
-                row['eob_href'] = l['href']
-    return rows
-
-
 def _check_no(row):
     """The row's Check/EFT number, or '' when the cell is not one."""
     ck = norm_text(row.get('check_eft'))
@@ -219,7 +207,7 @@ def _check_no(row):
 def _visible_results(page):
     """The rows on screen right now, with the cheque links they carry."""
     hdrs, raw = _read_table(page)
-    return _rows_with_links(hdrs, raw), hdrs, raw
+    return rows_with_links(hdrs, raw), hdrs, raw
 
 
 def _show_more(page):
@@ -333,7 +321,7 @@ def _open_check_link(page, check):
     more claims" until this cheque's link is on the page (the portal may
     reset to the first page after a back).
     """
-    link = f'a:has-text("{check}")'
+    link = f'a:has-text("{check}"), button:has-text("{check}")'
 
     def visible():
         try:
@@ -357,7 +345,11 @@ def _open_check_link(page, check):
 
 def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
-    if href:
+    # A real address is followed; a fragment on the results page itself, or a
+    # javascript: link, is not an address — the link is clicked instead.
+    usable = (str(href or '').startswith('http')
+              and href.split('#')[0] != page.url.split('#')[0])
+    if usable:
         page.goto(href, wait_until='domcontentloaded', timeout=60000)
     else:
         _open_check_link(page, check)
@@ -558,6 +550,18 @@ def run_eob_capture(page, aws_client, body):
                 _shot(page, 'results_unparsed')
             break
         rows_seen = max(rows_seen, len(rows))
+        if pages == 0:
+            # The layout, once per run, so a change in the portal is visible
+            # in the log rather than guessed at.
+            logger.info(f"  columns: {hdrs}")
+            if raw:
+                logger.info(f"  first row: {raw[0]['cells'][:14]}")
+                logger.info(f"  first row links: {[l['text'] for l in raw[0]['links']][:8]}")
+            if rows and not any(_check_no(r) for r in rows):
+                logger.warning("  ⚠️ rows were read but none carries a cheque number — the results "
+                               "table is not laid out as expected; not paging further")
+                _shot(page, 'results_no_checks')
+                break
 
         checks = {}
         for r in rows:

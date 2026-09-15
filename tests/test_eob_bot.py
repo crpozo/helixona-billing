@@ -10,7 +10,7 @@ import unittest
 
 from src.eob.parse import (
     dos_start, header_key, index_claims, match_claim, money,
-    parse_check_summary, parse_eob_pdf_text, rows_by_header,
+    parse_check_summary, parse_eob_pdf_text, rows_by_header, rows_with_links,
 )
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,6 +64,37 @@ class ResultsAreReadByHeaderName(unittest.TestCase):
         r = rows_by_header(INPROCESS_HEADERS, [row])[0]
         self.assertEqual(r['check_eft'], '30979207')
         self.assertEqual(r['amount_paid'], '$0.00')
+
+    def test_an_unnamed_column_does_not_shift_the_values(self):
+        # A select-all checkbox column has a cell in every row and no header
+        # text. 2026-09-15: fifty rows read, not one cheque number among them.
+        r = rows_by_header(FINALIZED_HEADERS, [[''] + FINALIZED_ROW])[0]
+        self.assertEqual(r['check_eft'], '30979207')
+        self.assertEqual(r['amount_paid'], '$263.67')
+        self.assertEqual(r['column_shift'], 1)
+        # And when the empty header IS reported, nothing needs sliding.
+        r = rows_by_header([''] + FINALIZED_HEADERS, [[''] + FINALIZED_ROW])[0]
+        self.assertEqual(r['check_eft'], '30979207')
+        self.assertNotIn('column_shift', r)
+
+    def test_a_row_whose_claim_cell_is_not_a_number_is_not_a_claim(self):
+        row = ['FINALIZED 09/07/2026', 'not a number', 'Medical', '01/23/2026', 'View EOB',
+               'GRAY', '909681878', 'HELIXONA', '$1.00', '$1.00', '$0.00', '30979207']
+        self.assertEqual(rows_by_header(FINALIZED_HEADERS, [row]), [])
+
+    def test_the_cheque_link_is_the_fallback_for_the_cheque_number(self):
+        # A layout whose cheque column is named something new: the number is
+        # still the row's one numeric link that is not the claim number.
+        hdrs = [h if h != 'Check/EFT number' else 'Payment reference' for h in FINALIZED_HEADERS]
+        raw = [{'cells': FINALIZED_ROW,
+                'links': [{'text': '260703051601', 'href': 'https://p/claim'},
+                          {'text': 'View EOB', 'href': 'https://p/eob'},
+                          {'text': '30979207', 'href': 'https://p/check'}]}]
+        r = rows_with_links(hdrs, raw)[0]
+        self.assertEqual(r['check_eft'], '30979207')
+        self.assertEqual(r['check_from'], 'link')
+        self.assertEqual(r['check_href'], 'https://p/check')
+        self.assertEqual(r['eob_href'], 'https://p/eob')
 
     def test_rows_without_a_claim_number_are_not_claims(self):
         self.assertEqual(rows_by_header(FINALIZED_HEADERS, [['(adjusted)', '', '']]), [])
@@ -305,6 +336,25 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn('_capture_check(page, aws_client, ck, info[\'href\'], info[\'rows\'], claim_idx, known_pdfs)', run)
         self.assertIn("done[ck] = True", run)
         self.assertIn('results page {pages + 1}', run)
+
+    def test_the_table_reader_keeps_empty_headers_and_reads_one_table(self):
+        c = _read('src/eob/capture.py')
+        js = c[c.index('TABLE_JS = r"""'):c.index('def _shot(')]
+        self.assertNotIn('.filter(Boolean)', js)
+        self.assertIn("querySelectorAll('table, mat-table, [role=\"table\"], [role=\"grid\"]')", js)
+        self.assertIn("querySelectorAll('a, button')", js)
+
+    def test_a_layout_without_cheque_numbers_is_reported_not_paged(self):
+        c = _read('src/eob/capture.py')
+        run = c[c.index('def run_eob_capture('):]
+        self.assertIn("logger.info(f\"  columns: {hdrs}\")", run)
+        self.assertIn("_shot(page, 'results_no_checks')", run)
+        self.assertLess(run.index("_shot(page, 'results_no_checks')"), run.index('for ck in new:'))
+
+    def test_the_pdf_link_opens_in_the_browser(self):
+        d = _read('dashboard.py')
+        self.assertIn("'ResponseContentType': 'application/pdf'", d)
+        self.assertIn("'ResponseContentDisposition': f'inline; filename=\"eob_{check_eft}.pdf\"'", d)
 
     def test_a_miss_leaves_a_screenshot(self):
         self.assertIn("_shot(page, 'results_unparsed')", _read('src/eob/capture.py'))

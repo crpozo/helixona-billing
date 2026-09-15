@@ -2243,8 +2243,15 @@ def api_eob_pdf(check_eft):
         if not s3_path.startswith('s3://'):
             return jsonify({'error': 'no PDF on file for this cheque'}), 404
         bucket, key = s3_path[5:].split('/', 1)
+        # Shown in the browser's PDF viewer, not downloaded: the object was
+        # stored as binary/octet-stream, so the type and disposition are set
+        # on the way out.
         url = session.client('s3').generate_presigned_url(
-            'get_object', Params={'Bucket': bucket, 'Key': key}, ExpiresIn=600)
+            'get_object',
+            Params={'Bucket': bucket, 'Key': key,
+                    'ResponseContentType': 'application/pdf',
+                    'ResponseContentDisposition': f'inline; filename="eob_{check_eft}.pdf"'},
+            ExpiresIn=600)
         return redirect(url)
     except Exception as e:
         return jsonify({'error': str(e)}), 500

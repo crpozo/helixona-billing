@@ -64,29 +64,85 @@ def header_key(header: str):
     return None
 
 
+CLAIM_NO_RE = re.compile(r'(\d{6,})\s*(?:\((.*?)\))?')
+CHECK_NO_RE = re.compile(r'\d{5,11}')
+
+
 def rows_by_header(headers, rows):
     """Turn header texts + cell-text rows into dicts keyed by canonical name.
 
     Cells beyond the header count are ignored; short rows fill what they can.
     Rows with no recognisable claim number are dropped — they are spacer or
     note rows ("(adjusted)"), not claims.
+
+    A column the header row does not name — a select-all checkbox, a chevron
+    — puts one cell more in each row than there are headers, and every value
+    lands one column to the left of its name. Each row is therefore slid
+    until its claim number sits under the "Claim number" header (2026-09-15:
+    fifty rows parsed, not one cheque number among them).
     """
     keys = [header_key(h) for h in headers]
+    claim_at = next((i for i, k in enumerate(keys) if k == 'bsc_claim_number'), None)
     out = []
     for cells in rows:
+        cells = [norm_text(c) for c in cells]
+        shift = 0
+        if claim_at is not None:
+            for cand in (0, 1, -1, 2, -2):
+                j = claim_at + cand
+                if 0 <= j < len(cells) and CLAIM_NO_RE.match(cells[j]):
+                    shift = cand
+                    break
+        aligned = cells[shift:] if shift >= 0 else [''] * (-shift) + cells
         d = {}
-        for k, v in zip(keys, cells):
+        for k, v in zip(keys, aligned):
             if k and k not in d:
-                d[k] = norm_text(v)
-        if d.get('bsc_claim_number'):
-            # "260703051601 (adjusted)" -> keep the number, remember the note.
-            m = re.match(r'(\d{6,})\s*(?:\((.*?)\))?', d['bsc_claim_number'])
-            if m:
-                d['bsc_claim_number'] = m.group(1)
-                if m.group(2):
-                    d['claim_note'] = m.group(2)
-            out.append(d)
+                d[k] = v
+        # "260703051601 (adjusted)" -> keep the number, remember the note.
+        m = CLAIM_NO_RE.match(d.get('bsc_claim_number', ''))
+        if not m:
+            continue
+        d['bsc_claim_number'] = m.group(1)
+        if m.group(2):
+            d['claim_note'] = m.group(2)
+        if shift:
+            d['column_shift'] = shift
+        out.append(d)
     return out
+
+
+def rows_with_links(headers, raw_rows):
+    """rows_by_header over DOM rows ({'cells', 'links'}), with each row's
+    cheque and EOB links attached.
+
+    The cheque number is a link on the results page. When the header
+    mapping did not yield one (a column named unexpectedly, a layout not
+    seen before) the link is the fallback: the row's one link whose text is
+    a 5-to-11-digit number that is not the 12-digit claim number.
+    """
+    rows = rows_by_header(headers, [r['cells'] for r in raw_rows])
+    # rows_by_header drops non-claim rows, so re-pair links by claim number.
+    by_claim = {}
+    for r in raw_rows:
+        m = re.search(r'\b(\d{12})\b', ' '.join(str(c) for c in r.get('cells', [])))
+        if m:
+            by_claim[m.group(1)] = r.get('links', [])
+    for row in rows:
+        links = by_claim.get(row.get('bsc_claim_number'), [])
+        if not CHECK_NO_RE.fullmatch(row.get('check_eft', '')):
+            numbered = [l for l in links
+                        if CHECK_NO_RE.fullmatch(norm_text(l.get('text')))
+                        and norm_text(l.get('text')) != row['bsc_claim_number']]
+            if len(numbered) == 1:
+                row['check_eft'] = norm_text(numbered[0]['text'])
+                row['check_from'] = 'link'
+        for l in links:
+            t = norm_text(l.get('text'))
+            if row.get('check_eft') and t == row['check_eft'] and l.get('href'):
+                row['check_href'] = l['href']
+            elif 'eob' in t.lower() and l.get('href'):
+                row['eob_href'] = l['href']
+    return rows
 
 
 def money(s):

@@ -117,7 +117,10 @@ class AWSClient:
 
     def upload_to_s3(self, file_path: str, object_name: str):
         try:
-            self.s3.upload_file(file_path, settings.s3_bucket_name, object_name)
+            import mimetypes
+            ctype = mimetypes.guess_type(object_name)[0] or mimetypes.guess_type(file_path)[0]
+            extra = {'ContentType': ctype} if ctype else {}
+            self.s3.upload_file(file_path, settings.s3_bucket_name, object_name, ExtraArgs=extra or None)
             logger.info(f"Uploaded {file_path} to s3://{settings.s3_bucket_name}/{object_name}")
             return f"s3://{settings.s3_bucket_name}/{object_name}"
         except Exception as e:
