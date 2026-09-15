@@ -49,9 +49,14 @@ rsync -avz -e "ssh -i $KEY_FILE -o StrictHostKeyChecking=no" \
     --exclude='setup_*.py' \
     ./ ubuntu@$EC2_IP:$REMOTE_DIR/
 
-# Copy .env securely
-scp -i $KEY_FILE -o StrictHostKeyChecking=no \
-    .env ubuntu@$EC2_IP:$REMOTE_DIR/.env
+# Copy .env securely — when this checkout has one. A fresh clone has none
+# (.env is git-ignored) and the host keeps the .env from the last deploy.
+if [ -f .env ]; then
+    scp -i $KEY_FILE -o StrictHostKeyChecking=no \
+        .env ubuntu@$EC2_IP:$REMOTE_DIR/.env
+else
+    echo "(no local .env — the host keeps the one it has)"
+fi
 
 # Copy the systemd units for the bots that run today. The IV corrections bot
 # was retired (its unit stays on the host, disabled) and is not touched here.
