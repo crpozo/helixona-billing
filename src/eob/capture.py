@@ -359,18 +359,22 @@ def _open_check_link(page, check):
             return False
 
     if not visible():
+        # Only leave a DETAILS page. On the results page itself the link is
+        # simply further down, and the browser's back would drop the search.
         back = page.query_selector('a:has-text("Back to search results"), button:has-text("Back to search results")')
-        if back and back.is_visible():
-            back.click()
-            logger.info("  ↩ Back to search results")
-        else:
-            page.go_back(wait_until='domcontentloaded', timeout=30000)
-            logger.info("  ↩ browser back to the results")
-        try:
-            page.wait_for_load_state('networkidle', timeout=15000)
-        except Exception:
-            pass
-        time.sleep(2)
+        on_details = (back and back.is_visible()) or 'Check/EFT details' in page.inner_text('body')
+        if on_details:
+            if back and back.is_visible():
+                back.click()
+                logger.info("  ↩ Back to search results")
+            else:
+                page.go_back(wait_until='domcontentloaded', timeout=30000)
+                logger.info("  ↩ browser back to the results")
+            try:
+                page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                pass
+            time.sleep(2)
     for _ in range(80):
         if visible():
             break
@@ -448,7 +452,12 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
     source_rows = detail_rows or result_rows
     for r in source_rows:
         bsc = r.get('bsc_claim_number', '')
-        cid = acct_by_bsc.get(bsc) or match_claim(r, claim_idx)
+        # The portal's export names our claim outright ("Patient account
+        # number", 2026-09-15); the PDF's account number and subscriber+DOS
+        # are the fallbacks for rows read off the screen.
+        exported = norm_text(r.get('patient_account_number'))
+        exported = exported if re.fullmatch(r'\d{1,7}', exported) else ''
+        cid = acct_by_bsc.get(bsc) or exported or match_claim(r, claim_idx)
         if cid:
             matched += 1
         claims_out.append({
@@ -461,7 +470,9 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
             'amount_paid': money(r.get('amount_paid')),
             'patient_resp': money(r.get('patient_resp')),
             'claim_id': cid,
-            'match_source': 'pdf_account_number' if acct_by_bsc.get(bsc) else ('subscriber_dos' if cid else ''),
+            'match_source': ('pdf_account_number' if acct_by_bsc.get(bsc)
+                             else 'export_account_number' if exported
+                             else 'subscriber_dos' if cid else ''),
         })
 
     now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')

@@ -73,6 +73,32 @@ class ResultsAreReadByHeaderName(unittest.TestCase):
         r = rows_by_header(['Claim number', 'Mystery'], [['260703051601', 'x']])
         self.assertEqual(r[0], {'bsc_claim_number': '260703051601'})
 
+    def test_the_export_columns_are_read_including_our_account_number(self):
+        # The portal's CSV export, columns exactly as seen on 2026-09-15.
+        hdrs = ['Claim status', 'Claim status date', 'Claim number', 'Claim type', 'Date received',
+                'Dates of service', 'Member name', 'Subscriber ID', 'Patient account number',
+                'Provider name', 'Claim amount billed', 'Allowed amount', 'Deductible amount',
+                'Co-Insurance amount', 'Claim amount paid', 'Payment date', 'Patient responsibility',
+                'Check/EFT number', 'Check/EFT date', 'Check/EFT amount', 'Check status', 'ACH number',
+                'ACH amount', 'Payee name', 'Payee address']
+        row = ['FINALIZED', '09/11/2026', '260703051601', 'Medical', '01/25/2026', '01/23/2026-01/23/2026',
+               'GRAY, CASSANDRA', '909681878', '2627', 'HELIXONA INC', '$1,113.00', '$437.82', '$0.00',
+               '$175.13', '$262.69', '09/11/2026', '$850.31', '31401901', '09/11/2026', '$38.81',
+               'Check Number Assigned', '', '', 'HELIXONA INC', '114 Pacifica']
+        r = rows_by_header(hdrs, [row])[0]
+        self.assertEqual(r['patient_account_number'], '2627')
+        self.assertEqual(r['check_eft'], '31401901')
+        self.assertEqual(r['check_date'], '09/11/2026')
+        self.assertEqual(r['check_amount'], '$38.81')
+        self.assertEqual(r['check_status'], 'Check Number Assigned')
+        self.assertEqual(r['allowed'], '$437.82')
+
+    def test_the_export_account_number_pins_the_claim(self):
+        c = _read('src/eob/capture.py')
+        self.assertIn("exported = norm_text(r.get('patient_account_number'))", c)
+        self.assertIn("acct_by_bsc.get(bsc) or exported or match_claim(r, claim_idx)", c)
+        self.assertIn("'export_account_number'", c)
+
     def test_the_check_details_claims_table_uses_the_same_reader(self):
         hdrs = ['Row #', 'Subscriber ID', 'Member name', 'Claim #', 'Dates of service',
                 'Date finalized', 'Claim amount billed', 'Claim amount paid']
@@ -262,6 +288,8 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn('Back to search results', c)
         self.assertIn("page.go_back(", c)
         self.assertLess(c.index('Back to search results'), c.index('page.click(link, timeout=10000)'))
+        # The results page itself is never left: back would drop the search.
+        self.assertIn("on_details = ", c)
         self.assertIn('_open_check_link(page, check)', c[c.index('def _capture_check('):])
 
     def test_a_miss_leaves_a_screenshot(self):
