@@ -65,6 +65,24 @@ class ResultsAreReadByHeaderName(unittest.TestCase):
         self.assertEqual(r['check_eft'], '30979207')
         self.assertEqual(r['amount_paid'], '$0.00')
 
+    def test_the_cheque_cell_carries_a_label_with_the_number(self):
+        # The screen, 2026-09-15: '30912971 Check/EFT information'. The link
+        # text is the same. The number is what we keep.
+        row = ['FINALIZED 09/14/2026', '260308710901 (adjusted)', 'Medical', '01/02/2026–01/02/2026',
+               'View EOB', 'MARTINEZ, KARINA E', '914555917', 'HELIXONA INC', '$1,156.00', '$275.09',
+               '$581.25', '30912971 Check/EFT information']
+        r = rows_by_header(FINALIZED_HEADERS, [row])[0]
+        self.assertEqual(r['check_eft'], '30912971')
+        self.assertEqual(r['check_eft_text'], '30912971 Check/EFT information')
+        self.assertEqual(r['bsc_claim_number'], '260308710901')
+        self.assertEqual(r['claim_note'], 'adjusted')
+        raw = [{'cells': row, 'links': [{'text': '260308710901', 'href': ''}, {'text': 'View EOB', 'href': ''},
+                                        {'text': 'MARTINEZ, KARINA E', 'href': ''},
+                                        {'text': '30912971 Check/EFT information', 'href': 'https://p/k'}]}]
+        r = rows_with_links(FINALIZED_HEADERS, raw)[0]
+        self.assertEqual(r['check_eft'], '30912971')
+        self.assertEqual(r['check_href'], 'https://p/k')
+
     def test_an_unnamed_column_does_not_shift_the_values(self):
         # A select-all checkbox column has a cell in every row and no header
         # text. 2026-09-15: fifty rows read, not one cheque number among them.

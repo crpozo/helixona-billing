@@ -107,6 +107,13 @@ def rows_by_header(headers, rows):
             d['claim_note'] = m.group(2)
         if shift:
             d['column_shift'] = shift
+        # The cheque cell carries a label with the number — "30912971
+        # Check/EFT information" on screen (2026-09-15). Keep the number.
+        if d.get('check_eft'):
+            cm = CHECK_NO_RE.search(d['check_eft'])
+            if cm and cm.group(0) != d['check_eft']:
+                d['check_eft_text'] = d['check_eft']
+                d['check_eft'] = cm.group(0)
         out.append(d)
     return out
 
@@ -127,18 +134,23 @@ def rows_with_links(headers, raw_rows):
         m = re.search(r'\b(\d{12})\b', ' '.join(str(c) for c in r.get('cells', [])))
         if m:
             by_claim[m.group(1)] = r.get('links', [])
+    def number_in(text):
+        t = norm_text(text)
+        if re.search(r'\b\d{12}\b', t):
+            return ''                       # the claim number, not a cheque
+        m = CHECK_NO_RE.search(t)
+        return m.group(0) if m else ''
+
     for row in rows:
         links = by_claim.get(row.get('bsc_claim_number'), [])
         if not CHECK_NO_RE.fullmatch(row.get('check_eft', '')):
-            numbered = [l for l in links
-                        if CHECK_NO_RE.fullmatch(norm_text(l.get('text')))
-                        and norm_text(l.get('text')) != row['bsc_claim_number']]
+            numbered = [l for l in links if number_in(l.get('text'))]
             if len(numbered) == 1:
-                row['check_eft'] = norm_text(numbered[0]['text'])
+                row['check_eft'] = number_in(numbered[0]['text'])
                 row['check_from'] = 'link'
         for l in links:
             t = norm_text(l.get('text'))
-            if row.get('check_eft') and t == row['check_eft'] and l.get('href'):
+            if row.get('check_eft') and number_in(t) == row['check_eft'] and l.get('href'):
                 row['check_href'] = l['href']
             elif 'eob' in t.lower() and l.get('href'):
                 row['eob_href'] = l['href']
