@@ -7,3 +7,5 @@ python-dotenv==1.0.1
 tenacity==8.2.3
 requests
 openpyxl
+pdfplumber
+Pillow

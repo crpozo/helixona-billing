@@ -2877,7 +2877,7 @@ IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 # The EOB bot (Remittance) reads what the payer sent back and enters it into
 # eCW — it never submits, and the submitting bots never touch payments. Fenced
 # both ways, like the IV bot.
-EOB_TASKS = {'eob_capture', 'eob_post'}
+EOB_TASKS = {'eob_capture', 'eob_post', 'check_reconcile'}
 
 
 def process_message(message: dict, aws_client: AWSClient):
@@ -11353,6 +11353,27 @@ def process_message(message: dict, aws_client: AWSClient):
             logger.error(f"EOB posting failed: {e}")
         finally:
             manager.stop()
+
+    elif task_type == 'check_reconcile':
+        # Remittance: which cheques are posted, unposted, missing from eCW,
+        # and which we hold no copy of. Cheque images from SharePoint (or the
+        # S3 inbox) + Blue Shield's captured cheques + eCW's Payments list.
+        # Read-only everywhere. The browser opens only if eCW is consulted.
+        logger.info("═══ Remittance — cheque reconciliation ═══")
+        from src.checks.run import run_check_reconcile
+        holder = {}
+
+        def get_page():
+            holder['manager'] = BrowserManager().start(proxy_config=None)
+            return holder['manager'].new_page()
+
+        try:
+            run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)
+        except Exception as e:
+            logger.error(f"Cheque reconciliation failed: {e}")
+        finally:
+            if holder.get('manager'):
+                holder['manager'].stop()
 
     elif task_type == 'ecw_status_update':
         # ─── Standalone ECW Status Update Task ───

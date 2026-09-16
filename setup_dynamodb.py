@@ -65,6 +65,17 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # One item per cheque number the reconciliation knows: the image we
+        # hold (SharePoint / S3 inbox), Blue Shield's status, eCW's payment,
+        # and the verdict. Created on first use by src/checks/run.py too.
+        "TableName": "helixona-checks",
+        "KeySchema": [{"AttributeName": "check_number", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "check_number", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

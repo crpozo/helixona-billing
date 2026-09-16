@@ -301,6 +301,9 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
    the EOB table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
 .main > #eob-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section{grid-column:1}
+.chk-filter{font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:12px;background:transparent;color:inherit;cursor:pointer}
+.chk-filter.on{border-color:var(--accent);color:var(--accent)}
 .main > .task-panel{grid-column:2;grid-row:1}
 #eob-body tr.eob-row{cursor:pointer}
 #eob-body tr.eob-row td:first-child::before{content:'▸';display:inline-block;width:14px;color:var(--text-muted);transition:transform .15s}
@@ -516,6 +519,28 @@ tbody tr:last-child td{border-bottom:none}
     <!-- MAIN: claims + admin rail -->
     <div class="main">
 
+      <!-- CHEQUES (Remittance) — posted / unposted / not in eCW / no copy -->
+      <div class="claims-section" id="checks-section" hidden>
+        <div class="section-title">
+          ✅ Cheques
+          <span id="checks-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
+          <span id="checks-filters" style="margin-left:14px;display:inline-flex;gap:6px;flex-wrap:wrap"></span>
+          <a class="btn" href="/api/checks.csv" style="margin-left:auto">⬇ CSV</a>
+          <button class="btn btn-refresh" onclick="loadChecks()">↻ Refresh</button>
+        </div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Check #</th><th>Copy</th><th class="num">Copy $</th><th class="num">Blue Shield $</th><th>BS status</th>
+                <th>Cashed</th><th>eCW</th><th class="num">Posted</th><th class="num">Unposted</th><th>Verdict</th><th>Flags</th>
+              </tr>
+            </thead>
+            <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>✅ Reconcile cheques</strong> from the task panel.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- EOB TABLE (Remittance) — one row per Check/EFT captured from Blue Shield -->
       <div class="claims-section" id="eob-section" hidden>
         <div class="section-title">
@@ -598,6 +623,7 @@ tbody tr:last-child td{border-bottom:none}
             <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
               <option value="eob_capture" data-bot="eob">💰 Capture EOBs from Blue Shield</option>
               <option value="eob_post" data-bot="eob">🏦 Enter EOB payments into eCW</option>
+              <option value="check_reconcile" data-bot="eob">✅ Reconcile cheques: copies · Blue Shield · eCW</option>
             </optgroup>
           </select>
 
@@ -832,6 +858,13 @@ window.scrollToEl = function(sel){
                 limit_checks: 1,
                 since: "07/01/2025",
                 note: "eCW → Billing → Payments for every captured cheque whose posting plan is READY (held cheques are skipped). post:false is a DRY RUN: the Payments popup is filled and screenshotted, then cancelled — Payment Advisory is never clicked, so nothing is saved. post:true clicks Payment Advisory (creates the payment), types the grid and Auto Posts. check_eft enters one cheque; limit_checks caps the run."
+            }, null, 2),
+            check_reconcile: JSON.stringify({
+                since: "07/01/2025",
+                copies: true,
+                ecw: true,
+                limit_files: 0,
+                note: "Read-only. copies:true reads new cheque images from SharePoint (Insurance Checks; secret sharepoint_credentials) or, without that secret, from s3://<bucket>/checks/inbox/. Blue Shield comes from the cheques already captured. ecw:true logs into eCW and reads Billing → Payments since `since`. Then every cheque gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy. limit_files caps images read in a test run."
             }, null, 2)
         };
 
@@ -864,6 +897,11 @@ window.scrollToEl = function(sel){
                 title: 'Enter EOB payments into eCW',
                 desc: 'Plans every captured cheque first (the same 🧮 Posting plan you can open in the table) and enters only the ones that are ready. Dry run unless post:true — the save is the Payment Advisory click, and a dry run stops before it.',
                 steps: ['Billing → Payments → Rcvd Pmt Dts from 07/01/2025 → Check # → Lookup (rows = already posted)', 'Single Ins Payment (F4) → Claim No = EOB patient account number → Get Insurance → Blue Shield of California → OK', 'Popup: Type Check · Check No. · Amount $ = approve-to-pay · Check Date · EOB Date · Deposit Date = cashed date', 'DRY RUN STOPS HERE (screenshot, Cancel)', 'post:true → Payment Advisory (saves) → Claim ID → Go (F3) → Allowed / Deduct / CoPay / Paid per planned line → Auto Post (F2) → Yes']
+            },
+            check_reconcile: {
+                title: 'Reconcile cheques',
+                desc: 'Which cheques are posted, which are not, which never reached eCW, and which we hold no copy of. Reads only: cheque images, the captured Blue Shield cheques, and the eCW Payments list.',
+                steps: ['SharePoint → Insurance Checks: read each cheque image (number + amount)', 'Blue Shield: Check/EFT status per cheque (Check Cashed or not) from the capture', 'Flag every cashed cheque we hold no copy of', 'eCW → Billing → Payments since 07/01/2025: on file = posted (or entered but unposted)', 'Verdict per cheque in the ✅ Cheques table; CSV export']
             }
         };
 
@@ -932,9 +970,12 @@ window.scrollToEl = function(sel){
             // there — so each tab shows exactly one main panel.
             const eobSec = document.getElementById('eob-section');
             if (eobSec) eobSec.hidden = (bot !== 'eob');
+            const chkSec = document.getElementById('checks-section');
+            if (chkSec) chkSec.hidden = (bot !== 'eob');
             const claimsSec = document.getElementById('claims-section-submissions');
             if (claimsSec) claimsSec.hidden = (bot === 'eob');
             if (bot === 'eob' && typeof loadEobs === 'function') loadEobs();
+            if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
             // Re-render from the claims already loaded, THEN refetch. The
             // table used to keep showing the previous tab's claims until the
             // next full fetch came back.
@@ -1188,6 +1229,57 @@ window.scrollToEl = function(sel){
             try { localStorage.setItem('liveScreen', panel.hidden ? '0' : '1'); } catch (e) {}
         }
         try { if (localStorage.getItem('liveScreen') === '1') setTimeout(toggleLiveScreen, 300); } catch (e) {}
+
+        // ---- Cheques (Remittance) ----
+        // One row per cheque number: the copy we hold, Blue Shield's word,
+        // eCW's payment, and the verdict. Filters are client-side.
+        window._checksFilter = window._checksFilter || 'all';
+        const CHECK_FILTERS = [['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
+                               ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'],
+                               ['copy only', 'Copy only'], ['no copy', 'No copy']];
+        function setChecksFilter(f) { window._checksFilter = f; renderChecks(); }
+        function renderChecks() {
+            const body = document.getElementById('checks-body');
+            const meta = document.getElementById('checks-meta');
+            const filt = document.getElementById('checks-filters');
+            const data = window._checksData || {rows: [], summary: {}};
+            const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+            const sm = data.summary || {};
+            if (meta) meta.textContent = data.rows.length
+                ? `${sm.checks} cheques · ${sm.posted} posted · ${sm.unposted} unposted · ${sm.not_in_ecw} not in eCW · ${sm.no_copy} without a copy` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
+                : '';
+            if (filt) filt.innerHTML = CHECK_FILTERS.map(([k, label]) =>
+                `<button class="chk-filter${window._checksFilter === k ? ' on' : ''}" onclick="setChecksFilter('${k}')">${label}</button>`).join('');
+            if (!body) return;
+            const f = window._checksFilter;
+            const rows = data.rows.filter(r => f === 'all' ? true : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy')) : r.verdict === f);
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>✅ Reconcile cheques</strong> from the task panel.'}</td></tr>`;
+                return;
+            }
+            const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
+            body.innerHTML = rows.map(r => `
+                <tr>
+                  <td><strong>${esc(r.check_number)}</strong></td>
+                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">🖼 copy</a>` : `<span title="${esc(r.copy_file)}">🖼 copy</span>`) : '<span style="color:var(--bad)">none</span>'}</td>
+                  <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
+                  <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
+                  <td>${esc(r.bs_status || (r.in_blue_shield ? '' : 'not in results'))}</td>
+                  <td>${esc(r.cashed_date || '')}</td>
+                  <td>${r.in_ecw ? `on file${r.ecw_payment_id ? ' · #' + esc(r.ecw_payment_id) : ''}` : '<span style="color:var(--text-muted)">—</span>'}</td>
+                  <td class="num">${r.ecw_posted ? '$' + esc(r.ecw_posted) : ''}</td>
+                  <td class="num">${r.ecw_unposted ? '$' + esc(r.ecw_unposted) : ''}</td>
+                  <td style="color:${color(r.verdict)};font-weight:600">${esc(r.verdict)}</td>
+                  <td style="font-size:11px;color:var(--warning)">${esc((r.flags || []).join(' · '))}</td>
+                </tr>`).join('');
+        }
+        async function loadChecks() {
+            try {
+                const res = await fetch('/api/checks');
+                window._checksData = await res.json();
+                renderChecks();
+            } catch (e) { console.error('loadChecks failed', e); }
+        }
 
         // ---- EOB table (Remittance) ----
         // The eCW column: posted, or what the last eob_post attempt found,
@@ -2070,6 +2162,7 @@ window.scrollToEl = function(sel){
         setInterval(loadData, 15000);
         // The EOB list is small; keep it live while a capture is running.
         setInterval(() => { if (window.activeBot === 'eob') loadEobs(); }, 15000);
+        setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 30000);
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
     </script>
@@ -2195,6 +2288,48 @@ def api_eob_plan(check_eft):
         return jsonify(json.loads(json.dumps(plan, default=str)))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+def _checks_rows():
+    table = dynamodb.Table('helixona-checks')
+    items = scan_all(table)
+    summary = next((it for it in items if it.get('check_number') == '_summary'), {})
+    rows = [it for it in items if not str(it.get('check_number', '')).startswith('_')]
+    for r in rows:
+        r['flags'] = list(r.get('flags') or [])
+    rows.sort(key=lambda r: (str(r.get('bs_date') or r.get('copy_date') or ''), str(r.get('check_number'))), reverse=True)
+    return rows, summary
+
+
+@app.route('/api/checks')
+def api_checks():
+    """The cheque reconciliation: one row per cheque number, and the summary."""
+    try:
+        rows, summary = _checks_rows()
+        return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'summary': {}})
+
+
+@app.route('/api/checks.csv')
+def api_checks_csv():
+    import csv
+    import io
+    from flask import Response
+    cols = ['check_number', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
+            'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
+            'ecw_posted', 'ecw_unposted', 'reconciled_at']
+    try:
+        rows, _summary = _checks_rows()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([' | '.join(r['flags']) if c == 'flags' else str(r.get(c, '')) for c in cols])
+    return Response(buf.getvalue(), mimetype='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename="cheques.csv"'})
 
 
 @app.route('/api/eobs')
