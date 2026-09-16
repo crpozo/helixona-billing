@@ -343,7 +343,7 @@ def _open_check_link(page, check):
     page.click(link, timeout=10000)
 
 
-def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs):
+def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs, download_eob=False):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
     # Always the click, never the href: every cheque's link points at the same
     # /claims/checkeftDetails (the portal's markup, 2026-09-15) and the app
@@ -367,8 +367,12 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
     detail_rows = rows_by_header(hdrs, [r['cells'] for r in raw])
     logger.info(f"  summary: {summary} · claims table: {len(detail_rows)} row(s)")
 
-    pdf_path = _download_eob_pdf(page, check)
+    # The EOB report is optional (2026-09-16): the reconciliation compares
+    # cheques — number, amount, status, cashed date — not the report's lines.
+    pdf_path = _download_eob_pdf(page, check) if download_eob else ''
     s3_path, parsed, sha = '', {}, ''
+    if not download_eob:
+        logger.info("  (EOB report not downloaded — cheque data only)")
     if pdf_path:
         # The operator's step 2: the same report downloaded twice is one
         # report. Identical bytes are stored once and shared.
@@ -499,7 +503,9 @@ def run_eob_capture(page, aws_client, body):
     limit = int(body.get('limit_checks') or 0)
     only = str(body.get('check_eft') or '').strip()
     force = bool(body.get('force'))
-    logger.info(f"Remittance: since={since} limit={limit or 'none'} only={only or 'all'} force={force}")
+    download_eob = bool(body.get('download_eob', False))
+    logger.info(f"Remittance: since={since} limit={limit or 'none'} only={only or 'all'} force={force} "
+                f"download_eob={download_eob}")
 
     if not login_to_provider_portal(page, aws_client):
         logger.error("❌ Blue Shield login failed — nothing captured")
@@ -520,7 +526,7 @@ def run_eob_capture(page, aws_client, body):
     done, known_pdfs = {}, {}
     for it in scan_all(aws_client.dynamodb.Table(EOB_TABLE),
                        ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256'):
-        done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path'))
+        done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path') or it.get('captured_at'))
         if it.get('eob_pdf_sha256'):
             known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
                                                      str(it.get('eob_pdf_s3_path') or ''))
@@ -583,7 +589,8 @@ def run_eob_capture(page, aws_client, body):
                 stop = True
                 break
             try:
-                _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx, known_pdfs)
+                _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx, known_pdfs,
+                               download_eob=download_eob)
                 captured += 1
                 done[ck] = True
             except Exception as e:

@@ -140,6 +140,20 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn("@app.route('/api/checks.csv')", d)
         self.assertIn("if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();", d)
 
+    def test_the_dashboard_opens_on_what_does_not_match(self):
+        d = _read('dashboard.py')
+        self.assertIn("window._checksFilter = window._checksFilter || 'mismatch';", d)
+        self.assertIn("const checkMismatch = r => r.verdict !== 'posted' || (r.flags || []).length > 0;", d)
+        self.assertIn('id="checks-tiles"', d)
+
+    def test_the_blue_shield_side_no_longer_needs_the_eob_report(self):
+        c = _read('src/eob/capture.py')
+        self.assertIn("download_eob = bool(body.get('download_eob', False))", c)
+        self.assertIn("pdf_path = _download_eob_pdf(page, check) if download_eob else ''", c)
+        d = _read('dashboard.py')
+        self.assertIn('download_eob: false', d)
+        self.assertIn('Collect cheques from Blue Shield', d)
+
     def test_the_table_is_declared_and_self_creating(self):
         self.assertIn("CHECKS_TABLE = 'helixona-checks'", _read('src/checks/run.py'))
         self.assertIn('def ensure_table(aws_client):', _read('src/checks/run.py'))

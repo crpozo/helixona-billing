@@ -304,6 +304,10 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .main > #checks-section{grid-column:1}
 .chk-filter{font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:12px;background:transparent;color:inherit;cursor:pointer}
 .chk-filter.on{border-color:var(--accent);color:var(--accent)}
+.chk-tiles{display:flex;flex-wrap:wrap;gap:10px;padding:10px 14px 4px}
+.chk-tile{min-width:118px;padding:10px 12px;border:1px solid var(--bdr);border-radius:10px;background:var(--card);cursor:pointer}
+.chk-tile-n{font-size:22px;font-weight:700;line-height:1.1}
+.chk-tile-l{font-size:11px;color:var(--text-muted);margin-top:2px}
 .main > .task-panel{grid-column:2;grid-row:1}
 #eob-body tr.eob-row{cursor:pointer}
 #eob-body tr.eob-row td:first-child::before{content:'▸';display:inline-block;width:14px;color:var(--text-muted);transition:transform .15s}
@@ -522,12 +526,13 @@ tbody tr:last-child td{border-bottom:none}
       <!-- CHEQUES (Remittance) — posted / unposted / not in eCW / no copy -->
       <div class="claims-section" id="checks-section" hidden>
         <div class="section-title">
-          ✅ Cheques
+          ✅ Cheques · SharePoint copies vs Blue Shield vs eCW
           <span id="checks-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
           <span id="checks-filters" style="margin-left:14px;display:inline-flex;gap:6px;flex-wrap:wrap"></span>
           <a class="btn" href="/api/checks.csv" style="margin-left:auto">⬇ CSV</a>
           <button class="btn btn-refresh" onclick="loadChecks()">↻ Refresh</button>
         </div>
+        <div class="chk-tiles" id="checks-tiles"></div>
         <div class="claims-table-wrap">
           <table>
             <thead>
@@ -621,7 +626,7 @@ tbody tr:last-child td{border-bottom:none}
               <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
             </optgroup>
             <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
-              <option value="eob_capture" data-bot="eob">💰 Capture EOBs from Blue Shield</option>
+              <option value="eob_capture" data-bot="eob">💰 Collect cheques from Blue Shield</option>
               <option value="eob_post" data-bot="eob">🏦 Enter EOB payments into eCW</option>
               <option value="check_reconcile" data-bot="eob">✅ Reconcile cheques: copies · Blue Shield · eCW</option>
             </optgroup>
@@ -850,7 +855,8 @@ window.scrollToEl = function(sel){
             eob_capture: JSON.stringify({
                 since: "07/01/2025",
                 limit_checks: 0,
-                note: "Blue Shield → Claims → Check claim status: Finalized, Claim amount paid ≥ $0.01, status/payment date from `since`. For every Check/EFT: transaction summary, claims paid, EOB report PDF. Read-only. limit_checks > 0 captures only that many cheques (a test run)."
+                download_eob: false,
+                note: "Blue Shield → Claims → Check claim status: Finalized, Claim amount paid ≥ $0.01, status/payment date from `since`. For every Check/EFT: number, amount, date, status (Check Cashed or not), cashed date, the claims it paid. Read-only. download_eob:true also saves the EOB report PDF (not needed for the reconciliation). limit_checks > 0 collects only that many cheques (a test run)."
             }, null, 2),
             eob_post: JSON.stringify({
                 post: false,
@@ -889,9 +895,9 @@ window.scrollToEl = function(sel){
                 steps: []
             },
             eob_capture: {
-                title: 'Capture EOBs from Blue Shield',
-                desc: 'Logs into the Blue Shield provider portal, searches finalized claims with a payment, opens every Check/EFT, downloads the EOB report and pins each paid claim to ours. Nothing is written to eCW.',
-                steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → transaction summary + claims paid', 'Download EOB report (PDF → S3)', 'Match claims by patient account number / subscriber + DOS']
+                title: 'Collect cheques from Blue Shield',
+                desc: 'Logs into the Blue Shield provider portal, searches finalized claims with a payment and opens every Check/EFT for its status and cashed date. This is the Blue Shield side of the cheque reconciliation. Nothing is written anywhere.',
+                steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → number, amount, date, status, cashed date, claims paid', 'Saved as it goes; a re-run only opens new cheques', 'Then ✅ Reconcile cheques compares them with the SharePoint copies and eCW']
             },
             eob_post: {
                 title: 'Enter EOB payments into eCW',
@@ -1233,10 +1239,13 @@ window.scrollToEl = function(sel){
         // ---- Cheques (Remittance) ----
         // One row per cheque number: the copy we hold, Blue Shield's word,
         // eCW's payment, and the verdict. Filters are client-side.
-        window._checksFilter = window._checksFilter || 'all';
-        const CHECK_FILTERS = [['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
+        window._checksFilter = window._checksFilter || 'mismatch';
+        const CHECK_FILTERS = [['mismatch', '⚠ Does not match'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
                                ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'],
-                               ['copy only', 'Copy only'], ['no copy', 'No copy']];
+                               ['copy only', 'Copy only'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
+        // A cheque "matches" when the three sources agree: a copy on file,
+        // Blue Shield cashed it, eCW has it posted, and the amounts agree.
+        const checkMismatch = r => r.verdict !== 'posted' || (r.flags || []).length > 0;
         function setChecksFilter(f) { window._checksFilter = f; renderChecks(); }
         function renderChecks() {
             const body = document.getElementById('checks-body');
@@ -1245,14 +1254,33 @@ window.scrollToEl = function(sel){
             const data = window._checksData || {rows: [], summary: {}};
             const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
             const sm = data.summary || {};
+            const mism = data.rows.filter(checkMismatch).length;
             if (meta) meta.textContent = data.rows.length
-                ? `${sm.checks} cheques · ${sm.posted} posted · ${sm.unposted} unposted · ${sm.not_in_ecw} not in eCW · ${sm.no_copy} without a copy` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
+                ? `${sm.checks} cheques · ${data.rows.length - mism} match · ${mism} do not` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
                 : '';
+            const tiles = document.getElementById('checks-tiles');
+            if (tiles) {
+                const tile = (label, n, f, color) => `<div class="chk-tile" onclick="setChecksFilter('${f}')" style="border-color:${window._checksFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${n ?? 0}</div><div class="chk-tile-l">${label}</div></div>`;
+                tiles.innerHTML = data.rows.length ? [
+                    tile('do not match', mism, 'mismatch', 'var(--bad)'),
+                    tile('posted in eCW', sm.posted, 'posted', 'var(--success)'),
+                    tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)'),
+                    tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)'),
+                    tile('no copy of cheque', sm.no_copy, 'no copy', 'var(--bad)'),
+                    tile('copy only', sm.copy_only, 'copy only', 'var(--text-muted)'),
+                    tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)'),
+                    tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)'),
+                ].join('') : '';
+            }
             if (filt) filt.innerHTML = CHECK_FILTERS.map(([k, label]) =>
                 `<button class="chk-filter${window._checksFilter === k ? ' on' : ''}" onclick="setChecksFilter('${k}')">${label}</button>`).join('');
             if (!body) return;
             const f = window._checksFilter;
-            const rows = data.rows.filter(r => f === 'all' ? true : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy')) : r.verdict === f);
+            const rows = data.rows.filter(r => f === 'all' ? true
+                : f === 'mismatch' ? checkMismatch(r)
+                : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy'))
+                : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
+                : r.verdict === f);
             if (!rows.length) {
                 body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>✅ Reconcile cheques</strong> from the task panel.'}</td></tr>`;
                 return;

@@ -357,7 +357,7 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn('def _show_more(page):', c)
         self.assertIn('def _back_to_results(page):', c)
         run = c[c.index('def run_eob_capture('):]
-        self.assertIn('_capture_check(page, aws_client, ck, info[\'href\'], info[\'rows\'], claim_idx, known_pdfs)', run)
+        self.assertIn('_capture_check(page, aws_client, ck, info[\'href\'], info[\'rows\'], claim_idx, known_pdfs,', run)
         self.assertIn("done[ck] = True", run)
         self.assertIn('results page {pages + 1}', run)
 
