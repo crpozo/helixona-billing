@@ -371,12 +371,23 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("aws_client.secrets.get_secret_value(SecretId=name)", rc)
         # The key is accepted bare or as JSON — the provisioned secret is a plain string.
         from src.checks.read_check import _key_from_secret
+        class _Secrets:
+            def __init__(self, values):
+                self.values = values
+            def get_secret_value(self, SecretId):
+                if SecretId not in self.values:
+                    raise RuntimeError('ResourceNotFoundException')
+                return {'SecretString': self.values[SecretId]}
+        class _Session:
+            @staticmethod
+            def client(kind, region_name=''):
+                # The provisioned secret is in us-east-1, not the bot's region.
+                return _Secrets({'east': 'sk-ant-east'}) if region_name == 'us-east-1' else _Secrets({})
         class _Aws:
-            class secrets:
-                @staticmethod
-                def get_secret_value(SecretId):
-                    return {'SecretString': {'a': 'sk-ant-plain', 'b': '{"ANTHROPIC_API_KEY": "sk-ant-json"}',
-                                             'c': '{"api_key": "sk-ant-j2"}'}[SecretId]}
+            secrets = _Secrets({'a': 'sk-ant-plain', 'b': '{"ANTHROPIC_API_KEY": "sk-ant-json"}', 'c': '{"api_key": "sk-ant-j2"}'})
+            session = _Session()
+        self.assertEqual(_key_from_secret(_Aws(), 'east'), 'sk-ant-east')
+        self.assertEqual(_key_from_secret(_Aws(), 'missing'), '')
         self.assertEqual(_key_from_secret(_Aws(), 'a'), 'sk-ant-plain')
         self.assertEqual(_key_from_secret(_Aws(), 'b'), 'sk-ant-json')
         self.assertEqual(_key_from_secret(_Aws(), 'c'), 'sk-ant-j2')

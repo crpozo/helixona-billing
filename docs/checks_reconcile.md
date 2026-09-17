@@ -86,8 +86,11 @@ instead — cheque images dropped there by hand.
 The images are read by Claude through the Anthropic API directly (not
 Bedrock). The key comes from `ANTHROPIC_API_KEY` in the bot's environment
 or, failing that, the Secrets Manager secret
-`helixona-prod-anthropic-api-key` (provisioned with the account; the bare
-`sk-ant-...` string, or JSON with `api_key` / `ANTHROPIC_API_KEY`), or
+`helixona-prod-anthropic-api-key` (provisioned with the account in
+us-east-1 — the bot looks in its own region, then there; the bare
+`sk-ant-...` string, or JSON with `api_key` / `ANTHROPIC_API_KEY`; it is
+encrypted with the KMS key `helixona-prod-phi-data`, whose key policy must
+let `helixona-agent-role` decrypt), or
 `prod/helixona/anthropic_credentials` `{"api_key": "sk-ant-..."}`.
 
 `VISION_MODEL_ID` (environment) names the model; the default is

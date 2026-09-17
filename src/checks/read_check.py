@@ -30,6 +30,9 @@ logger = get_logger(__name__)
 # prod/helixona/anthropic_credentials {"api_key": ...}. Model: VISION_MODEL_ID.
 KEY_SECRETS = [os.environ.get('ANTHROPIC_SECRET_NAME', 'helixona-prod-anthropic-api-key'),
                'prod/helixona/anthropic_credentials']
+# The provisioned secret lives in us-east-1 (the bot runs in us-west-2), so
+# each name is tried in the bot's region and then in these.
+KEY_SECRET_REGIONS = [r for r in os.environ.get('ANTHROPIC_SECRET_REGIONS', 'us-east-1').split(',') if r.strip()]
 VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')  # the operator's choice, 2026-09-17
 _CLIENT = {}
 
@@ -123,14 +126,33 @@ def parse_model_json(text):
 
 
 # ------------------------------------------------------------ the readers
+def _secret_clients(aws_client):
+    """The bot's own Secrets Manager client, then one per extra region."""
+    yield '', aws_client.secrets
+    for region in KEY_SECRET_REGIONS:
+        try:
+            yield region, aws_client.session.client('secretsmanager', region_name=region.strip())
+        except Exception:
+            continue
+
+
 def _key_from_secret(aws_client, name):
     """The key in a secret: the bare string, or JSON under api_key /
-    ANTHROPIC_API_KEY / key."""
-    try:
-        raw = aws_client.secrets.get_secret_value(SecretId=name).get('SecretString', '') or ''
-    except Exception as e:
-        logger.info(f"  (secret {name}: {str(e)[:100]})")
-        return ''
+    ANTHROPIC_API_KEY / key. Looked for in the bot's region, then the others."""
+    raw = ''
+    for region, client in _secret_clients(aws_client):
+        try:
+            raw = client.get_secret_value(SecretId=name).get('SecretString', '') or ''
+            if raw:
+                break
+        except Exception as e:
+            msg = str(e)
+            if 'AccessDenied' in msg or 'KMS' in msg or 'kms' in msg:
+                logger.error(f"  ❌ secret {name}{' in ' + region if region else ''}: the bot may not decrypt it — "
+                             f"give the role helixona-agent-role kms:Decrypt on the key the secret uses "
+                             f"(helixona-prod-phi-data), or store the key in a secret with the default AWS key: {msg[:120]}")
+            else:
+                logger.info(f"  (secret {name}{' in ' + region if region else ''}: {msg[:100]})")
     raw = raw.strip()
     if raw.startswith('{'):
         try:
