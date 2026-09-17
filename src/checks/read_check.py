@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 # The Claude API, directly (not Bedrock — 2026-09-17). The key comes from
 # ANTHROPIC_API_KEY or the secret prod/helixona/anthropic_credentials
 # ({"api_key": "sk-ant-..."}); the model from VISION_MODEL_ID.
-VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-opus-5')
+VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')  # the operator's choice, 2026-09-17
 _CLIENT = {}
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',

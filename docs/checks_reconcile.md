@@ -92,7 +92,7 @@ or, failing that, the secret `prod/helixona/anthropic_credentials`:
 ```
 
 `VISION_MODEL_ID` (environment) names the model; the default is
-`claude-opus-5`. A run without a key logs "no Anthropic API key". Files that
+`claude-sonnet-5` (about $0.01 an image; each file is read once and kept). A run without a key logs "no Anthropic API key". Files that
 could not be read are tried again on every run and shown on the tab as
 "files not read". PDFs with a text layer are read without the model.
 

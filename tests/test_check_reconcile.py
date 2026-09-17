@@ -365,7 +365,7 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
 
     def test_the_images_are_read_by_the_claude_api_not_bedrock(self):
         rc = _read('src/checks/read_check.py')
-        self.assertIn("VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-opus-5')", rc)
+        self.assertIn("VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')", rc)
         self.assertIn("anthropic.Anthropic(api_key=key)", rc)
         self.assertIn("aws_client.get_secret('anthropic_credentials')", rc)
         self.assertIn("fallbacks='default'", rc)
