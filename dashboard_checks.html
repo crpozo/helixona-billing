@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insurance Cheques — Reconciliation</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* One page for the billing team: which cheques do not match, and what to do.
+   Tokens on :root; dark mode is its own set of steps, not a flip. Status
+   colors are reserved and always paired with an icon + a word. */
+:root{
+  --surface:#fcfcfb;--surface-2:#f3f3f0;--card:#ffffff;--line:#e4e4df;
+  --ink:#0b0b0b;--ink-2:#52514e;--ink-3:#8a8984;
+  --accent:#8b6f3b;
+  --good:#0ca30c;--warning:#b47a00;--serious:#c65a2e;--critical:#d03b3b;--info:#2a78d6;
+  --good-bg:#eaf7ea;--warning-bg:#fff4dc;--serious-bg:#fdeee7;--critical-bg:#fbe9e9;--info-bg:#e9f1fb;--neutral-bg:#f0f0ec;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --surface:#1a1a19;--surface-2:#222221;--card:#232322;--line:#33332f;
+    --ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#8f8e86;
+    --accent:#cdb486;
+    --good:#3fc03f;--warning:#fab219;--serious:#ec835a;--critical:#e05252;--info:#3987e5;
+    --good-bg:#1d2e1d;--warning-bg:#332a12;--serious-bg:#35221a;--critical-bg:#361d1d;--info-bg:#1b2738;--neutral-bg:#2a2a28;
+  }
+}
+:root[data-theme="dark"]{
+  --surface:#1a1a19;--surface-2:#222221;--card:#232322;--line:#33332f;
+  --ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#8f8e86;
+  --accent:#cdb486;
+  --good:#3fc03f;--warning:#fab219;--serious:#ec835a;--critical:#e05252;--info:#3987e5;
+  --good-bg:#1d2e1d;--warning-bg:#332a12;--serious-bg:#35221a;--critical-bg:#361d1d;--info-bg:#1b2738;--neutral-bg:#2a2a28;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--surface);color:var(--ink);font-family:'Inter',system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:var(--info)}
+.wrap{max-width:1400px;margin:0 auto;padding:24px 16px 48px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 24px;margin-bottom:20px}
+h1{font-size:22px;font-weight:700;margin:0;letter-spacing:-.01em}
+.sub{color:var(--ink-2);font-size:13px;margin-top:4px}
+.spacer{flex:1}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;text-decoration:none;font-weight:500}
+.btn:hover{border-color:var(--ink-3)}
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:16px;margin-bottom:16px}
+.hero-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+.hero-n{font-size:52px;font-weight:700;line-height:1;letter-spacing:-.02em}
+.hero-l{color:var(--ink-2);font-size:14px;margin-top:8px}
+.hero-s{color:var(--ink-3);font-size:12px;margin-top:6px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 14px 12px;cursor:pointer;text-align:left;font:inherit;color:inherit;position:relative}
+.tile:hover{border-color:var(--ink-3)}
+.tile.on{outline:2px solid var(--accent);outline-offset:-1px}
+.tile-n{font-size:26px;font-weight:700;line-height:1.1}
+.tile-l{font-size:13px;font-weight:600;margin-top:6px;display:flex;align-items:center;gap:6px}
+.tile-m{font-size:12px;color:var(--ink-2);margin-top:4px;line-height:1.4}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+/* filters */
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0 10px}
+.filters input,.filters select{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
+.filters input{min-width:220px}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);border-radius:999px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.chip.on{border-color:var(--accent);color:var(--ink);font-weight:600}
+.count{color:var(--ink-3);font-size:12px;margin-left:auto}
+/* table */
+.tbl{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{position:sticky;top:0;background:var(--surface-2);color:var(--ink-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-variant-numeric:tabular-nums;font-weight:600}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.pill.good{background:var(--good-bg);color:var(--good)}
+.pill.warning{background:var(--warning-bg);color:var(--warning)}
+.pill.serious{background:var(--serious-bg);color:var(--serious)}
+.pill.critical{background:var(--critical-bg);color:var(--critical)}
+.pill.info{background:var(--info-bg);color:var(--info)}
+.pill.neutral{background:var(--neutral-bg);color:var(--ink-2)}
+.muted{color:var(--ink-3)}
+.small{font-size:12px;color:var(--ink-2)}
+.todo{max-width:320px}
+.empty{padding:40px;text-align:center;color:var(--ink-2)}
+.legend{margin-top:22px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.legend h2{font-size:14px;margin:0 0 10px}
+.legend dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 14px;margin:0;font-size:13px}
+.legend dt{white-space:nowrap}
+.legend dd{margin:0;color:var(--ink-2)}
+.more{display:block;width:100%;padding:12px;background:var(--surface-2);border:none;border-top:1px solid var(--line);font:inherit;color:var(--ink-2);cursor:pointer}
+@media (max-width:900px){.hero{grid-template-columns:1fr}.hero-n{font-size:40px}.filters input{min-width:0;flex:1}}
+@media print{.filters,.btn,.more{display:none}.tbl{border:none}th{position:static}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Insurance cheques · reconciliation</h1>
+      <div class="sub" id="sub">Loading…</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn" href="/api/checks.csv">⬇ Download CSV</a>
+    <button class="btn" onclick="load()">↻ Refresh</button>
+    <button class="btn" onclick="toggleTheme()" title="Light / dark">◐</button>
+  </header>
+
+  <section class="hero">
+    <div class="hero-card">
+      <div class="hero-n" id="hero-n">—</div>
+      <div class="hero-l">cheques need attention</div>
+      <div class="hero-s" id="hero-s"></div>
+    </div>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <div class="filters">
+    <input id="q" type="search" placeholder="Search cheque #, amount, folder…" oninput="render()">
+    <select id="folder" onchange="render()">
+      <option value="">Any folder</option>
+      <option value="posted">Copy in Posted Checks</option>
+      <option value="unposted">Copy in Unposted Checks</option>
+      <option value="none">No copy on file</option>
+    </select>
+    <select id="sort" onchange="render()">
+      <option value="date">Newest first</option>
+      <option value="amount">Largest amount</option>
+      <option value="check">Cheque #</option>
+    </select>
+    <span id="chips" style="display:contents"></span>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr>
+        <th>Cheque #</th><th>Where the copy is</th><th class="num">Copy $</th><th class="num">Blue Shield $</th>
+        <th>Blue Shield</th><th>eCW</th><th>Verdict</th><th>What to do</th>
+      </tr></thead>
+      <tbody id="body"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+    </table>
+    <button class="more" id="more" hidden onclick="showAll()">Show all rows</button>
+  </div>
+
+  <section class="legend">
+    <h2>How to read this</h2>
+    <dl>
+      <dt><span class="pill critical">● Cashed, not in eCW</span></dt><dd>Blue Shield shows the cheque was cashed, but eCW has no payment under that number. <strong>Enter the payment in eCW.</strong></dd>
+      <dt><span class="pill warning">● Entered, unposted</span></dt><dd>The payment exists in eCW but part of it was never applied to claims. <strong>Finish posting it.</strong></dd>
+      <dt><span class="pill serious">● No copy of cheque</span></dt><dd>A cashed cheque with no image in the SharePoint folder. <strong>Scan it into Insurance Checks.</strong></dd>
+      <dt><span class="pill warning">● Amounts differ</span></dt><dd>The copy, Blue Shield and eCW do not agree on the amount. <strong>Check which one is right.</strong></dd>
+      <dt><span class="pill good">● Posted</span></dt><dd>In eCW, fully applied, copy on file, amounts agree. Nothing to do.</dd>
+      <dt><span class="pill neutral">● Not cashed yet</span></dt><dd>Blue Shield issued it but the bank has not cashed it. Wait.</dd>
+      <dt><span class="pill neutral">● Copy only</span></dt><dd>We hold a copy but Blue Shield does not list this cheque: another payer (Aetna, Health Net…) or outside the search window. Not tracked here.</dd>
+    </dl>
+    <p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks), Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. Each scan is read once and kept; the comparison is refreshed on every run.</p>
+  </section>
+</div>
+
+<script>
+// ---- state ----
+let DATA = {rows: [], summary: {}};
+let FILTER = 'attention';      // which tile / chip is on
+let LIMIT = 300;               // rows shown before "Show all"
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '')).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const flags = r => r.flags || [];
+const hasFlag = (r, p) => flags(r).some(f => String(f).startsWith(p));
+
+// Verdict → the reserved status class, an icon word, and what to do about it.
+function classify(r) {
+  const v = r.verdict || '';
+  if (v === 'not in eCW') return {cls: 'critical', label: 'Cashed, not in eCW', key: 'not in eCW',
+    todo: `Enter this payment in eCW${r.cashed_date ? ' (cashed ' + esc(r.cashed_date) + ')' : ''}.`};
+  if (v === 'unposted') return {cls: 'warning', label: 'Entered, unposted', key: 'unposted',
+    todo: `Finish posting in eCW: ${money(r.ecw_unposted)} still unposted${r.ecw_payment_id ? ' (payment #' + esc(r.ecw_payment_id) + ')' : ''}.`};
+  if (v === 'posted') return flags(r).length
+    ? {cls: 'warning', label: 'Posted, but…', key: 'posted', todo: 'Posted in eCW, yet:'}
+    : {cls: 'good', label: 'Posted', key: 'posted', todo: 'Nothing — the three sources agree.'};
+  if (v === 'not cashed') return {cls: 'neutral', label: 'Not cashed yet', key: 'not cashed', todo: 'Wait: Blue Shield has not cashed it.'};
+  if (v === 'copy only') return {cls: 'neutral', label: 'Copy only', key: 'copy only', todo: 'Not a Blue Shield cheque (or outside the search window). Not tracked here.'};
+  if (v === 'eCW not checked') return {cls: 'info', label: 'eCW not checked', key: 'eCW not checked', todo: 'eCW was not read on the last run.'};
+  return {cls: 'info', label: v || 'pending', key: v, todo: 'Awaiting the next run.'};
+}
+function todoFor(r) {
+  const c = classify(r);
+  const extra = [];
+  if (hasFlag(r, 'no copy') && c.key !== 'copy only') extra.push('Scan the cheque into SharePoint › Insurance Checks.');
+  const amt = flags(r).find(f => String(f).startsWith('amounts differ'));
+  if (amt) extra.push('Check the amounts: ' + esc(String(amt).replace('amounts differ: ', '')) + '.');
+  return [c.todo, ...extra].join(' ');
+}
+// Needs attention = anything a person must act on.
+const attention = r => ['not in eCW', 'unposted'].includes(r.verdict) || hasFlag(r, 'no copy') || hasFlag(r, 'amounts differ');
+
+// ---- tiles ----
+const TILES = [
+  ['attention', 'Needs attention', 'critical', 'Anything a person must act on', d => d.rows.filter(attention).length],
+  ['not in eCW', 'Cashed, not in eCW', 'critical', 'Enter the payment in eCW', d => d.rows.filter(r => r.verdict === 'not in eCW').length],
+  ['unposted', 'Entered, unposted', 'warning', 'Finish posting in eCW', d => d.rows.filter(r => r.verdict === 'unposted').length],
+  ['no copy', 'No copy of cheque', 'serious', 'Cashed, no scan in SharePoint', d => d.rows.filter(r => hasFlag(r, 'no copy')).length],
+  ['amounts', 'Amounts differ', 'warning', 'Copy, Blue Shield and eCW disagree', d => d.rows.filter(r => hasFlag(r, 'amounts differ')).length],
+  ['posted', 'Posted & matching', 'good', 'Nothing to do', d => d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length],
+  ['not cashed', 'Not cashed yet', 'neutral', 'Issued, waiting on the bank', d => d.rows.filter(r => r.verdict === 'not cashed').length],
+  ['copy only', 'Copy only', 'neutral', 'Other payer or outside the window', d => d.rows.filter(r => r.verdict === 'copy only').length],
+  ['all', 'All cheques', 'info', 'Everything compared', d => d.rows.length],
+];
+const CHIPS = ['attention', 'not in eCW', 'unposted', 'no copy', 'amounts', 'posted', 'not cashed', 'copy only', 'all'];
+
+function matches(r, f) {
+  switch (f) {
+    case 'all': return true;
+    case 'attention': return attention(r);
+    case 'no copy': return hasFlag(r, 'no copy');
+    case 'amounts': return hasFlag(r, 'amounts differ');
+    case 'posted': return r.verdict === 'posted' && !flags(r).length;
+    default: return r.verdict === f;
+  }
+}
+function setFilter(f) { FILTER = f; LIMIT = 300; render(); }
+function showAll() { LIMIT = Infinity; render(); }
+
+// ---- render ----
+function render() {
+  const d = DATA, sm = d.summary || {};
+  const n = d.rows.filter(attention).length;
+  document.getElementById('hero-n').textContent = n.toLocaleString('en-US');
+  document.getElementById('hero-s').textContent = d.rows.length
+    ? `${d.rows.length.toLocaleString('en-US')} cheques compared · ${d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length.toLocaleString('en-US')} fully matching`
+      + (sm.unreadable ? ` · ${sm.unreadable} scans could not be read yet` : '') : '';
+  document.getElementById('sub').textContent = sm.reconciled_at ? `Last reconciled ${sm.reconciled_at}` + (sm.ecw_checked === false ? ' · eCW was not read on this run' : '') : 'No reconciliation yet';
+
+  document.getElementById('tiles').innerHTML = TILES.map(([k, label, cls, meaning, count]) =>
+    `<button class="tile${FILTER === k ? ' on' : ''}" onclick="setFilter('${k}')">
+       <div class="tile-n" style="color:var(--${cls === 'neutral' ? 'ink-2' : cls})">${count(d).toLocaleString('en-US')}</div>
+       <div class="tile-l"><span class="dot" style="background:var(--${cls === 'neutral' ? 'ink-3' : cls})"></span>${esc(label)}</div>
+       <div class="tile-m">${esc(meaning)}</div>
+     </button>`).join('');
+  document.getElementById('chips').innerHTML = CHIPS.map(k => {
+    const t = TILES.find(x => x[0] === k);
+    return `<button class="chip${FILTER === k ? ' on' : ''}" onclick="setFilter('${k}')">${esc(t[1])}</button>`;
+  }).join('');
+
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const folder = document.getElementById('folder').value;
+  const sort = document.getElementById('sort').value;
+  let rows = d.rows.filter(r => matches(r, FILTER));
+  if (folder === 'posted') rows = rows.filter(r => /^posted/i.test(r.copy_folder || r.copy_file || ''));
+  if (folder === 'unposted') rows = rows.filter(r => /^unposted/i.test(r.copy_folder || r.copy_file || ''));
+  if (folder === 'none') rows = rows.filter(r => !r.has_copy);
+  if (q) rows = rows.filter(r => [r.check_number, r.copy_amount, r.bs_amount, r.ecw_amount, r.copy_folder, r.copy_file, r.bs_status, r.verdict]
+                                  .some(v => String(v ?? '').toLowerCase().includes(q)));
+  const num = v => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  rows.sort((a, b) => sort === 'amount' ? Math.max(num(b.bs_amount), num(b.copy_amount)) - Math.max(num(a.bs_amount), num(a.copy_amount))
+                    : sort === 'check' ? String(a.check_number).localeCompare(String(b.check_number))
+                    : String(b.bs_date || b.copy_date || '').localeCompare(String(a.bs_date || a.copy_date || '')));
+  document.getElementById('count').textContent = `${rows.length.toLocaleString('en-US')} cheque${rows.length === 1 ? '' : 's'}`;
+
+  const body = document.getElementById('body');
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="8" class="empty">${d.rows.length ? 'No cheques under this filter.' : 'No reconciliation has run yet.'}</td></tr>`;
+    document.getElementById('more').hidden = true;
+    return;
+  }
+  const shown = rows.slice(0, LIMIT);
+  body.innerHTML = shown.map(r => {
+    const c = classify(r);
+    const copy = r.has_copy
+      ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" rel="noopener" title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</a>` : `<span title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</span>`)
+      : `<span class="muted">no copy</span>`;
+    const bs = r.in_blue_shield
+      ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div class="small">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div class="small">issued ${esc(r.bs_date)}</div>` : ''}`
+      : `<span class="muted">not in results</span>`;
+    const ecw = r.in_ecw
+      ? `on file${r.ecw_payment_id ? ` · #${esc(r.ecw_payment_id)}` : ''}<div class="small">posted ${money(r.ecw_posted) || '—'} · unposted ${money(r.ecw_unposted) || '—'}</div>`
+      : `<span class="muted">not found</span>`;
+    return `<tr>
+      <td class="mono">${esc(r.check_number)}</td>
+      <td>${copy}</td>
+      <td class="num">${money(r.copy_amount)}</td>
+      <td class="num">${money(r.bs_amount)}</td>
+      <td>${bs}</td>
+      <td>${ecw}</td>
+      <td><span class="pill ${c.cls}">● ${esc(c.label)}</span></td>
+      <td class="todo small">${todoFor(r)}</td>
+    </tr>`;
+  }).join('');
+  const more = document.getElementById('more');
+  more.hidden = rows.length <= shown.length;
+  more.textContent = `Show all ${rows.length.toLocaleString('en-US')} rows (${shown.length} shown)`;
+}
+
+async function load() {
+  try {
+    const res = await fetch('/api/checks');
+    DATA = await res.json();
+    if (!Array.isArray(DATA.rows)) DATA.rows = [];
+    render();
+  } catch (e) {
+    document.getElementById('sub').textContent = 'Could not load the data: ' + e;
+  }
+}
+function toggleTheme() {
+  const root = document.documentElement;
+  const dark = root.getAttribute('data-theme') === 'dark' || (!root.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches);
+  root.setAttribute('data-theme', dark ? 'light' : 'dark');
+  try { localStorage.setItem('checks-theme', dark ? 'light' : 'dark'); } catch (e) {}
+}
+try { const t = localStorage.getItem('checks-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

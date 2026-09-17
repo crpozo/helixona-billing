@@ -465,6 +465,19 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn("'cheque data only'", c)
         self.assertNotIn("· PDF {'ok' if s3_path else 'MISSING'}", c)
 
+    def test_the_team_has_its_own_page(self):
+        d = _read('dashboard.py')
+        self.assertIn("@app.route('/checks')", d)
+        self.assertIn("'dashboard_checks.html'", d)
+        self.assertIn('href="/checks" target="_blank"', d)
+        h = _read('dashboard_checks.html')
+        for want in ("fetch('/api/checks')", 'cheques need attention', 'What to do', 'Cashed, not in eCW',
+                     'Entered, unposted', 'No copy of cheque', 'How to read this', 'prefers-color-scheme: dark',
+                     'data-theme="dark"', 'href="/api/checks.csv"'):
+            self.assertIn(want, h, want)
+        # Status is never color alone: every pill carries a mark and a word.
+        self.assertIn('<span class="pill ${c.cls}">● ${esc(c.label)}</span>', h)
+
     def test_the_dashboard_offers_the_test_of_one(self):
         d = _read('dashboard.py')
         self.assertIn('<option value="check_test_one" data-bot="eob">', d)

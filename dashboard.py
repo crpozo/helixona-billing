@@ -519,7 +519,8 @@ tbody tr:last-child td{border-bottom:none}
           ✅ Cheques · SharePoint copies vs Blue Shield vs eCW
           <span id="checks-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
           <span id="checks-filters" style="margin-left:14px;display:inline-flex;gap:6px;flex-wrap:wrap"></span>
-          <a class="btn" href="/api/checks.csv" style="margin-left:auto">⬇ CSV</a>
+          <a class="btn" href="/checks" target="_blank" style="margin-left:auto" title="One page for the billing team: what does not match and what to do">↗ Team view</a>
+          <a class="btn" href="/api/checks.csv">⬇ CSV</a>
           <button class="btn btn-refresh" onclick="loadChecks()">↻ Refresh</button>
         </div>
         <div id="checks-run" style="font-size:12px;color:var(--text-muted);margin:6px 0 4px;line-height:1.7"></div>
@@ -2139,6 +2140,16 @@ def _checks_rows():
                **{k: meta[k] for k in ('since', 'reconciled_at', 'ecw_checked', 'run_rows') if k in meta},
                'last_run': {k: v for k, v in run.items() if k != 'check_number'}}
     return rows, summary
+
+
+@app.route('/checks')
+def checks_client_view():
+    """The billing team's page: one screen, the cheques that do not match and
+    what to do about each. No bot controls, no logs. dashboard_checks.html
+    next to this file; it reads /api/checks."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard_checks.html')
+    with open(path, encoding='utf-8') as fh:
+        return fh.read()
 
 
 @app.route('/api/checks')
