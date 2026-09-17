@@ -7,10 +7,11 @@ number. Posted / unposted / not in eCW, per cheque.
 """
 import os
 import unittest
+from unittest import mock
 
 from src.checks.ecw_payments import rows_to_payments
 from src.checks.read_check import parse_check_text, parse_model_json
-from src.checks.reconcile import norm_check, reconcile
+from src.checks.reconcile import norm_check, reconcile, summarize
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -76,6 +77,16 @@ class TheVerdictPerCheque(unittest.TestCase):
         by, _ = self._rows(ecw_checked=False)
         self.assertEqual(by['31406730']['verdict'], 'eCW not checked')
 
+    def test_the_tiles_count_over_whatever_rows_they_are_given(self):
+        # The dashboard counts over the whole table, not over the last run,
+        # so a test of 1 does not make the tiles say "1 cheque".
+        rows, _ = reconcile(self.COPIES, self.CHEQUES, self.PAYMENTS)
+        table_rows = rows + [{'check_number': '7', 'verdict': 'posted', 'flags': ['amounts differ: copy 1.00, bs 2.00']}]
+        sm = summarize(table_rows)
+        self.assertEqual((sm['checks'], sm['posted'], sm['amount_mismatch'], sm['no_copy']), (6, 2, 1, 1))
+        self.assertEqual(summarize([]), {'checks': 0, 'posted': 0, 'unposted': 0, 'not_in_ecw': 0, 'not_cashed': 0,
+                                         'copy_only': 0, 'no_copy': 0, 'amount_mismatch': 0})
+
 
 class TheImageReaderIsShapeChecked(unittest.TestCase):
     def test_the_models_json_is_taken_only_when_it_is_a_cheque_number(self):
@@ -108,15 +119,173 @@ class TheEcwPaymentsGridIsReadByName(unittest.TestCase):
         self.assertEqual(got[1]['unposted'], '265.75')
         self.assertEqual(got[0]['payment_id'], '5043')
 
+    def test_a_grid_filtered_by_check_number_need_not_show_the_column(self):
+        hdrs = ['Payment ID', 'Rcvd Date', 'Amount', 'Posted', 'Unposted']
+        rows = [['5043', '09/15/2026', '262.69', '262.69', '0.00'], ['', 'Total', '262.69', '', '']]
+        got = rows_to_payments(hdrs, rows, assume_check='0030979207')
+        self.assertEqual([(p['payment_id'], p['check_no']) for p in got], [('5043', '0030979207')])
+        # Without the searched number nothing is assumed.
+        self.assertEqual(rows_to_payments(hdrs, rows), [])
+
+
+class _Table:
+    """Enough of a DynamoDB table for the run: scan, get/put, SET updates."""
+
+    def __init__(self, name, items=()):
+        self.name = name
+        self.items = {it['check_number' if 'check_number' in it else 'check_eft']: dict(it) for it in items}
+        self.key = 'check_number' if name == 'helixona-checks' else 'check_eft'
+
+    def scan(self, **kw):
+        return {'Items': [dict(v) for v in self.items.values()]}
+
+    def get_item(self, Key):
+        it = self.items.get(Key[self.key])
+        return {'Item': dict(it)} if it else {}
+
+    def put_item(self, Item):
+        self.items[Item[self.key]] = dict(Item)
+
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeValues, ExpressionAttributeNames=None):
+        it = self.items.setdefault(Key[self.key], dict(Key))
+        names = ExpressionAttributeNames or {}
+        for clause in UpdateExpression[len('SET '):].split(','):
+            name, val = [x.strip() for x in clause.split('=')]
+            it[names.get(name, name)] = ExpressionAttributeValues[val]
+
+    def wait_until_exists(self):
+        pass
+
+
+class _Ddb:
+    def __init__(self, tables):
+        self._t = {t.name: t for t in tables}
+        self.tables = self
+
+    def all(self):
+        return list(self._t.values())
+
+    def Table(self, name):
+        return self._t[name]
+
+
+class _Aws:
+    def __init__(self, tables):
+        self.dynamodb = _Ddb(tables)
+
+    def get_secret(self, name):
+        if name == 'ecw_credentials':
+            return {'username': 'u', 'password': 'p'}
+        raise RuntimeError('no such secret')
+
+
+class TheTestOfOne(unittest.TestCase):
+    """One cheque from Blue Shield, compared with the copies and eCW, its
+    row alone written — while the tiles keep counting the whole table."""
+    CHEQUE = {'check_eft': '30925163', 'check_amount': '227.20', 'check_status': 'Check Cashed',
+              'check_date': '04/17/2026', 'cashed_date': '07/27/2026'}
+
+    def _run(self, body, find=lambda page, ck, since, navigate=True: [], capture=None, copies=None):
+        checks = _Table('helixona-checks', [
+            {'check_number': '11111111', 'verdict': 'posted', 'flags': [], 'has_copy': True, 'reconciled_at': 'before'},
+            {'check_number': '22222222', 'verdict': 'not in eCW', 'flags': ['no copy of the cheque'], 'reconciled_at': 'before'}])
+        eobs = _Table('helixona-eobs', [self.CHEQUE, {'check_eft': '11111111', 'check_amount': '1.00',
+                                                      'check_status': 'Check Cashed', 'check_date': '01/01/2026',
+                                                      'cashed_date': '01/02/2026'}])
+        aws = _Aws([checks, eobs])
+
+        def fake_capture(page, aws_client, cap_body):
+            self.capture_body = cap_body
+            return capture if capture is not None else {'ok': True, 'captured_checks': ['30925163']}
+
+        def fake_copies(aws_client, table, body, prefer=()):
+            self.prefer = set(prefer)
+            table.update_item(Key={'check_number': '30925163'}, UpdateExpression='SET has_copy = :a, copy_amount = :b, copy_file = :c',
+                              ExpressionAttributeValues={':a': True, ':b': '227.20', ':c': 'Check 30925163.pdf'})
+            return (1, 0, 0)
+
+        from src.checks import run as run_mod
+        with mock.patch('src.eob.capture.run_eob_capture', side_effect=fake_capture), \
+                mock.patch.object(run_mod, 'read_new_copies', side_effect=copies or fake_copies), \
+                mock.patch.object(run_mod, 'find_payments', side_effect=find), \
+                mock.patch.object(run_mod, 'list_payments', side_effect=AssertionError('a targeted run never lists every payment')):
+            result = run_mod.run_check_reconcile(aws, body, login=lambda page, creds, aws_client: True,
+                                                 get_page=lambda: object())
+        return result, checks
+
+    def test_one_cheque_end_to_end(self):
+        result, checks = self._run({'blue_shield': True, 'limit_checks': 1})
+        self.assertEqual(result['targets'], ['30925163'])
+        self.assertEqual(self.capture_body['limit_checks'], 1)
+        self.assertTrue(self.capture_body['force'], 'a test re-opens the cheque for its status today')
+        self.assertFalse(self.capture_body['download_eob'])
+        self.assertEqual(self.prefer, {'30925163'})
+        row = checks.items['30925163']
+        self.assertEqual((row['verdict'], row['has_copy'], row['bs_status'], row['in_ecw']),
+                         ('not in eCW', True, 'Check Cashed', False))
+        # The other rows were not this run's, and were left as they were.
+        self.assertEqual(checks.items['11111111']['reconciled_at'], 'before')
+        self.assertEqual(result['run_rows'], 1)
+        # ...yet the tiles count the whole table.
+        sm = checks.items['_summary']
+        self.assertEqual((sm['checks'], sm['posted'], sm['not_in_ecw'], sm['no_copy']), (3, 1, 2, 1))
+        run = checks.items['_run']
+        self.assertEqual((run['mode'], run['targets']), ('test of 1', ['30925163']))
+        for step in ('blue_shield', 'copies', 'ecw', 'verdict', 'done'):
+            self.assertIn(step, run['steps'])
+        self.assertIn('30925163 not found', run['steps']['ecw'])
+
+    def test_the_payment_on_file_makes_it_posted(self):
+        result, checks = self._run(
+            {'blue_shield': True, 'limit_checks': 1},
+            find=lambda page, ck, since, navigate=True: [{'check_no': ck, 'amount': '227.20', 'posted': '227.20',
+                                                          'unposted': '0.00', 'payment_id': '5050'}])
+        row = checks.items['30925163']
+        self.assertEqual((row['verdict'], row['ecw_payment_id'], row['flags']), ('posted', '5050', []))
+        self.assertIn('30925163 on file', checks.items['_run']['steps']['ecw'])
+
+    def test_a_named_cheque_needs_no_portal_walk(self):
+        result, checks = self._run({'blue_shield': False, 'check_eft': '30925163'})
+        self.assertFalse(hasattr(self, 'capture_body'))
+        self.assertEqual(checks.items['30925163']['verdict'], 'not in eCW')
+        self.assertEqual(checks.items['_run']['mode'], 'test of 1')
+
+    def test_nothing_captured_means_nothing_compared(self):
+        result, checks = self._run({'blue_shield': True, 'limit_checks': 1}, capture={'ok': False, 'reason': 'login'})
+        self.assertEqual(result, {'ok': False, 'reason': 'no cheque captured'})
+        self.assertNotIn('30925163', checks.items)
+        self.assertEqual(checks.items['_run']['steps']['done'], 'stopped')
+
 
 class TheTaskIsWiredReadOnly(unittest.TestCase):
-    def test_the_bot_runs_it_and_opens_ecw_only_on_demand(self):
+    def test_the_bot_runs_it_and_opens_one_browser_on_demand(self):
         src = _read('src/main.py')
         self.assertIn("EOB_TASKS = {'eob_capture', 'eob_post', 'check_reconcile'}", src)
         i = src.index("elif task_type == 'check_reconcile':")
         block = src[i:i + 1500]
         self.assertIn('run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)', block)
-        self.assertIn("holder['manager'] = BrowserManager().start(proxy_config=None)", block)
+        # One Chrome on the profile dir: the Blue Shield and eCW steps share it.
+        self.assertIn("if not holder.get('manager'):\n                holder['manager'] = BrowserManager().start(proxy_config=None)", block)
+
+    def test_the_capture_hands_back_the_cheques_it_opened(self):
+        c = _read('src/eob/capture.py')
+        self.assertIn("'captured_checks': captured_checks, 'failed_checks': failed_checks", c)
+        # One cheque asked for: looked at, then stop — no paging through the rest.
+        self.assertIn("            if only:\n                # The one cheque asked for has been looked at", c)
+        self.assertIn("'cheque data only'", c)
+        self.assertNotIn("· PDF {'ok' if s3_path else 'MISSING'}", c)
+
+    def test_the_dashboard_offers_the_test_of_one(self):
+        d = _read('dashboard.py')
+        self.assertIn('<option value="check_test_one" data-bot="eob">', d)
+        self.assertIn("const TASK_DISPATCH = { check_test_one: { task_type: 'check_reconcile' } };", d)
+        i = d.index('check_test_one: JSON.stringify({')
+        tpl = d[i:i + 400]
+        for want in ('blue_shield: true', 'limit_checks: 1', 'limit_files: 10', 'ecw: true'):
+            self.assertIn(want, tpl)
+        self.assertIn("['last run', '🧪 Last run']", d)
+        self.assertIn('id="checks-run"', d)
+        self.assertIn('from src.checks.reconcile import summarize', d)
 
     def test_nothing_is_written_to_the_three_systems(self):
         for rel in ('src/checks/run.py', 'src/checks/sharepoint.py', 'src/checks/ecw_payments.py'):

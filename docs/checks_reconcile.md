@@ -8,9 +8,9 @@ The operator's procedure (2026-09-16), as the Remittance bot runs it
    Each new file is read for its cheque number and amount (the PDF's text
    layer when it has one, else Claude on Bedrock looking at the image).
 2. **Blue Shield** — the cheque's `Check/EFT status`: `Check Cashed` or not.
-   Taken from the cheques Remittance's capture already stored
-   (helixona-eobs); this run does not open the portal, so run
-   `eob_capture` first.
+   With `blue_shield:true` the run walks the portal itself (Claims → Check
+   claim status → each Check/EFT, cheque data only); otherwise it takes the
+   cheques an earlier `eob_capture` stored (helixona-eobs).
 3. **No copy** — every cashed cheque we hold no image of is flagged.
 4. **eCW** — Billing → Payments since 07/01/2025, every cheque. A payment
    under the number means it was entered: `posted` when nothing is left
@@ -69,9 +69,34 @@ Bedrock console and set the variable in the bot's unit file.
 ## Task body
 
 ```json
-{"since": "07/01/2025", "copies": true, "ecw": true, "limit_files": 0}
+{"since": "07/01/2025", "blue_shield": false, "limit_checks": 0, "check_eft": "",
+ "copies": true, "limit_files": 0, "ecw": true}
 ```
 
-`copies:false` skips the images (reconcile what is already read);
-`ecw:false` reuses the last Payments list read; `limit_files` caps the
-images read in a test run.
+`blue_shield:true` walks the portal first (`limit_checks` caps the cheques,
+`check_eft` names one; `force` defaults to true on such a targeted run so
+the cheque is re-opened for its status today). `copies:false` skips the
+images (reconcile what is already read); `limit_files` caps the images read.
+`ecw:false` reuses the last Payments list read.
+
+## The test of 1
+
+The dashboard's **🧪 Test of 1** task is the same `check_reconcile` with
+
+```json
+{"since": "07/01/2025", "blue_shield": true, "limit_checks": 1, "check_eft": "",
+ "copies": true, "limit_files": 10, "ecw": true}
+```
+
+One cheque, end to end, on the live screen:
+
+1. Blue Shield: the first cheque in the results (or `check_eft`) is opened —
+   amount, status, cashed date.
+2. The copies: files named after that cheque are read first, then up to
+   `limit_files` more.
+3. eCW: Billing → Payments, Rcvd Pmt Dts from `since`, **Check # = the
+   cheque**, Lookup — the operator's own step, one cheque at a time (a full
+   run lists every payment once instead).
+4. Its row alone is written; the tab opens on the **🧪 Last run** filter and
+   the steps show above the tiles as they happen (`_run` item). The tiles
+   keep counting the whole table.

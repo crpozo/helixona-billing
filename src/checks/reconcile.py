@@ -101,14 +101,22 @@ def reconcile(copies, cheques, payments, ecw_checked=True):
             r['flags'].append('amounts differ: ' + ', '.join(f"{k.split('_')[0]} {v:.2f}" for k, v in amounts.items()))
 
     rows = sorted(by.values(), key=lambda r: (r['bs_date'] or r['copy_date'] or '', r['check_number']), reverse=True)
-    summary = {
+    return rows, summarize(rows)
+
+
+def summarize(rows):
+    """The counts behind the dashboard tiles, from any reconciled rows —
+    this run's, or the whole helixona-checks table so the tiles always agree
+    with the table below them after a run that looked at one cheque."""
+    def flags(r):
+        return [str(f) for f in (r.get('flags') or [])]
+    return {
         'checks': len(rows),
-        'posted': sum(r['verdict'] == 'posted' for r in rows),
-        'unposted': sum(r['verdict'] == 'unposted' for r in rows),
-        'not_in_ecw': sum(r['verdict'] == 'not in eCW' for r in rows),
-        'not_cashed': sum(r['verdict'] == 'not cashed' for r in rows),
-        'copy_only': sum(r['verdict'] == 'copy only' for r in rows),
-        'no_copy': sum('no copy of the cheque' in r['flags'] for r in rows),
-        'amount_mismatch': sum(any(f.startswith('amounts differ') for f in r['flags']) for r in rows),
+        'posted': sum(r.get('verdict') == 'posted' for r in rows),
+        'unposted': sum(r.get('verdict') == 'unposted' for r in rows),
+        'not_in_ecw': sum(r.get('verdict') == 'not in eCW' for r in rows),
+        'not_cashed': sum(r.get('verdict') == 'not cashed' for r in rows),
+        'copy_only': sum(r.get('verdict') == 'copy only' for r in rows),
+        'no_copy': sum('no copy of the cheque' in flags(r) for r in rows),
+        'amount_mismatch': sum(any(f.startswith('amounts differ') for f in flags(r)) for r in rows),
     }
-    return rows, summary

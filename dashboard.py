@@ -532,6 +532,7 @@ tbody tr:last-child td{border-bottom:none}
           <a class="btn" href="/api/checks.csv" style="margin-left:auto">⬇ CSV</a>
           <button class="btn btn-refresh" onclick="loadChecks()">↻ Refresh</button>
         </div>
+        <div id="checks-run" style="font-size:12px;color:var(--text-muted);margin:6px 0 4px;line-height:1.7"></div>
         <div class="chk-tiles" id="checks-tiles"></div>
         <div class="claims-table-wrap">
           <table>
@@ -629,6 +630,7 @@ tbody tr:last-child td{border-bottom:none}
               <option value="eob_capture" data-bot="eob">💰 Collect cheques from Blue Shield</option>
               <option value="eob_post" data-bot="eob">🏦 Enter EOB payments into eCW</option>
               <option value="check_reconcile" data-bot="eob">✅ Reconcile cheques: copies · Blue Shield · eCW</option>
+              <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield cheque vs SharePoint vs eCW</option>
             </optgroup>
           </select>
 
@@ -867,16 +869,30 @@ window.scrollToEl = function(sel){
             }, null, 2),
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
+                blue_shield: false,
+                limit_checks: 0,
+                check_eft: "",
                 copies: true,
-                ecw: true,
                 limit_files: 0,
-                note: "Read-only. copies:true reads new cheque images from SharePoint (Insurance Checks; secret sharepoint_credentials) or, without that secret, from s3://<bucket>/checks/inbox/. Blue Shield comes from the cheques already captured. ecw:true logs into eCW and reads Billing → Payments since `since`. Then every cheque gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy. limit_files caps images read in a test run."
+                ecw: true,
+                note: "Read-only. blue_shield:true walks the portal first (limit_checks caps the cheques, check_eft names one); false reuses the cheques already captured. copies:true reads new cheque images from SharePoint (Insurance Checks; secret sharepoint_credentials) or, without that secret, from s3://<bucket>/checks/inbox/; limit_files caps them. ecw:true logs into eCW and reads Billing → Payments since `since` (by Check # when the run is about a few cheques). Then every cheque gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy."
+            }, null, 2),
+            check_test_one: JSON.stringify({
+                since: "07/01/2025",
+                blue_shield: true,
+                limit_checks: 1,
+                check_eft: "",
+                copies: true,
+                limit_files: 10,
+                ecw: true,
+                note: "One cheque, end to end. Blue Shield: the first cheque in the results (or check_eft) is opened and its status read today. SharePoint / S3 inbox: the images named after it are read first, then up to limit_files more. eCW: Billing → Payments, Check # = the cheque, Lookup. Its row lands in the ✅ Cheques table under the 🧪 Last run filter. Read-only; nothing is posted."
             }, null, 2)
         };
 
         // Maps a dropdown value into a different SQS payload {task_type, stage?}.
-        // Empty today: every remaining task sends its own value as the task_type.
-        const TASK_DISPATCH = {};
+        // The test of 1 is the reconciliation with one cheque taken from the
+        // portal first; every other task sends its own value as the task_type.
+        const TASK_DISPATCH = { check_test_one: { task_type: 'check_reconcile' } };
 
         const TASK_DESCRIPTIONS = {
             bs_missing_docs: {
@@ -906,8 +922,13 @@ window.scrollToEl = function(sel){
             },
             check_reconcile: {
                 title: 'Reconcile cheques',
-                desc: 'Which cheques are posted, which are not, which never reached eCW, and which we hold no copy of. Reads only: cheque images, the captured Blue Shield cheques, and the eCW Payments list.',
-                steps: ['SharePoint → Insurance Checks: read each cheque image (number + amount)', 'Blue Shield: Check/EFT status per cheque (Check Cashed or not) from the capture', 'Flag every cashed cheque we hold no copy of', 'eCW → Billing → Payments since 07/01/2025: on file = posted (or entered but unposted)', 'Verdict per cheque in the ✅ Cheques table; CSV export']
+                desc: 'Which cheques are posted, which are not, which never reached eCW, and which we hold no copy of. Reads only: cheque images, the Blue Shield cheques (walked now with blue_shield:true, else the ones captured before), and the eCW Payments list.',
+                steps: ['Blue Shield (blue_shield:true): Claims → Check claim status → each Check/EFT: amount, status, cashed date', 'SharePoint → Insurance Checks: read each cheque image (number + amount)', 'Flag every cashed cheque we hold no copy of', 'eCW → Billing → Payments since 07/01/2025: on file = posted (or entered but unposted)', 'Verdict per cheque in the ✅ Cheques table; CSV export']
+            },
+            check_test_one: {
+                title: 'Test of 1 — one cheque, end to end',
+                desc: 'The whole flow on a single cheque, to watch it on the live screen and see what the bot tracks. Same task as Reconcile cheques, with blue_shield:true and limit_checks:1.',
+                steps: ['Blue Shield → Claims → Check claim status → the first cheque in the results (or check_eft) → Check/EFT details: amount, status (Check Cashed?), cashed date', 'SharePoint (or the S3 inbox): the image named after that cheque is read first — number + amount — then up to limit_files more', 'eCW → Billing → Payments → Rcvd Pmt Dts from since → Check # = the cheque → Lookup: on file or not, posted / unposted', 'Its row in ✅ Cheques (filter 🧪 Last run); the steps show above the tiles as they happen']
             }
         };
 
@@ -1240,13 +1261,21 @@ window.scrollToEl = function(sel){
         // One row per cheque number: the copy we hold, Blue Shield's word,
         // eCW's payment, and the verdict. Filters are client-side.
         window._checksFilter = window._checksFilter || 'mismatch';
-        const CHECK_FILTERS = [['mismatch', '⚠ Does not match'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
+        const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Does not match'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
                                ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'],
                                ['copy only', 'Copy only'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
         // A cheque "matches" when the three sources agree: a copy on file,
         // Blue Shield cashed it, eCW has it posted, and the amounts agree.
         const checkMismatch = r => r.verdict !== 'posted' || (r.flags || []).length > 0;
-        function setChecksFilter(f) { window._checksFilter = f; renderChecks(); }
+        // The rows the last run wrote: its targets (a test of 1), else
+        // whatever carries the last reconciliation's timestamp.
+        const inLastRun = (r, sm) => {
+            const lr = sm.last_run || {};
+            if ((lr.targets || []).length) return lr.targets.includes(String(r.check_number));
+            return !!sm.reconciled_at && r.reconciled_at === sm.reconciled_at;
+        };
+        const RUN_STEPS = [['blue_shield', 'Blue Shield'], ['copies', 'Copies'], ['ecw', 'eCW'], ['verdict', 'Verdict'], ['done', 'Done']];
+        function setChecksFilter(f) { window._checksFilter = f; window._checksFilterChosen = true; renderChecks(); }
         function renderChecks() {
             const body = document.getElementById('checks-body');
             const meta = document.getElementById('checks-meta');
@@ -1254,10 +1283,23 @@ window.scrollToEl = function(sel){
             const data = window._checksData || {rows: [], summary: {}};
             const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
             const sm = data.summary || {};
+            const lr = sm.last_run || {};
+            // After a targeted run the tab opens on its cheque(s); the
+            // operator's own choice of filter sticks for the session.
+            if (!window._checksFilterChosen) window._checksFilter = (lr.targets || []).length ? 'last run' : 'mismatch';
             const mism = data.rows.filter(checkMismatch).length;
             if (meta) meta.textContent = data.rows.length
                 ? `${sm.checks} cheques · ${data.rows.length - mism} match · ${mism} do not` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
                 : '';
+            const runEl = document.getElementById('checks-run');
+            if (runEl) {
+                const running = lr.started_at && !(lr.steps || {}).done;
+                const chip = (label, text) => `<span style="display:inline-block;margin-right:10px"><strong>${esc(label)}:</strong> ${esc(text)}</span>`;
+                runEl.innerHTML = lr.started_at ? [
+                    `<span style="display:inline-block;margin-right:10px">${running ? '⏳' : '🧪'} <strong>${esc(lr.mode || 'run')}</strong>${(lr.targets || []).length ? ' · cheque ' + esc(lr.targets.join(', ')) : ''} · ${esc(lr.started_at)}${running ? ' · running…' : ''}</span>`,
+                    ...RUN_STEPS.filter(([k]) => (lr.steps || {})[k] && k !== 'done').map(([k, label]) => chip(label, lr.steps[k])),
+                ].join('') : '';
+            }
             const tiles = document.getElementById('checks-tiles');
             if (tiles) {
                 const tile = (label, n, f, color) => `<div class="chk-tile" onclick="setChecksFilter('${f}')" style="border-color:${window._checksFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${n ?? 0}</div><div class="chk-tile-l">${label}</div></div>`;
@@ -1277,6 +1319,7 @@ window.scrollToEl = function(sel){
             if (!body) return;
             const f = window._checksFilter;
             const rows = data.rows.filter(r => f === 'all' ? true
+                : f === 'last run' ? inLastRun(r, sm)
                 : f === 'mismatch' ? checkMismatch(r)
                 : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy'))
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
@@ -1287,8 +1330,8 @@ window.scrollToEl = function(sel){
             }
             const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
             body.innerHTML = rows.map(r => `
-                <tr>
-                  <td><strong>${esc(r.check_number)}</strong></td>
+                <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
+                  <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
                   <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">🖼 copy</a>` : `<span title="${esc(r.copy_file)}">🖼 copy</span>`) : '<span style="color:var(--bad)">none</span>'}</td>
                   <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
                   <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
@@ -2319,13 +2362,20 @@ def api_eob_plan(check_eft):
 
 
 def _checks_rows():
+    """The cheque rows, the counts over them (so the tiles always agree with
+    the table, whatever the last run looked at), and the last run's trace."""
+    from src.checks.reconcile import summarize
     table = dynamodb.Table('helixona-checks')
     items = scan_all(table)
-    summary = next((it for it in items if it.get('check_number') == '_summary'), {})
+    meta = next((it for it in items if it.get('check_number') == '_summary'), {})
+    run = next((it for it in items if it.get('check_number') == '_run'), {})
     rows = [it for it in items if not str(it.get('check_number', '')).startswith('_')]
     for r in rows:
         r['flags'] = list(r.get('flags') or [])
     rows.sort(key=lambda r: (str(r.get('bs_date') or r.get('copy_date') or ''), str(r.get('check_number'))), reverse=True)
+    summary = {**summarize(rows),
+               **{k: meta[k] for k in ('since', 'reconciled_at', 'ecw_checked', 'run_rows') if k in meta},
+               'last_run': {k: v for k, v in run.items() if k != 'check_number'}}
     return rows, summary
 
 

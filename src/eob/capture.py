@@ -493,7 +493,8 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
 
     logger.info(f"  💰 Check {check} · ${item['check_amount'] or '?'} · {item['check_date'] or '?'} "
                 f"· {item['check_status'] or '?'} · cashed {item['cashed_date'] or '?'} "
-                f"· {len(claims_out)} claim(s), matched {matched} · PDF {'ok' if s3_path else 'MISSING'}")
+                f"· {len(claims_out)} claim(s), matched {matched} · "
+                f"{'PDF ok' if s3_path else ('PDF MISSING' if download_eob else 'cheque data only')}")
     return item
 
 
@@ -538,6 +539,7 @@ def run_eob_capture(page, aws_client, body):
     # file did not line up with the screen.
     seen, pages = set(), 0
     captured, skipped, failed, rows_seen = 0, 0, 0, 0
+    captured_checks, failed_checks = [], []
     stop = False
     while not stop:
         _back_to_results(page)
@@ -584,6 +586,10 @@ def run_eob_capture(page, aws_client, body):
                 continue
             if done.get(ck) and not force:
                 skipped += 1
+                if only:
+                    logger.info(f"  cheque {only} is already on file (force:true re-opens it)")
+                    stop = True
+                    break
                 continue
             if limit and captured + failed >= limit:
                 stop = True
@@ -592,12 +598,19 @@ def run_eob_capture(page, aws_client, body):
                 _capture_check(page, aws_client, ck, info['href'], info['rows'], claim_idx, known_pdfs,
                                download_eob=download_eob)
                 captured += 1
+                captured_checks.append(ck)
                 done[ck] = True
             except Exception as e:
                 failed += 1
+                failed_checks.append(ck)
                 logger.error(f"  ❌ Check {ck} failed: {e}")
                 _shot(page, f'{ck}_error')
             logger.info(f"  progress: {captured} captured · {skipped} on file · {failed} failed")
+            if only:
+                # The one cheque asked for has been looked at; no need to
+                # page through the rest of the results.
+                stop = True
+                break
         if stop:
             break
 
@@ -619,4 +632,5 @@ def run_eob_capture(page, aws_client, body):
     logger.info(f"═══ Remittance complete: {captured} captured · {skipped} already on file · {failed} failed "
                 f"· {len(seen)} cheque(s) seen over {pages + 1} page(s) ═══")
     return {'ok': True, 'captured': captured, 'skipped': skipped, 'failed': failed,
-            'checks': len(seen), 'rows': rows_seen}
+            'checks': len(seen), 'rows': rows_seen,
+            'captured_checks': captured_checks, 'failed_checks': failed_checks}

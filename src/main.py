@@ -11357,14 +11357,17 @@ def process_message(message: dict, aws_client: AWSClient):
     elif task_type == 'check_reconcile':
         # Remittance: which cheques are posted, unposted, missing from eCW,
         # and which we hold no copy of. Cheque images from SharePoint (or the
-        # S3 inbox) + Blue Shield's captured cheques + eCW's Payments list.
-        # Read-only everywhere. The browser opens only if eCW is consulted.
+        # S3 inbox) + Blue Shield's cheques (collected in this run with
+        # blue_shield:true, else the ones already captured) + eCW's Payments.
+        # Read-only everywhere. One browser, opened on demand and shared by
+        # the Blue Shield and eCW steps: the profile dir admits one Chrome.
         logger.info("═══ Remittance — cheque reconciliation ═══")
         from src.checks.run import run_check_reconcile
         holder = {}
 
         def get_page():
-            holder['manager'] = BrowserManager().start(proxy_config=None)
+            if not holder.get('manager'):
+                holder['manager'] = BrowserManager().start(proxy_config=None)
             return holder['manager'].new_page()
 
         try:
