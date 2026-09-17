@@ -367,7 +367,19 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         rc = _read('src/checks/read_check.py')
         self.assertIn("VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')", rc)
         self.assertIn("anthropic.Anthropic(api_key=key)", rc)
-        self.assertIn("aws_client.get_secret('anthropic_credentials')", rc)
+        self.assertIn("'helixona-prod-anthropic-api-key'", rc)
+        self.assertIn("aws_client.secrets.get_secret_value(SecretId=name)", rc)
+        # The key is accepted bare or as JSON — the provisioned secret is a plain string.
+        from src.checks.read_check import _key_from_secret
+        class _Aws:
+            class secrets:
+                @staticmethod
+                def get_secret_value(SecretId):
+                    return {'SecretString': {'a': 'sk-ant-plain', 'b': '{"ANTHROPIC_API_KEY": "sk-ant-json"}',
+                                             'c': '{"api_key": "sk-ant-j2"}'}[SecretId]}
+        self.assertEqual(_key_from_secret(_Aws(), 'a'), 'sk-ant-plain')
+        self.assertEqual(_key_from_secret(_Aws(), 'b'), 'sk-ant-json')
+        self.assertEqual(_key_from_secret(_Aws(), 'c'), 'sk-ant-j2')
         self.assertIn("fallbacks='default'", rc)
         self.assertIn("if response.stop_reason == 'refusal':", rc)
         for gone in ('bedrock-runtime', 'invoke_model', 'bedrock-2023-05-31'):

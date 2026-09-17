@@ -24,8 +24,12 @@ logger = get_logger(__name__)
 # Which Claude reads the images. Overridable per host: the model catalogue
 # on Bedrock moves, and the first vision run tells us what the account has.
 # The Claude API, directly (not Bedrock — 2026-09-17). The key comes from
-# ANTHROPIC_API_KEY or the secret prod/helixona/anthropic_credentials
-# ({"api_key": "sk-ant-..."}); the model from VISION_MODEL_ID.
+# ANTHROPIC_API_KEY, else the Secrets Manager secret
+# helixona-prod-anthropic-api-key (the one provisioned with the account:
+# the bare key, or JSON with api_key / ANTHROPIC_API_KEY), else
+# prod/helixona/anthropic_credentials {"api_key": ...}. Model: VISION_MODEL_ID.
+KEY_SECRETS = [os.environ.get('ANTHROPIC_SECRET_NAME', 'helixona-prod-anthropic-api-key'),
+               'prod/helixona/anthropic_credentials']
 VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')  # the operator's choice, 2026-09-17
 _CLIENT = {}
 
@@ -119,20 +123,42 @@ def parse_model_json(text):
 
 
 # ------------------------------------------------------------ the readers
+def _key_from_secret(aws_client, name):
+    """The key in a secret: the bare string, or JSON under api_key /
+    ANTHROPIC_API_KEY / key."""
+    try:
+        raw = aws_client.secrets.get_secret_value(SecretId=name).get('SecretString', '') or ''
+    except Exception as e:
+        logger.info(f"  (secret {name}: {str(e)[:100]})")
+        return ''
+    raw = raw.strip()
+    if raw.startswith('{'):
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return ''
+        for k in ('api_key', 'ANTHROPIC_API_KEY', 'anthropic_api_key', 'key'):
+            if data.get(k):
+                return str(data[k]).strip()
+        return ''
+    return raw
+
+
 def _client(aws_client):
     """One Anthropic client per process. The key: ANTHROPIC_API_KEY, else
-    the anthropic_credentials secret."""
+    the first of KEY_SECRETS that holds one."""
     if 'client' not in _CLIENT:
         import anthropic
-        key = os.environ.get('ANTHROPIC_API_KEY', '')
-        if not key:
-            try:
-                key = (aws_client.get_secret('anthropic_credentials') or {}).get('api_key', '')
-            except Exception:
-                key = ''
-        if not key:
-            raise RuntimeError('no Anthropic API key: set ANTHROPIC_API_KEY or the secret '
-                               'prod/helixona/anthropic_credentials {"api_key": ...}')
+        key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
+        for name in KEY_SECRETS:
+            if key:
+                break
+            key = _key_from_secret(aws_client, name)
+            if key:
+                logger.info(f"  🔑 Anthropic API key from secret {name}")
+        if not key.startswith('sk-ant-'):
+            raise RuntimeError('no Anthropic API key: set ANTHROPIC_API_KEY or fill the secret '
+                               f'{KEY_SECRETS[0]} with the key (sk-ant-...)')
         _CLIENT['client'] = anthropic.Anthropic(api_key=key)
     return _CLIENT['client']
 

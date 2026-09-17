@@ -85,11 +85,10 @@ instead — cheque images dropped there by hand.
 
 The images are read by Claude through the Anthropic API directly (not
 Bedrock). The key comes from `ANTHROPIC_API_KEY` in the bot's environment
-or, failing that, the secret `prod/helixona/anthropic_credentials`:
-
-```json
-{"api_key": "sk-ant-..."}
-```
+or, failing that, the Secrets Manager secret
+`helixona-prod-anthropic-api-key` (provisioned with the account; the bare
+`sk-ant-...` string, or JSON with `api_key` / `ANTHROPIC_API_KEY`), or
+`prod/helixona/anthropic_credentials` `{"api_key": "sk-ant-..."}`.
 
 `VISION_MODEL_ID` (environment) names the model; the default is
 `claude-sonnet-5` (about $0.01 an image; each file is read once and kept). A run without a key logs "no Anthropic API key". Files that
