@@ -2874,10 +2874,11 @@ def _dump_insurance_grid(page, claim_id, aws_client):
 
 IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 
-# The EOB bot (Remittance) reads what the payer sent back and enters it into
-# eCW — it never submits, and the submitting bots never touch payments. Fenced
-# both ways, like the IV bot.
-EOB_TASKS = {'eob_capture', 'eob_post', 'check_reconcile'}
+# The Remittance bot reconciles cheques — the copies we hold, Blue Shield's
+# status, eCW's payments — and never submits; the submitting bots never touch
+# payments. Fenced both ways, like the IV bot. (Entering payments into eCW is
+# Vignesh's team's work, not the bot's: the old eob_post task is gone.)
+EOB_TASKS = {'check_reconcile'}
 
 
 def process_message(message: dict, aws_client: AWSClient):
@@ -11320,39 +11321,6 @@ def process_message(message: dict, aws_client: AWSClient):
                     logger.warning(f"Skipping ECW status updates: {login_err}")
                 finally:
                     ecw_manager.stop()
-
-    elif task_type == 'eob_capture':
-        # Remittance: capture Explanations of Benefits from the Blue Shield portal —
-        # finalized, paid claims; each cheque's transaction summary; the EOB
-        # report PDF — and pin them to our claims. Read-only against the payer.
-        # Posting the payments into eCW is a later, separately-gated step.
-        logger.info("═══ Remittance — EOB capture from Blue Shield ═══")
-        from src.eob.capture import run_eob_capture
-        manager = BrowserManager().start()
-        try:
-            page = manager.new_page()
-            run_eob_capture(page, aws_client, body)
-        except Exception as e:
-            logger.error(f"EOB capture failed: {e}")
-        finally:
-            manager.stop()
-
-    elif task_type == 'eob_post':
-        # Remittance: enter the planned cheques into eCW — Billing → Payments,
-        # Single Ins Payment on the claim, the Payments popup, then (only with
-        # "post": true) Payment Advisory, the posting grid and Auto Post.
-        # Without post:true it is a dry run that stops before the save. eCW
-        # has no IP block, so no proxy — same as every other eCW task.
-        logger.info("═══ Remittance — entering EOBs into eCW ═══")
-        from src.eob.post import run_eob_post
-        manager = BrowserManager().start(proxy_config=None)
-        try:
-            page = manager.new_page()
-            run_eob_post(page, aws_client, body, login=_perform_ecw_login)
-        except Exception as e:
-            logger.error(f"EOB posting failed: {e}")
-        finally:
-            manager.stop()
 
     elif task_type == 'check_reconcile':
         # Remittance: which cheques are posted, unposted, missing from eCW,

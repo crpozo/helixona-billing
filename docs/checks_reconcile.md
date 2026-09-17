@@ -10,7 +10,7 @@ The operator's procedure (2026-09-16), as the Remittance bot runs it
 2. **Blue Shield** — the cheque's `Check/EFT status`: `Check Cashed` or not.
    With `blue_shield:true` the run walks the portal itself (Claims → Check
    claim status → each Check/EFT, cheque data only); otherwise it takes the
-   cheques an earlier `eob_capture` stored (helixona-eobs).
+   cheques an earlier run with `blue_shield:true` stored (helixona-eobs).
 3. **No copy** — every cashed cheque we hold no image of is flagged.
 4. **eCW** — Billing → Payments since 07/01/2025, every cheque. A payment
    under the number means it was entered: `posted` when nothing is left

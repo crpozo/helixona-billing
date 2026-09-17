@@ -151,24 +151,15 @@ class AStoredChequeIsPlannedFromItsReport(unittest.TestCase):
         self.assertIn('the EOB lines for claim 11 were not read', p['claims'][0]['reasons'])
 
 
-class ThePlanIsShownNotPosted(unittest.TestCase):
-    def _dash(self):
+class ThePlanIsNoLongerOnTheDashboard(unittest.TestCase):
+    """2026-09-17: the bot compares cheques and does not enter payments, so
+    the posting plan (what to type into eCW per cheque) left the dashboard.
+    The planner itself stays a library, pinned above."""
+    def test_the_dashboard_neither_plans_nor_posts(self):
         with open(os.path.join(REPO, 'dashboard.py'), encoding='utf-8') as fh:
-            return fh.read()
-
-    def test_the_plan_endpoint_only_reads(self):
-        d = self._dash()
-        i = d.index('def api_eob_plan')
-        body = d[i:d.index('@app.route', i)]
-        self.assertIn('plan_from_item', body)
-        self.assertNotIn('posted_in_ecw', body)
-
-    def test_each_cheque_can_show_its_plan(self):
-        d = self._dash()
-        self.assertIn("fetch(`/api/eob/${encodeURIComponent(check)}/plan`)", d)
-        self.assertIn('🧮 Posting plan', d)
-        # A plan survives the table's 15-second refresh.
-        self.assertIn('window._eobPlans', d)
+            d = fh.read()
+        for gone in ('def api_eob_plan', 'plan_from_item', 'Posting plan', 'window._eobPlans', 'posted_in_ecw'):
+            self.assertNotIn(gone, d, gone)
 
 
 if __name__ == '__main__':

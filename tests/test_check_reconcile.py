@@ -260,12 +260,22 @@ class TheTestOfOne(unittest.TestCase):
 class TheTaskIsWiredReadOnly(unittest.TestCase):
     def test_the_bot_runs_it_and_opens_one_browser_on_demand(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'eob_capture', 'eob_post', 'check_reconcile'}", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
         i = src.index("elif task_type == 'check_reconcile':")
         block = src[i:i + 1500]
         self.assertIn('run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)', block)
         # One Chrome on the profile dir: the Blue Shield and eCW steps share it.
         self.assertIn("if not holder.get('manager'):\n                holder['manager'] = BrowserManager().start(proxy_config=None)", block)
+
+    def test_the_payments_screen_can_be_opened_by_a_person_when_the_menu_hides(self):
+        # 2026-09-17: "nothing to click among ['Payments', 'Payment'] (menu)" —
+        # the run must not die there: hidden menu items are tried, the menu
+        # is logged, and someone can open Billing → Payments on the live screen.
+        p = _read('src/eob/post.py')
+        self.assertIn('def open_payments(page, wait_for_person=90):', p)
+        self.assertIn("_menu_items(page, r'^payments?$|payment\\s*lookup|insurance\\s*payments?', click=True)", p)
+        self.assertIn('open it on the live screen (noVNC)', p)
+        self.assertIn('that route belongs in PAYMENT_HASHES', p)
 
     def test_the_capture_hands_back_the_cheques_it_opened(self):
         c = _read('src/eob/capture.py')
@@ -319,9 +329,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         c = _read('src/eob/capture.py')
         self.assertIn("download_eob = bool(body.get('download_eob', False))", c)
         self.assertIn("pdf_path = _download_eob_pdf(page, check) if download_eob else ''", c)
-        d = _read('dashboard.py')
-        self.assertIn('download_eob: false', d)
-        self.assertIn('Collect cheques from Blue Shield', d)
+        self.assertIn("'force': bool(body.get('force', targeted)), 'download_eob': False", _read('src/checks/run.py'))
 
     def test_the_table_is_declared_and_self_creating(self):
         self.assertIn("CHECKS_TABLE = 'helixona-checks'", _read('src/checks/run.py'))

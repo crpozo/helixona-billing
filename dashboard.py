@@ -63,7 +63,7 @@ BOT_ROUTING = {
         'service': 'helixona-agent-eob',
         'name': 'Remittance',
         'emoji': '🧾',
-        'label': 'Blue Shield EOB',
+        'label': 'Cheque reconciliation',
         'novnc_port': 6083,
     },
 }
@@ -298,10 +298,9 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .claims-table-wrap{overflow-x:auto;max-height:760px;overflow-y:auto}
 .claims-table-wrap.hide-payer .col-payer{display:none}
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
-   the EOB table on Remittance — pinned so an extra panel can never again
+   the cheques table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #eob-section, .main > #claims-section-submissions{grid-column:1}
-.main > #checks-section{grid-column:1}
+.main > #checks-section, .main > #claims-section-submissions{grid-column:1}
 .chk-filter{font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:12px;background:transparent;color:inherit;cursor:pointer}
 .chk-filter.on{border-color:var(--accent);color:var(--accent)}
 .chk-tiles{display:flex;flex-wrap:wrap;gap:10px;padding:10px 14px 4px}
@@ -309,15 +308,6 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .chk-tile-n{font-size:22px;font-weight:700;line-height:1.1}
 .chk-tile-l{font-size:11px;color:var(--text-muted);margin-top:2px}
 .main > .task-panel{grid-column:2;grid-row:1}
-#eob-body tr.eob-row{cursor:pointer}
-#eob-body tr.eob-row td:first-child::before{content:'▸';display:inline-block;width:14px;color:var(--text-muted);transition:transform .15s}
-#eob-body tr.eob-row.open td:first-child::before{transform:rotate(90deg)}
-#eob-body tr.eob-claims > td{background:var(--bg2);padding:0 0 0 22px;border-bottom:1px solid var(--bdr)}
-#eob-body tr.eob-claims:hover{background:transparent}
-.eob-claims-table{width:100%;border-collapse:collapse}
-.eob-claims-table th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid var(--bdr)}
-.eob-claims-table td{font-size:12px;padding:8px 12px;border-bottom:1px solid var(--bdr)}
-.eob-claims-table tr:last-child td{border-bottom:none}
 .eob-plan{padding:10px 12px 14px;border-top:1px solid var(--bdr)}
 .eob-plan .btn-plan{font-size:12px;padding:5px 10px;border:1px solid var(--bdr);border-radius:6px;background:transparent;color:inherit;cursor:pointer}
 .eob-plan .plan-hint{font-size:11px;color:var(--text-muted);margin-left:8px}
@@ -482,7 +472,7 @@ tbody tr:last-child td{border-bottom:none}
     <div class="subtabs" id="bot-tabs">
       <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">📋 Intake · Blue Shield Submissions</div>
       <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🩺 Follow-up · Blue Shield Resubmissions</div>
-      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · EOB</div>
+      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · Cheques</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -542,27 +532,7 @@ tbody tr:last-child td{border-bottom:none}
                 <th>Cashed</th><th>eCW</th><th class="num">Posted</th><th class="num">Unposted</th><th>Verdict</th><th>Flags</th>
               </tr>
             </thead>
-            <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>✅ Reconcile cheques</strong> from the task panel.</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- EOB TABLE (Remittance) — one row per Check/EFT captured from Blue Shield -->
-      <div class="claims-section" id="eob-section" hidden>
-        <div class="section-title">
-          🧾 Explanations of Benefits
-          <span id="eob-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
-          <button class="btn btn-refresh" onclick="loadEobs()">↻ Refresh</button>
-        </div>
-        <div class="claims-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Check/EFT #</th><th>Check date</th><th>Amount</th><th>Status</th><th>Cashed</th>
-                <th>Payee</th><th>Claims</th><th>Matched</th><th>EOB</th><th>Captured</th><th>eCW</th>
-              </tr>
-            </thead>
-            <tbody id="eob-body"><tr><td colspan="11" class="empty-state">No EOBs captured yet. Send <strong>💰 Capture EOBs from Blue Shield</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
+            <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile cheques</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -627,8 +597,6 @@ tbody tr:last-child td{border-bottom:none}
               <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
             </optgroup>
             <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
-              <option value="eob_capture" data-bot="eob">💰 Collect cheques from Blue Shield</option>
-              <option value="eob_post" data-bot="eob">🏦 Enter EOB payments into eCW</option>
               <option value="check_reconcile" data-bot="eob">✅ Reconcile cheques: copies · Blue Shield · eCW</option>
               <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield cheque vs SharePoint vs eCW</option>
             </optgroup>
@@ -854,19 +822,6 @@ window.scrollToEl = function(sel){
             ecw_status_update: JSON.stringify({
                 note: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims."
             }, null, 2),
-            eob_capture: JSON.stringify({
-                since: "07/01/2025",
-                limit_checks: 0,
-                download_eob: false,
-                note: "Blue Shield → Claims → Check claim status: Finalized, Claim amount paid ≥ $0.01, status/payment date from `since`. For every Check/EFT: number, amount, date, status (Check Cashed or not), cashed date, the claims it paid. Read-only. download_eob:true also saves the EOB report PDF (not needed for the reconciliation). limit_checks > 0 collects only that many cheques (a test run)."
-            }, null, 2),
-            eob_post: JSON.stringify({
-                post: false,
-                check_eft: "",
-                limit_checks: 1,
-                since: "07/01/2025",
-                note: "eCW → Billing → Payments for every captured cheque whose posting plan is READY (held cheques are skipped). post:false is a DRY RUN: the Payments popup is filled and screenshotted, then cancelled — Payment Advisory is never clicked, so nothing is saved. post:true clicks Payment Advisory (creates the payment), types the grid and Auto Posts. check_eft enters one cheque; limit_checks caps the run."
-            }, null, 2),
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
                 blue_shield: false,
@@ -909,16 +864,6 @@ window.scrollToEl = function(sel){
                 title: 'ECW Status Update',
                 desc: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims.",
                 steps: []
-            },
-            eob_capture: {
-                title: 'Collect cheques from Blue Shield',
-                desc: 'Logs into the Blue Shield provider portal, searches finalized claims with a payment and opens every Check/EFT for its status and cashed date. This is the Blue Shield side of the cheque reconciliation. Nothing is written anywhere.',
-                steps: ['Claims → Check claim status → Finalized + paid ≥ $0.01', 'Each Check/EFT → number, amount, date, status, cashed date, claims paid', 'Saved as it goes; a re-run only opens new cheques', 'Then ✅ Reconcile cheques compares them with the SharePoint copies and eCW']
-            },
-            eob_post: {
-                title: 'Enter EOB payments into eCW',
-                desc: 'Plans every captured cheque first (the same 🧮 Posting plan you can open in the table) and enters only the ones that are ready. Dry run unless post:true — the save is the Payment Advisory click, and a dry run stops before it.',
-                steps: ['Billing → Payments → Rcvd Pmt Dts from 07/01/2025 → Check # → Lookup (rows = already posted)', 'Single Ins Payment (F4) → Claim No = EOB patient account number → Get Insurance → Blue Shield of California → OK', 'Popup: Type Check · Check No. · Amount $ = approve-to-pay · Check Date · EOB Date · Deposit Date = cashed date', 'DRY RUN STOPS HERE (screenshot, Cancel)', 'post:true → Payment Advisory (saves) → Claim ID → Go (F3) → Allowed / Deduct / CoPay / Paid per planned line → Auto Post (F2) → Yes']
             },
             check_reconcile: {
                 title: 'Reconcile cheques',
@@ -984,24 +929,22 @@ window.scrollToEl = function(sel){
             const firstVisible = Array.from(sel.options).find(o => !o.hidden);
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             // The headline counts something different per bot: what each has
-            // sent, or — for Remittance — how many sent claims have come back paid.
+            // sent, or — for Remittance — how many cheques the three sources
+            // agree on (a copy on file, cashed, posted in eCW, amounts equal).
             const denom = document.getElementById('hero-denom-label');
             if (denom) denom.textContent = bot === 'eob'
-                ? 'submitted claims with an EOB captured' : 'claims submitted';
+                ? 'cheques compared: copy · Blue Shield · eCW' : 'claims submitted';
             const pctLabel = document.getElementById('hero-pct-label');
-            if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'captured' : 'complete';
+            if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'match' : 'complete';
             const remLabel = document.getElementById('hero-remaining-label');
-            if (remLabel) remLabel.textContent = bot === 'eob' ? 'without an EOB yet' : 'remaining';
+            if (remLabel) remLabel.textContent = bot === 'eob' ? 'do not match' : 'remaining';
             // Remittance works per cheque, not per claim document — the claims
             // table's HCFA / IV note / progress-note columns mean nothing
             // there — so each tab shows exactly one main panel.
-            const eobSec = document.getElementById('eob-section');
-            if (eobSec) eobSec.hidden = (bot !== 'eob');
             const chkSec = document.getElementById('checks-section');
             if (chkSec) chkSec.hidden = (bot !== 'eob');
             const claimsSec = document.getElementById('claims-section-submissions');
             if (claimsSec) claimsSec.hidden = (bot === 'eob');
-            if (bot === 'eob' && typeof loadEobs === 'function') loadEobs();
             if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
             // Re-render from the claims already loaded, THEN refetch. The
             // table used to keep showing the previous tab's claims until the
@@ -1196,7 +1139,7 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
-            if (window.activeBot === 'eob') return claims.filter(c => !!c.eob_check_eft);
+            if (window.activeBot === 'eob') return [];  // Remittance shows cheques, not claims
             return claims;
         }
 
@@ -1325,7 +1268,7 @@ window.scrollToEl = function(sel){
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
                 : r.verdict === f);
             if (!rows.length) {
-                body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>✅ Reconcile cheques</strong> from the task panel.'}</td></tr>`;
+                body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile cheques</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.'}</td></tr>`;
                 return;
             }
             const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
@@ -1350,150 +1293,6 @@ window.scrollToEl = function(sel){
                 window._checksData = await res.json();
                 renderChecks();
             } catch (e) { console.error('loadChecks failed', e); }
-        }
-
-        // ---- EOB table (Remittance) ----
-        // The eCW column: posted, or what the last eob_post attempt found,
-        // or the plan's verdict, in that order of authority.
-        function postCell(e, esc) {
-            if (e.posted_in_ecw) return `<span style="color:var(--success)" title="${esc((e.post_result || {}).reason || '')}">posted${(e.post_result || {}).payment_id ? ' · #' + esc(e.post_result.payment_id) : ''}</span>`;
-            const r = e.post_result;
-            if (r && r.status) {
-                const label = {dry_run: 'dry run ok', held: 'held', incomplete: 'INCOMPLETE — finish in eCW', failed: 'failed'}[r.status] || r.status;
-                const color = r.status === 'dry_run' ? 'var(--accent)' : r.status === 'held' ? 'var(--warning)' : 'var(--bad)';
-                return `<span style="color:${color};cursor:help" title="${esc(r.at || '')}\n${esc(r.reason || '')}">${esc(label)}</span>`;
-            }
-            if (e.plan_status === 'ready') return '<span style="color:var(--success)">plan ready</span>';
-            if (e.plan_status) return `<span style="color:var(--warning)">held · ${esc(e.plan_reasons)}</span>`;
-            return '<span style="color:var(--text-muted)">pending</span>';
-        }
-
-        async function loadEobs() {
-            const body = document.getElementById('eob-body');
-            const meta = document.getElementById('eob-meta');
-            if (!body) return;
-            try {
-                const res = await fetch('/api/eobs');
-                const data = await res.json();
-                const eobs = data.eobs || [];
-                if (meta) meta.textContent = eobs.length
-                    ? `${eobs.length} cheques · $${data.total_amount} · ${data.claims_matched}/${data.claims_total} claims matched`
-                    : '';
-                if (!eobs.length) {
-                    body.innerHTML = '<tr><td colspan="11" class="empty-state">No EOBs captured yet. Send <strong>💰 Capture EOBs from Blue Shield</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr>';
-                    return;
-                }
-                const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-                const usd = v => v ? '$' + esc(v) : '—';
-                const how = m => ({pdf_account_number: 'EOB account #', subscriber_dos: 'subscriber + DOS'}[m] || '—');
-                const open = window._eobOpen || (window._eobOpen = new Set());
-                const plans = window._eobPlans || (window._eobPlans = {});
-                // Each cheque row opens onto the claims it paid; open rows
-                // stay open across refreshes.
-                body.innerHTML = eobs.map(e => {
-                    const claims = e.claims || [];
-                    const isOpen = open.has(String(e.check_eft));
-                    const claimRows = claims.map(c => `
-                        <tr>
-                          <td>${c.claim_id ? `<strong>${esc(c.claim_id)}</strong>` : '<span style="color:var(--warning)">unmatched</span>'}</td>
-                          <td>${esc(c.member_name)}</td>
-                          <td>${esc(c.dos)}</td>
-                          <td>${esc(c.bsc_claim_number)}</td>
-                          <td class="num">${usd(c.amount_billed)}</td>
-                          <td class="num">${usd(c.amount_paid)}</td>
-                          <td class="num">${usd(c.patient_resp)}</td>
-                          <td style="color:var(--text-muted)">${how(c.match_source)}</td>
-                        </tr>`).join('') || '<tr><td colspan="8" class="empty-state">No claims listed for this cheque.</td></tr>';
-                    return `
-                    <tr class="eob-row${isOpen ? ' open' : ''}" data-check="${esc(e.check_eft)}" onclick="toggleEob(this)">
-                      <td><strong>${esc(e.check_eft)}</strong></td>
-                      <td>${esc(e.check_date)}</td>
-                      <td>${e.check_amount ? '$' + esc(e.check_amount) : '—'}</td>
-                      <td>${esc(e.check_status)}</td>
-                      <td>${esc(e.cashed_date)}</td>
-                      <td>${esc(e.payee_name)}</td>
-                      <td>${esc(e.num_claims)}</td>
-                      <td>${esc(e.claims_matched)}/${(e.claims || []).length}</td>
-                      <td>${e.eob_pdf_s3_path ? `<a href="/api/eob/${encodeURIComponent(e.check_eft)}/pdf" target="_blank" onclick="event.stopPropagation()">📄 PDF</a>` : '<span style="color:var(--bad)">missing</span>'}</td>
-                      <td style="font-size:11px;color:var(--text-muted)">${esc(e.captured_at)}</td>
-                      <td>${postCell(e, esc)}</td>
-                    </tr>
-                    <tr class="eob-claims"${isOpen ? '' : ' hidden'}>
-                      <td colspan="11">
-                        <table class="eob-claims-table">
-                          <thead><tr><th>Claim #</th><th>Member</th><th>DOS</th><th>BSC claim #</th>
-                            <th class="num">Billed</th><th class="num">Paid</th><th class="num">Pt resp</th><th>Matched by</th></tr></thead>
-                          <tbody>${claimRows}</tbody>
-                        </table>
-                        <div class="eob-plan" data-check="${esc(e.check_eft)}">
-                          <button class="btn-plan" data-check="${esc(e.check_eft)}" onclick="event.stopPropagation(); loadPlan(this.dataset.check)">🧮 Posting plan</button>
-                          <span class="plan-hint">What Remittance would enter in eCW, line by line. Nothing is posted.</span>
-                          <div class="plan-out">${plans[String(e.check_eft)] ? renderPlan(plans[String(e.check_eft)]) : ''}</div>
-                        </div>
-                      </td>
-                    </tr>`;
-                }).join('');
-            } catch (e) {
-                console.error('loadEobs failed', e);
-            }
-        }
-
-        function toggleEob(row) {
-            const open = window._eobOpen || (window._eobOpen = new Set());
-            const key = row.dataset.check;
-            const sub = row.nextElementSibling;
-            const nowOpen = !row.classList.contains('open');
-            row.classList.toggle('open', nowOpen);
-            if (sub) sub.hidden = !nowOpen;
-            if (nowOpen) open.add(key); else open.delete(key);
-        }
-
-        // ---- Posting plan (Remittance) ----
-        // What would be entered in eCW for a cheque: per claim, per line, the
-        // allowed / deductible / co-pay / paid from the EOB, or why the claim
-        // is held. Read-only; plans are kept so the table refresh keeps them.
-        const eobEsc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-        function renderPlan(p) {
-            if (p.error) return `<div class="plan-err">${eobEsc(p.error)}</div>`;
-            const list = rs => (rs || []).length ? `<ul class="plan-reasons">${rs.map(r => `<li>${eobEsc(r)}</li>`).join('')}</ul>` : '';
-            const t = p.totals || {};
-            const claims = (p.claims || []).map(c => {
-                const rows = (c.rows || []).map(r => `
-                    <tr><td>${eobEsc(r.cpt)}</td><td>${eobEsc(r.ecw_drug)}</td>
-                      <td class="num">$${eobEsc(r.ecw_billed)}</td><td class="num">$${eobEsc(r.eob_billed)}</td>
-                      <td class="num">${eobEsc(r.allowed)}</td><td class="num">${eobEsc(r.deductible)}</td>
-                      <td class="num">${eobEsc(r.copay)}</td><td class="num"><strong>${eobEsc(r.paid)}</strong></td>
-                      <td style="color:var(--text-muted)">${eobEsc(r.how)}</td></tr>`).join('');
-                const unposted = (c.unposted_ecw || []).map(i => (c.ecw_lines || [])[i]).filter(Boolean)
-                    .map(l => `${eobEsc(l.cpt)} $${eobEsc(l.billed)}`).join(', ');
-                return `<div class="plan-claim">
-                    <div class="plan-claim-h"><strong>Claim ${eobEsc(c.claim_id || '?')}</strong> · BSC ${eobEsc(c.bsc_claim_number)}
-                      · paid $${eobEsc(c.claim_paid)} · ${c.status === 'ready' ? '<span class="plan-ok">ready</span>' : '<span class="plan-held">held</span>'}</div>
-                    ${list(c.reasons)}
-                    ${rows ? `<table class="eob-claims-table"><thead><tr><th>CPT</th><th>eCW drug</th><th class="num">eCW billed</th>
-                      <th class="num">EOB billed</th><th class="num">Allowed</th><th class="num">Deductible</th><th class="num">Co-pay</th>
-                      <th class="num">Paid</th><th>Matched by</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-                    ${unposted ? `<div class="plan-note">In eCW but not on this EOB (nothing posted to them): ${unposted}</div>` : ''}
-                  </div>`;
-            }).join('');
-            return `<div class="plan-head">${p.status === 'ready' ? '<span class="plan-ok">Ready to post</span>' : '<span class="plan-held">Held for review</span>'}
-                <span class="plan-tot">claims paid $${eobEsc(t.claims_paid)} · approve-to-pay $${eobEsc(t.approve_to_pay)}
-                · interest $${eobEsc(t.interest)} · check $${eobEsc(t.check_amount)}</span></div>
-                ${list(p.reasons)}${(p.notes || []).map(n => `<div class="plan-note">${eobEsc(n)}</div>`).join('')}${claims}`;
-        }
-
-        async function loadPlan(check) {
-            const plans = window._eobPlans || (window._eobPlans = {});
-            const out = () => document.querySelector(`.eob-plan[data-check="${CSS.escape(check)}"] .plan-out`);
-            if (out()) out().innerHTML = '<div class="plan-note">Reading the EOB report and each claim’s HCFA…</div>';
-            try {
-                const res = await fetch(`/api/eob/${encodeURIComponent(check)}/plan`);
-                plans[check] = await res.json();
-            } catch (e) {
-                plans[check] = {error: String(e)};
-            }
-            if (out()) out().innerHTML = renderPlan(plans[check]);
         }
 
         // ---- Date filter (hero card) ----
@@ -2231,9 +2030,8 @@ window.scrollToEl = function(sel){
         // a slower beat.
         setInterval(loadCounts, 4000);
         setInterval(loadData, 15000);
-        // The EOB list is small; keep it live while a capture is running.
-        setInterval(() => { if (window.activeBot === 'eob') loadEobs(); }, 15000);
-        setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 30000);
+        // The cheques table is small; keep it live while a run is going.
+        setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 15000);
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
     </script>
@@ -2320,47 +2118,6 @@ def api_mfa_code():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/eob/<check_eft>/plan')
-def api_eob_plan(check_eft):
-    """The posting plan for one cheque: what Remittance would type into eCW,
-    line by line, or why it will not. Read-only — nothing is posted here."""
-    try:
-        import tempfile
-        from src.eob.eob_pdf import read_eob_pdf
-        from src.eob.hcfa_lines import hcfa_lines_from_pdf
-        from src.eob.plan import plan_from_item
-        eobs = dynamodb.Table('helixona-eobs')
-        item = eobs.get_item(Key={'check_eft': check_eft}).get('Item')
-        if not item:
-            return jsonify({'error': f'cheque {check_eft} not found'}), 404
-        s3 = boto3.client('s3', region_name='us-west-2')
-        claims = dynamodb.Table('helixona-claims')
-
-        def fetch(s3_path, reader):
-            m = re.match(r's3://([^/]+)/(.+)', s3_path or '')
-            if not m:
-                return None
-            with tempfile.NamedTemporaryFile(suffix='.pdf') as fh:
-                s3.download_fileobj(m.group(1), m.group(2), fh)
-                fh.flush()
-                return reader(fh.name)
-
-        plan = plan_from_item(
-            item,
-            get_claim=lambda cid: claims.get_item(Key={'claim_id': cid}).get('Item'),
-            read_hcfa=lambda p: fetch(p, hcfa_lines_from_pdf),
-            read_eob=lambda p: fetch(p, read_eob_pdf))
-        held = len(plan['reasons']) + sum(len(c.get('reasons') or []) for c in plan['claims'])
-        eobs.update_item(
-            Key={'check_eft': check_eft},
-            UpdateExpression='SET plan_status = :s, plan_reasons = :r, planned_at = :t',
-            ExpressionAttributeValues={':s': plan['status'], ':r': held,
-                                       ':t': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')})
-        return jsonify(json.loads(json.dumps(plan, default=str)))
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 def _checks_rows():
     """The cheque rows, the counts over them (so the tiles always agree with
     the table, whatever the last run looked at), and the last run's trace."""
@@ -2410,66 +2167,6 @@ def api_checks_csv():
                     headers={'Content-Disposition': 'attachment; filename="cheques.csv"'})
 
 
-@app.route('/api/eobs')
-def api_eobs():
-    """Every cheque Remittance has captured, newest check date first, sized for a
-    table: the PDF's parsed CPT lines stay out of this payload."""
-    try:
-        table = dynamodb.Table('helixona-eobs')
-        items, kwargs = [], {}
-        while True:
-            resp = table.scan(**kwargs)
-            items.extend(resp.get('Items', []))
-            if 'LastEvaluatedKey' not in resp:
-                break
-            kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
-        eobs = []
-        total = Decimal('0')
-        matched = claims_total = 0
-        for it in items:
-            it = {k: v for k, v in it.items() if k not in ('eob_lines', 'eob_claims')}
-            eobs.append(it)
-            try:
-                total += Decimal(str(it.get('check_amount') or '0'))
-            except Exception:
-                pass
-            matched += int(it.get('claims_matched') or 0)
-            claims_total += len(it.get('claims') or [])
-
-        def sort_key(e):
-            d = str(e.get('check_date') or '')
-            m = re.match(r'(\d{2})/(\d{2})/(\d{4})', d)
-            return (m.group(3) + m.group(1) + m.group(2)) if m else ''
-        eobs.sort(key=sort_key, reverse=True)
-        return jsonify({'eobs': eobs, 'total_amount': f'{total:.2f}',
-                        'claims_matched': matched, 'claims_total': claims_total})
-    except Exception as e:
-        return jsonify({'error': str(e), 'eobs': []})
-
-
-@app.route('/api/eob/<check_eft>/pdf')
-def api_eob_pdf(check_eft):
-    """A short-lived link to the EOB report PDF in S3."""
-    try:
-        it = dynamodb.Table('helixona-eobs').get_item(Key={'check_eft': check_eft}).get('Item') or {}
-        s3_path = str(it.get('eob_pdf_s3_path') or '')
-        if not s3_path.startswith('s3://'):
-            return jsonify({'error': 'no PDF on file for this cheque'}), 404
-        bucket, key = s3_path[5:].split('/', 1)
-        # Shown in the browser's PDF viewer, not downloaded: the object was
-        # stored as binary/octet-stream, so the type and disposition are set
-        # on the way out.
-        url = session.client('s3').generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket, 'Key': key,
-                    'ResponseContentType': 'application/pdf',
-                    'ResponseContentDisposition': f'inline; filename="eob_{check_eft}.pdf"'},
-            ExpiresIn=600)
-        return redirect(url)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/claim-counts')
 def api_claim_counts():
     """Just the hero numbers, per bot.
@@ -2503,13 +2200,16 @@ def api_claim_counts():
 
         is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
         # Remittance's headline is not a slice of the submissions/resubmissions
-        # partition: of everything sent, how much has come back paid.
-        sent = [r for r in items if r.get('symplisend_submitted')]
-        with_eob = [r for r in sent if r.get('eob_check_eft')]
+        # partition: of the cheques compared, how many the three sources agree on.
+        try:
+            cheque_rows, _sm = _checks_rows()
+        except Exception:
+            cheque_rows = []
+        matching = [r for r in cheque_rows if r.get('verdict') == 'posted' and not r.get('flags')]
         return jsonify({
             'submissions': tally([r for r in items if not is_resub(r)]),
             'resubmissions': tally([r for r in items if is_resub(r)]),
-            'eob': {'submitted': len(with_eob), 'total': len(sent)},
+            'eob': {'submitted': len(matching), 'total': len(cheque_rows)},
             'all': tally(items),
         })
     except Exception as e:

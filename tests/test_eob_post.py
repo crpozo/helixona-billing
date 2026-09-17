@@ -107,31 +107,25 @@ class GridRowsArePinnedBeforeTyping(unittest.TestCase):
         self.assertIsNone(rows)
 
 
-class TheBotAndDashboardAreWired(unittest.TestCase):
-    def test_the_bot_runs_it_without_a_proxy_and_with_the_shared_ecw_login(self):
+class ThePostingTaskIsRetired(unittest.TestCase):
+    """2026-09-17: entering payments is Vignesh's team's work; the bot only
+    compares. The module stays for its eCW helpers (open_payments, the field
+    and click helpers the Payments lookup uses) — no task reaches run_eob_post."""
+    def test_no_task_runs_it(self):
         src = _read('src/main.py')
-        i = src.index("elif task_type == 'eob_post':")
-        block = src[i:i + 1400]
-        self.assertIn('BrowserManager().start(proxy_config=None)', block)
-        self.assertIn('run_eob_post(page, aws_client, body, login=_perform_ecw_login)', block)
+        self.assertNotIn("task_type == 'eob_post'", src)
+        self.assertNotIn('run_eob_post', src)
+        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
+
+    def test_the_dashboard_no_longer_offers_it(self):
+        d = _read('dashboard.py')
+        self.assertNotIn('value="eob_post"', d)
+        self.assertNotIn('Payment Advisory', d)
 
     def test_the_capture_still_never_touches_ecw(self):
         c = _read('src/eob/capture.py')
         self.assertNotIn('Payment Advisory', c)
         self.assertNotIn('from src.eob.post', c)
-
-    def test_the_dashboard_offers_it_to_remittance_only_and_defaults_to_dry_run(self):
-        import re
-        d = _read('dashboard.py')
-        m = re.search(r'<option value="eob_post" data-bot="([^"]+)"', d)
-        self.assertEqual(m.group(1).split(), ['eob'])
-        i = d.index('eob_post: JSON.stringify({')
-        self.assertIn('post: false', d[i:i + 200])
-
-    def test_the_ecw_column_shows_the_last_attempt(self):
-        d = _read('dashboard.py')
-        self.assertIn("function postCell(e, esc)", d)
-        self.assertIn("INCOMPLETE — finish in eCW", d)
 
 
 class TheLiveScreenIsOnTheDashboard(unittest.TestCase):

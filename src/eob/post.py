@@ -346,15 +346,79 @@ def _dismiss_dialogs(page, answer='Yes', rounds=3):
 
 
 # ------------------------------------------------------------ the screens
-def open_payments(page):
-    """Billing → Payments. Menu clicks first, hash routes second."""
+MENU_JS = r"""([rx, click]) => {
+    // Menu items that lead to Payments — showing or not: eCW's bands open on
+    // hover, so the item is in the document before it is on screen.
+    const re = new RegExp(rx, 'i');
+    const out = [];
+    for (const el of document.querySelectorAll('a, li, span, div, button, td, label')) {
+        const t = txt(el); if (!t || t.length > 40) continue;
+        const attrs = [el.getAttribute('href'), el.getAttribute('ng-click'), el.getAttribute('onclick'), el.id, el.title]
+            .filter(Boolean).join(' ');
+        if (re.test(t) || re.test(attrs)) out.push({ el, text: t, attrs: attrs.slice(0, 160), visible: vis(el) });
+    }
+    if (!click) return out.slice(0, 40).map(({ text, attrs, visible }) => ({ text, attrs, visible }));
+    const exact = out.filter(c => /^payments?$/i.test(c.text));
+    const pick = (exact.find(c => c.visible) || exact[0] || out.find(c => c.visible) || out[0]);
+    if (!pick) return null;
+    pick.el.click();
+    return { text: pick.text, attrs: pick.attrs, visible: pick.visible };
+}"""
+
+
+def _menu_items(page, rx, click=False):
+    for frm in page.frames:
+        try:
+            got = frm.evaluate(_js(MENU_JS), [rx, click])
+        except Exception:
+            got = None
+        if got:
+            return got
+    return None
+
+
+def _hover_text(page, text):
+    try:
+        page.get_by_text(text, exact=True).first.hover(timeout=2000)
+        return True
+    except Exception:
+        return False
+
+
+def _where(page):
+    """The address the shell is at, and the frames' — eCW loads each screen
+    as a .jsp, so this is the route a person's click took."""
+    try:
+        here = page.evaluate("() => location.href")
+    except Exception:
+        here = '?'
+    frames = [f.url for f in page.frames if f.url and f.url != here and 'about:blank' not in f.url][:4]
+    return f"{here}" + (f" · frames {frames}" if frames else '')
+
+
+def open_payments(page, wait_for_person=90):
+    """Billing → Payments.
+
+    In order: already there; the menu — a click on Billing, a hover for a
+    band that opens on hover, then Payments whether it is showing or not; the
+    hash routes; and last a person: the run waits up to `wait_for_person`
+    seconds for someone to open Billing → Payments in the noVNC window. The
+    route it lands on is logged either way, so a screen the bot could not
+    reach today is one it can go to directly tomorrow (PAYMENT_HASHES)."""
     logger.info("🧭 Billing → Payments")
+    if _page_has(page, PAYMENTS_MARKERS):
+        logger.info(f"  ✅ Payments screen is already up · {_where(page)}")
+        return True
     if _click_text(page, ['Billing'], timeout=6, what='menu'):
         time.sleep(1.5)
-        _click_text(page, ['Payments', 'Payment'], timeout=6, what='menu')
+        _hover_text(page, 'Billing')
+        if not _click_text(page, ['Payments', 'Payment', 'Payment Lookup', 'Insurance Payments'], timeout=4, what='menu'):
+            hit = _menu_items(page, r'^payments?$|payment\s*lookup|insurance\s*payments?', click=True)
+            if hit:
+                logger.info(f"  ✅ clicked menu item {hit['text']!r} ({'showing' if hit['visible'] else 'hidden'}) {hit['attrs'][:80]}")
         time.sleep(4)
     if _page_has(page, PAYMENTS_MARKERS):
-        logger.info("  ✅ Payments screen is up")
+        logger.info(f"  ✅ Payments screen is up · {_where(page)}")
         return True
     for h in PAYMENT_HASHES:
         try:
@@ -365,6 +429,23 @@ def open_payments(page):
         if _page_has(page, PAYMENTS_MARKERS):
             logger.info(f"  ✅ Payments screen via #{h}")
             return True
+    # What the menus offer, so the log says where Payments lives.
+    items = _menu_items(page, r'payment') or []
+    if items:
+        logger.info("  menu items mentioning payment: " + '; '.join(
+            f"{it['text']!r}{'' if it['visible'] else ' (hidden)'} {it['attrs'][:70]}".strip() for it in items[:12]))
+    else:
+        logger.info(f"  no menu item mentions payment · {_where(page)}")
+    if wait_for_person:
+        logger.warning(f"  ⚠️ the bot did not find Billing → Payments — open it on the live screen (noVNC); "
+                       f"waiting up to {wait_for_person}s")
+        deadline = time.time() + wait_for_person
+        while time.time() < deadline:
+            if _page_has(page, PAYMENTS_MARKERS):
+                logger.info(f"  ✅ Payments screen is up (opened on the live screen) · {_where(page)} "
+                            f"— that route belongs in PAYMENT_HASHES")
+                return True
+            time.sleep(3)
     _shot(page, 'no_payments_screen')
     logger.error("  ❌ Payments screen not reached")
     return False

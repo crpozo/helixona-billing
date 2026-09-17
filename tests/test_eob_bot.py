@@ -271,7 +271,7 @@ class TheEobPdfGivesUpTheAccountNumber(unittest.TestCase):
 class TheRoleIsFencedBothWays(unittest.TestCase):
     def test_the_eob_bot_only_runs_eob_tasks(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'eob_capture', 'eob_post', 'check_reconcile'}", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
         self.assertIn("_settings.bot_role == 'eob' and task_type not in EOB_TASKS", src)
 
     def test_the_other_bots_never_run_eob_tasks(self):
@@ -375,10 +375,11 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn("_shot(page, 'results_no_checks')", run)
         self.assertLess(run.index("_shot(page, 'results_no_checks')"), run.index('for ck in new:'))
 
-    def test_the_pdf_link_opens_in_the_browser(self):
-        d = _read('dashboard.py')
-        self.assertIn("'ResponseContentType': 'application/pdf'", d)
-        self.assertIn("'ResponseContentDisposition': f'inline; filename=\"eob_{check_eft}.pdf\"'", d)
+    def test_the_eob_report_is_optional_and_stored_as_a_pdf_when_asked(self):
+        # The dashboard no longer links the report (the reconciliation is
+        # about cheques); when download_eob:true stores one, it is a PDF.
+        self.assertIn("if download_eob else ''", _read('src/eob/capture.py'))
+        self.assertIn('mimetypes', _read('src/aws/clients.py'))
 
     def test_the_cheque_is_always_opened_by_clicking_its_link(self):
         # Every cheque's href is the same /claims/checkeftDetails; the app
@@ -418,30 +419,35 @@ class RemittanceHasItsPlaceOnTheDashboard(unittest.TestCase):
     def test_marea_owns_its_task_and_no_submission_task(self):
         import re
         html = self._dash().DASHBOARD_HTML
-        m = re.search(r'<option value="eob_capture" data-bot="([^"]+)"', html)
+        m = re.search(r'<option value="check_reconcile" data-bot="([^"]+)"', html)
         self.assertIsNotNone(m)
         self.assertEqual(m.group(1).split(), ['eob'])
+        self.assertNotIn('value="eob_capture"', html)
+        self.assertNotIn('value="eob_post"', html)
         m = re.search(r'<option value="blueshield_submissions" data-bot="([^"]+)"', html)
         self.assertNotIn('eob', m.group(1).split())
 
     def test_the_headline_changes_meaning_on_the_eob_tab(self):
         html = self._dash().DASHBOARD_HTML
         self.assertIn('id="hero-denom-label"', html)
-        self.assertIn("'submitted claims with an EOB captured'", html)
+        self.assertIn("'cheques compared: copy · Blue Shield · eCW'", html)
 
     def test_the_novnc_map_comes_from_the_server(self):
         html = self._dash().DASHBOARD_HTML
         self.assertIn('const BOT_NOVNC = {{ bot_novnc | tojson }}', html)
         self.assertNotIn('const BOT_NOVNC = {submissions: 6080', html)
 
-    def test_the_eob_endpoints_exist(self):
+    def test_the_cheque_endpoints_exist_and_the_eob_ones_are_gone(self):
         src = _read('dashboard.py')
-        self.assertIn("@app.route('/api/eobs')", src)
-        self.assertIn("@app.route('/api/eob/<check_eft>/pdf')", src)
+        self.assertIn("@app.route('/api/checks')", src)
+        self.assertIn("@app.route('/api/checks.csv')", src)
+        self.assertNotIn("@app.route('/api/eobs')", src)
+        self.assertNotIn("@app.route('/api/eob/<check_eft>/pdf')", src)
+        self.assertNotIn("@app.route('/api/eob/<check_eft>/plan')", src)
 
     def test_the_counts_gain_an_eob_key_without_touching_the_partition(self):
         src = _read('dashboard.py')
-        self.assertIn("'eob': {'submitted': len(with_eob), 'total': len(sent)}", src)
+        self.assertIn("'eob': {'submitted': len(matching), 'total': len(cheque_rows)}", src)
 
 
 class TheHostSideIsWiredToo(unittest.TestCase):
