@@ -363,11 +363,16 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("startswith(('_', 'unreadable:'))", _read('dashboard.py'))
         self.assertIn("'copy_folder': f['path'].split('/')[0] if '/' in f['path'] else ''", r)
 
-    def test_the_vision_model_is_a_living_one(self):
+    def test_the_images_are_read_by_the_claude_api_not_bedrock(self):
         rc = _read('src/checks/read_check.py')
-        self.assertNotIn("VISION_MODEL_ID = os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0')", rc)
-        self.assertIn("os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-opus-5')", rc)
-        self.assertIn("list_foundation_models(byProvider='Anthropic')", rc)
+        self.assertIn("VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-opus-5')", rc)
+        self.assertIn("anthropic.Anthropic(api_key=key)", rc)
+        self.assertIn("aws_client.get_secret('anthropic_credentials')", rc)
+        self.assertIn("fallbacks='default'", rc)
+        self.assertIn("if response.stop_reason == 'refusal':", rc)
+        for gone in ('bedrock-runtime', 'invoke_model', 'bedrock-2023-05-31'):
+            self.assertNotIn(gone, rc, gone)
+        self.assertIn('anthropic>=1.6', _read('requirements.txt'))
 
     def test_nothing_is_written_to_sharepoint(self):
         s = _read('src/checks/sharepoint_browser.py')

@@ -23,11 +23,11 @@ logger = get_logger(__name__)
 
 # Which Claude reads the images. Overridable per host: the model catalogue
 # on Bedrock moves, and the first vision run tells us what the account has.
-# Bedrock model IDs carry the `anthropic.` prefix. The old default
-# (anthropic.claude-3-sonnet-20240229-v1:0) reached its end of life on
-# 2026-09-17: Bedrock answered every image with ResourceNotFoundException.
-VISION_MODEL_ID = os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-opus-5')
-_MODELS_LISTED = []
+# The Claude API, directly (not Bedrock — 2026-09-17). The key comes from
+# ANTHROPIC_API_KEY or the secret prod/helixona/anthropic_credentials
+# ({"api_key": "sk-ant-..."}); the model from VISION_MODEL_ID.
+VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-opus-5')
+_CLIENT = {}
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
                '.gif': 'image/gif', '.webp': 'image/webp'}
@@ -119,40 +119,43 @@ def parse_model_json(text):
 
 
 # ------------------------------------------------------------ the readers
+def _client(aws_client):
+    """One Anthropic client per process. The key: ANTHROPIC_API_KEY, else
+    the anthropic_credentials secret."""
+    if 'client' not in _CLIENT:
+        import anthropic
+        key = os.environ.get('ANTHROPIC_API_KEY', '')
+        if not key:
+            try:
+                key = (aws_client.get_secret('anthropic_credentials') or {}).get('api_key', '')
+            except Exception:
+                key = ''
+        if not key:
+            raise RuntimeError('no Anthropic API key: set ANTHROPIC_API_KEY or the secret '
+                               'prod/helixona/anthropic_credentials {"api_key": ...}')
+        _CLIENT['client'] = anthropic.Anthropic(api_key=key)
+    return _CLIENT['client']
+
+
 def read_with_vision(aws_client, path, model_id=VISION_MODEL_ID):
+    """Claude looks at the image and answers the JSON in PROMPT."""
     b64, media = image_payload(path)
-    body = json.dumps({
-        'anthropic_version': 'bedrock-2023-05-31',
-        'max_tokens': 400,
-        'messages': [{'role': 'user', 'content': [
+    client = _client(aws_client)
+    response = client.beta.messages.create(
+        model=model_id,
+        max_tokens=1024,
+        output_config={'effort': 'low'},
+        betas=['server-side-fallback-2026-07-01'],
+        fallbacks='default',
+        messages=[{'role': 'user', 'content': [
             {'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': b64}},
             {'type': 'text', 'text': PROMPT},
         ]}],
-    })
-    runtime = aws_client.session.client('bedrock-runtime')
-    resp = runtime.invoke_model(modelId=model_id, contentType='application/json',
-                                accept='application/json', body=body)
-    reply = json.loads(resp['body'].read())
-    text = ''.join(c.get('text', '') for c in reply.get('content', []) if c.get('type') == 'text')
+    )
+    if response.stop_reason == 'refusal':
+        raise RuntimeError('the model declined to read this image')
+    text = ''.join(getattr(b, 'text', '') for b in response.content if getattr(b, 'type', '') == 'text')
     return parse_model_json(text), text
-
-
-def _log_available_models(aws_client, model_id):
-    """Once per run: which Anthropic models this account can invoke here, so
-    the log names the id to put in BEDROCK_VISION_MODEL_ID."""
-    if _MODELS_LISTED:
-        return
-    _MODELS_LISTED.append(model_id)
-    try:
-        bedrock = aws_client.session.client('bedrock')
-        models = bedrock.list_foundation_models(byProvider='Anthropic').get('modelSummaries', [])
-        ids = sorted({m['modelId'] for m in models
-                      if 'IMAGE' in (m.get('inputModalities') or []) and m.get('modelLifecycle', {}).get('status', 'ACTIVE') == 'ACTIVE'})
-        logger.error(f"❌ model {model_id!r} is not available to this account in this region. Vision-capable "
-                     f"Anthropic models here: {ids or 'none listed'} — set BEDROCK_VISION_MODEL_ID in the bot's "
-                     f"unit file (and enable model access in the Bedrock console if the list is empty)")
-    except Exception as e:
-        logger.error(f"❌ model {model_id!r} is not available; could not list the alternatives: {str(e)[:120]}")
 
 
 def read_check(aws_client, path, model_id=VISION_MODEL_ID):
@@ -171,8 +174,6 @@ def read_check(aws_client, path, model_id=VISION_MODEL_ID):
     except Exception as e:
         result['problem'] = f'the image could not be read by the model: {str(e)[:160]}'
         logger.warning(f"  ⚠️ {os.path.basename(path)}: {result['problem']}")
-        if 'ResourceNotFound' in str(e) or 'end of its life' in str(e) or 'ValidationException' in str(e):
-            _log_available_models(aws_client, model_id)
         return result
     if not got:
         result['problem'] = f'the model did not answer in JSON: {raw[:120]!r}'

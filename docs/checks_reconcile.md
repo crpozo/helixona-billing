@@ -83,13 +83,18 @@ instead — cheque images dropped there by hand.
 
 ## The image reader
 
-`BEDROCK_VISION_MODEL_ID` (environment) names the Claude model on Bedrock
-that reads the images; the default is `anthropic.claude-opus-5`. If a run
-logs "could not be read by the model", the log also lists the vision-capable
-Anthropic models the account can invoke in us-west-2 — enable one in the
-Bedrock console (Model access) if the list is empty, and put its id in the
-variable in the bot's unit file. Files that could not be read are tried
-again on every run and shown on the tab as "files not read".
+The images are read by Claude through the Anthropic API directly (not
+Bedrock). The key comes from `ANTHROPIC_API_KEY` in the bot's environment
+or, failing that, the secret `prod/helixona/anthropic_credentials`:
+
+```json
+{"api_key": "sk-ant-..."}
+```
+
+`VISION_MODEL_ID` (environment) names the model; the default is
+`claude-opus-5`. A run without a key logs "no Anthropic API key". Files that
+could not be read are tried again on every run and shown on the tab as
+"files not read". PDFs with a text layer are read without the model.
 
 ## Task body
 
