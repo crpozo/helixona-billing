@@ -210,15 +210,65 @@ def _visible_results(page):
     return rows_with_links(hdrs, raw), hdrs, raw
 
 
+# The results list pages two ways: a "Show more claims" button that appends
+# rows, and a pager at the bottom (Angular's mat-paginator or a numbered
+# pager) whose next control replaces them. The operator (2026-09-17): "there
+# are more cheques — use the pagination at the bottom".
+NEXT_PAGE_SELECTORS = (
+    'button:has-text("Show more claims")',
+    'button[aria-label*="Next page" i]', 'button.mat-paginator-navigation-next', 'button.mat-mdc-paginator-navigation-next',
+    'a[aria-label*="Next" i]', 'button[aria-label*="Next" i]', 'li.pagination-next a', 'a.page-link:has-text("Next")',
+    'a:has-text("Next")', 'button:has-text("Next")', 'a:has-text("›")', 'button:has-text("›")', 'a:has-text("»")',
+)
+
+
 def _show_more(page):
-    """Load the next page of results. False when there is no more to load."""
-    btn = page.query_selector('button:has-text("Show more claims")')
-    if not (btn and btn.is_visible()):
-        return False
-    btn.scroll_into_view_if_needed()
-    btn.click()
-    time.sleep(3)
-    return True
+    """Load the next page of results: the Show-more button, else the pager's
+    next control at the bottom of the list. False when there is no more."""
+    try:
+        page.mouse.wheel(0, 20000)
+        time.sleep(0.6)
+    except Exception:
+        pass
+    for sel in NEXT_PAGE_SELECTORS:
+        try:
+            btn = page.query_selector(sel)
+            if not (btn or btn is None) or not btn or not btn.is_visible() or btn.is_disabled():
+                continue
+            if (btn.get_attribute('aria-disabled') or '').lower() == 'true' or 'disabled' in (btn.get_attribute('class') or ''):
+                continue
+        except Exception:
+            continue
+        btn.scroll_into_view_if_needed()
+        btn.click()
+        if 'Show more' not in sel:
+            logger.info(f"  ⏭ next page via {sel}")
+        time.sleep(3)
+        return True
+    # A numbered pager with no next arrow: the page after the current one.
+    try:
+        clicked = page.evaluate(_js_next_number())
+    except Exception:
+        clicked = False
+    if clicked:
+        logger.info(f"  ⏭ next page via page number {clicked}")
+        time.sleep(3)
+        return True
+    return False
+
+
+def _js_next_number():
+    return r"""(() => {
+        const cur = document.querySelector('[aria-current="page"], li.active a, .pagination .active, .mat-paginator-range-label');
+        const items = Array.from(document.querySelectorAll('.pagination a, .pagination button, nav[aria-label*="agination" i] a, nav[aria-label*="agination" i] button'))
+            .filter(el => /^\d+$/.test((el.textContent || '').trim()));
+        if (!items.length) return false;
+        const curN = cur ? parseInt((cur.textContent || '').trim(), 10) : NaN;
+        const target = items.find(el => parseInt(el.textContent.trim(), 10) === (isNaN(curN) ? 2 : curN + 1));
+        if (!target) return false;
+        target.click();
+        return parseInt(target.textContent.trim(), 10);
+    })()"""
 
 
 def _back_to_results(page):

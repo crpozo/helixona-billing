@@ -469,6 +469,15 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertNotIn("aws_client.get_secret('sharepoint_credentials')", r)
         self.assertIn("get_secret_value(SecretId='prod/helixona/sharepoint_credentials')", r)
 
+    def test_the_results_are_paged_from_the_bottom_too(self):
+        c = _read('src/eob/capture.py')
+        self.assertIn('NEXT_PAGE_SELECTORS = (', c)
+        for sel in ('button:has-text("Show more claims")', 'button[aria-label*="Next page" i]', 'button.mat-paginator-navigation-next',
+                    'li.pagination-next a', 'a:has-text("Next")'):
+            self.assertIn(sel, c)
+        self.assertIn('page.mouse.wheel(0, 20000)', c)
+        self.assertIn('def _js_next_number():', c)
+
     def test_the_capture_hands_back_the_cheques_it_opened(self):
         c = _read('src/eob/capture.py')
         self.assertIn("'captured_checks': captured_checks, 'failed_checks': failed_checks", c)
