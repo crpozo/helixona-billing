@@ -34,27 +34,110 @@ COLUMNS = {
 }
 
 GRID_JS = r"""() => {
+    // eCW's list views come in two shapes: one table with <th> and rows, or a
+    // header table above a body table (the rows scroll on their own). Pair
+    // every body table with its own headers, else with the header table of
+    // the same column count, else the nearest header table above it.
     const tables = Array.from(document.querySelectorAll('table')).filter(vis);
+    const headersOf = tb => Array.from(tb.querySelectorAll('th, thead td')).map(txt).filter(h => h !== undefined);
+    const rowsOf = tb => Array.from(tb.querySelectorAll('tbody tr, tr')).filter(tr => tr.querySelector('td') && !tr.querySelector('th'))
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(txt)).filter(c => c.length >= 3 && c.some(x => x));
+    const headerTables = tables.map((tb, i) => ({ i, hdrs: headersOf(tb) })).filter(h => h.hdrs.filter(x => x).length >= 3);
+    const looksRight = hdrs => hdrs.some(h => /amount|amt/i.test(h)) && hdrs.some(h => /check|chk|posted|payment|pmt/i.test(h));
     let best = null;
-    for (const tb of tables) {
-        const hdrs = Array.from(tb.querySelectorAll('th, thead td')).map(txt);
-        if (!hdrs.some(h => /amount|amt/i.test(h)) || !hdrs.some(h => /check|chk|posted|payment/i.test(h))) continue;
-        const rows = Array.from(tb.querySelectorAll('tbody tr, tr')).filter(tr => tr.querySelector('td'))
-            .map(tr => Array.from(tr.querySelectorAll('td')).map(txt)).filter(c => c.length >= 3);
-        if (!best || rows.length > best.rows.length) best = { hdrs, rows };
+    tables.forEach((tb, i) => {
+        const rows = rowsOf(tb);
+        if (!rows.length) return;
+        let hdrs = headersOf(tb).filter(x => x !== '');
+        if (hdrs.length < 3) {
+            const width = rows[0].length;
+            const same = headerTables.filter(h => h.i < i && h.hdrs.length === width);
+            const above = headerTables.filter(h => h.i < i);
+            const pick = (same.length ? same : above).slice(-1)[0];
+            hdrs = pick ? pick.hdrs : [];
+        }
+        const score = (looksRight(hdrs) ? 1000 : 0) + rows.length;
+        if (!best || score > best.score) best = { hdrs, rows, score, right: looksRight(hdrs) };
+    });
+    if (!best) {
+        // Angular grids without <table>: rows by role, cells by role.
+        const rows = Array.from(document.querySelectorAll('[role="row"]')).filter(vis)
+            .map(r => Array.from(r.querySelectorAll('[role="cell"], [role="gridcell"]')).map(txt)).filter(c => c.length >= 3);
+        const hdrs = Array.from(document.querySelectorAll('[role="columnheader"]')).map(txt);
+        if (rows.length) best = { hdrs, rows, score: rows.length, right: looksRight(hdrs) };
     }
     return best;
 }"""
 
+DOM_JS = r"""() => {
+    // What the Payments screen is made of, for the log: every visible table
+    // (headers, size, first row) and any role-based grid, plus a few lines
+    // of text around 'Check'. Enough to write the reader without seeing it.
+    const out = { url: location.href, tables: [], grids: 0, text: '' };
+    for (const tb of Array.from(document.querySelectorAll('table')).filter(vis)) {
+        const hdrs = Array.from(tb.querySelectorAll('th, thead td')).map(txt);
+        const trs = Array.from(tb.querySelectorAll('tr')).filter(tr => tr.querySelector('td'));
+        const first = trs[0] ? Array.from(trs[0].querySelectorAll('td')).map(txt) : [];
+        if (!hdrs.length && trs.length < 2) continue;
+        out.tables.push({ id: tb.id || '', cls: (tb.className || '').toString().slice(0, 60), hdrs: hdrs.slice(0, 16), rows: trs.length, first: first.slice(0, 16) });
+    }
+    out.grids = document.querySelectorAll('[role="grid"], [role="row"]').length;
+    const body = (document.body && document.body.innerText) || '';
+    const i = body.search(/check\s*#|check no|payment id|rcvd/i);
+    out.text = i >= 0 ? body.slice(Math.max(0, i - 200), i + 600).replace(/\s+/g, ' ') : body.slice(0, 400).replace(/\s+/g, ' ');
+    return out;
+}"""
+
+
+def describe_screen(page, why):
+    """Log what the Payments screen is made of (every frame) and save its
+    HTML to DIAG_DIR — the next run's log then says how to read the grid."""
+    logger.warning(f"  🧩 {why}: describing the Payments screen")
+    for frm in page.frames:
+        try:
+            got = frm.evaluate(_js(DOM_JS))
+        except Exception:
+            continue
+        if not got or (not got['tables'] and not got['grids']):
+            continue
+        logger.warning(f"  frame {got['url'][:100]} · {len(got['tables'])} table(s) · {got['grids']} role rows")
+        for t in got['tables'][:8]:
+            logger.warning(f"    table id={t['id']!r} cls={t['cls']!r} rows={t['rows']} hdrs={t['hdrs']} first={t['first']}")
+        if got['text']:
+            logger.warning(f"    text near Check: {got['text'][:500]!r}")
+    try:
+        import os
+        path = os.path.join('/tmp', 'eob_post_payments_dom.html')
+        with open(path, 'w', encoding='utf-8') as fh:
+            for frm in page.frames:
+                try:
+                    fh.write(f"\n<!-- frame {frm.url} -->\n" + frm.content())
+                except Exception:
+                    continue
+        logger.warning(f"  📄 page HTML: {path}")
+    except Exception as e:
+        logger.warning(f"  (page HTML not saved: {e})")
+
 
 def _read_grid(page):
+    """(headers, rows) of the payments grid. The pairing whose headers name
+    an amount and a cheque/posted column wins; failing that, the biggest
+    table on screen, with its headers logged so the reader can be fixed."""
+    best = None
     for frm in page.frames:
         try:
             data = frm.evaluate(_js(GRID_JS))
         except Exception:
             data = None
-        if data and data.get('rows'):
+        if not data or not data.get('rows'):
+            continue
+        if data.get('right'):
             return data['hdrs'], data['rows']
+        if not best or len(data['rows']) > len(best['rows']):
+            best = data
+    if best:
+        logger.warning(f"  ⚠️ a grid was read but its headers are not the ones expected: {best['hdrs'][:12]} · first row {best['rows'][0][:10]}")
+        return best['hdrs'], best['rows']
     return [], []
 
 
@@ -130,6 +213,7 @@ def list_payments(page, since):
         time.sleep(3)
     if not payments:
         _shot(page, 'payments_grid_unread')
+        describe_screen(page, 'no payment rows read')
         logger.warning("  ⚠️ no payment rows read from the Payments screen")
         return None
     logger.info(f"  💾 {len(payments)} payment(s) on file since {since}")
@@ -181,6 +265,8 @@ def find_payments(page, check_no, since, navigate=True):
     hdrs, rows = _read_grid(page)
     logger.info(f"  payments grid: {len(rows)} row(s) · columns {hdrs[:10] or 'not recognised'}")
     _shot(page, f'{check_no}_payments_lookup')
+    if not rows:
+        describe_screen(page, 'grid not recognised')
     got = [p for p in rows_to_payments(hdrs, rows, assume_check=check_no) if p['check_no'].lstrip('0') == want]
     if not got:
         # A grid laid out differently from the one the headers describe:

@@ -119,6 +119,18 @@ class TheEcwPaymentsGridIsReadByName(unittest.TestCase):
         self.assertEqual(got[1]['unposted'], '265.75')
         self.assertEqual(got[0]['payment_id'], '5043')
 
+    def test_an_unread_screen_is_described_in_the_log(self):
+        # 2026-09-17: the full run read no payment rows and the log said only
+        # that. Now it says what the screen is made of, and saves the HTML.
+        e = _read('src/checks/ecw_payments.py')
+        self.assertIn('def describe_screen(page, why):', e)
+        self.assertIn("describe_screen(page, 'no payment rows read')", e)
+        self.assertIn("describe_screen(page, 'grid not recognised')", e)
+        self.assertIn("'/tmp', 'eob_post_payments_dom.html'", e)
+        # Header table + body table, the other shape eCW lists come in.
+        self.assertIn('headerTables', e)
+        self.assertIn("a grid was read but its headers are not the ones expected", e)
+
     def test_a_grid_filtered_by_check_number_need_not_show_the_column(self):
         hdrs = ['Payment ID', 'Rcvd Date', 'Amount', 'Posted', 'Unposted']
         rows = [['5043', '09/15/2026', '262.69', '262.69', '0.00'], ['', 'Total', '262.69', '', '']]
