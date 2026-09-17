@@ -84,10 +84,12 @@ instead — cheque images dropped there by hand.
 ## The image reader
 
 `BEDROCK_VISION_MODEL_ID` (environment) names the Claude model on Bedrock
-that reads the images; the default is the model the agent already uses.
-If the first run logs "could not be read by the model", the account does
-not have that model enabled in us-west-2 — enable one with vision in the
-Bedrock console and set the variable in the bot's unit file.
+that reads the images; the default is `anthropic.claude-opus-5`. If a run
+logs "could not be read by the model", the log also lists the vision-capable
+Anthropic models the account can invoke in us-west-2 — enable one in the
+Bedrock console (Model access) if the list is empty, and put its id in the
+variable in the bot's unit file. Files that could not be read are tried
+again on every run and shown on the tab as "files not read".
 
 ## Task body
 

@@ -356,6 +356,19 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)", r)
         self.assertIn("DEFAULT_SHARE_LINK = ('https://helixona.sharepoint.com/:f:/s/BillingDepartment/'", _read('src/checks/sharepoint_browser.py'))
 
+    def test_an_unreadable_file_is_tried_again_and_is_not_a_cheque(self):
+        r = _read('src/checks/run.py')
+        self.assertIn("if it.get('copy_file') and it.get('has_copy'):", r)
+        self.assertIn("startswith(('_', 'unreadable:'))", r)
+        self.assertIn("startswith(('_', 'unreadable:'))", _read('dashboard.py'))
+        self.assertIn("'copy_folder': f['path'].split('/')[0] if '/' in f['path'] else ''", r)
+
+    def test_the_vision_model_is_a_living_one(self):
+        rc = _read('src/checks/read_check.py')
+        self.assertNotIn("VISION_MODEL_ID = os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0')", rc)
+        self.assertIn("os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-opus-5')", rc)
+        self.assertIn("list_foundation_models(byProvider='Anthropic')", rc)
+
     def test_nothing_is_written_to_sharepoint(self):
         s = _read('src/checks/sharepoint_browser.py')
         for forbidden in ('request.post', 'request.put', 'request.patch', 'request.delete', 'X-RequestDigest'):

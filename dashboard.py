@@ -1256,6 +1256,7 @@ window.scrollToEl = function(sel){
                     tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)'),
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)'),
                 ].join('') : '';
+                if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join('\n'))}" style="border-color:var(--bdr)"><div class="chk-tile-n" style="color:var(--warning)">${sm.unreadable}</div><div class="chk-tile-l">files not read (retried next run)</div></div>`;
             }
             if (filt) filt.innerHTML = CHECK_FILTERS.map(([k, label]) =>
                 `<button class="chk-filter${window._checksFilter === k ? ' on' : ''}" onclick="setChecksFilter('${k}')">${label}</button>`).join('');
@@ -1275,7 +1276,7 @@ window.scrollToEl = function(sel){
             body.innerHTML = rows.map(r => `
                 <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
                   <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
-                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">🖼 copy</a>` : `<span title="${esc(r.copy_file)}">🖼 copy</span>`) : '<span style="color:var(--bad)">none</span>'}</td>
+                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</a>` : `<span title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</span>`) : '<span style="color:var(--bad)">none</span>'}</td>
                   <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
                   <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
                   <td>${esc(r.bs_status || (r.in_blue_shield ? '' : 'not in results'))}</td>
@@ -2126,11 +2127,15 @@ def _checks_rows():
     items = scan_all(table)
     meta = next((it for it in items if it.get('check_number') == '_summary'), {})
     run = next((it for it in items if it.get('check_number') == '_run'), {})
-    rows = [it for it in items if not str(it.get('check_number', '')).startswith('_')]
+    # Files the reader could not make a cheque out of live under
+    # 'unreadable:<file>' and are not cheques; they are counted separately.
+    rows = [it for it in items if not str(it.get('check_number', '')).startswith(('_', 'unreadable:'))]
+    unreadable = [it for it in items if str(it.get('check_number', '')).startswith('unreadable:')]
     for r in rows:
         r['flags'] = list(r.get('flags') or [])
     rows.sort(key=lambda r: (str(r.get('bs_date') or r.get('copy_date') or ''), str(r.get('check_number'))), reverse=True)
-    summary = {**summarize(rows),
+    summary = {**summarize(rows), 'unreadable': len(unreadable),
+               'unreadable_files': [{'file': str(u.get('copy_file', '')), 'problem': str(u.get('copy_problem', ''))} for u in unreadable[:50]],
                **{k: meta[k] for k in ('since', 'reconciled_at', 'ecw_checked', 'run_rows') if k in meta},
                'last_run': {k: v for k, v in run.items() if k != 'check_number'}}
     return rows, summary

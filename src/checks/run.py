@@ -118,9 +118,12 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
     want = {norm_check(p) for p in prefer if norm_check(p)}
     if want:
         files = sorted(files, key=lambda f: 0 if _named_after(f['path'], want) else 1)
+    # Files already read, by name + etag. A file that could not be read
+    # (no model, an image the model could not make out) is not "known": it
+    # is tried again every run until it reads.
     known = {}
-    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag'):
-        if it.get('copy_file'):
+    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag, has_copy'):
+        if it.get('copy_file') and it.get('has_copy'):
             known[str(it['copy_file'])] = str(it.get('copy_etag') or '')
     read = skipped = failed = 0
     logger.info(f"📁 {len(files)} file(s) in {source}" + (f", {len(known)} already read" if known else ''))
@@ -144,6 +147,9 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 'copy_date': got.get('check_date', ''),
                 'copy_payer': got.get('payer', ''),
                 'copy_file': f['path'],
+                # The folder the department filed it under — "Posted Checks"
+                # / "Unposted Checks" is the team's own word on the cheque.
+                'copy_folder': f['path'].split('/')[0] if '/' in f['path'] else '',
                 'copy_etag': f.get('etag') or '',
                 'copy_url': f.get('web_url', ''),
                 'copy_source': source,
@@ -334,7 +340,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
                         + (f" · {' · '.join(r['flags'])}" if r['flags'] else ''))
 
     # The counts over the whole table, so the tiles agree with the rows.
-    everything = [it for it in scan_all(table) if not str(it.get('check_number', '')).startswith('_')]
+    everything = [it for it in scan_all(table) if not str(it.get('check_number', '')).startswith(('_', 'unreadable:'))]
     summary = summarize(everything)
     table.put_item(Item={'check_number': SUMMARY_KEY, **summary, 'ecw_checked': ecw_checked,
                          'since': since, 'reconciled_at': now, 'run_rows': len(rows)})

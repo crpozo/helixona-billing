@@ -23,7 +23,11 @@ logger = get_logger(__name__)
 
 # Which Claude reads the images. Overridable per host: the model catalogue
 # on Bedrock moves, and the first vision run tells us what the account has.
-VISION_MODEL_ID = os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0')
+# Bedrock model IDs carry the `anthropic.` prefix. The old default
+# (anthropic.claude-3-sonnet-20240229-v1:0) reached its end of life on
+# 2026-09-17: Bedrock answered every image with ResourceNotFoundException.
+VISION_MODEL_ID = os.environ.get('BEDROCK_VISION_MODEL_ID', 'anthropic.claude-opus-5')
+_MODELS_LISTED = []
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
                '.gif': 'image/gif', '.webp': 'image/webp'}
@@ -133,6 +137,24 @@ def read_with_vision(aws_client, path, model_id=VISION_MODEL_ID):
     return parse_model_json(text), text
 
 
+def _log_available_models(aws_client, model_id):
+    """Once per run: which Anthropic models this account can invoke here, so
+    the log names the id to put in BEDROCK_VISION_MODEL_ID."""
+    if _MODELS_LISTED:
+        return
+    _MODELS_LISTED.append(model_id)
+    try:
+        bedrock = aws_client.session.client('bedrock')
+        models = bedrock.list_foundation_models(byProvider='Anthropic').get('modelSummaries', [])
+        ids = sorted({m['modelId'] for m in models
+                      if 'IMAGE' in (m.get('inputModalities') or []) and m.get('modelLifecycle', {}).get('status', 'ACTIVE') == 'ACTIVE'})
+        logger.error(f"❌ model {model_id!r} is not available to this account in this region. Vision-capable "
+                     f"Anthropic models here: {ids or 'none listed'} — set BEDROCK_VISION_MODEL_ID in the bot's "
+                     f"unit file (and enable model access in the Bedrock console if the list is empty)")
+    except Exception as e:
+        logger.error(f"❌ model {model_id!r} is not available; could not list the alternatives: {str(e)[:120]}")
+
+
 def read_check(aws_client, path, model_id=VISION_MODEL_ID):
     """{'check_number', 'amount', 'check_date', 'payer', 'payee', 'read_by',
     'confidence', 'problem'} for one file."""
@@ -149,6 +171,8 @@ def read_check(aws_client, path, model_id=VISION_MODEL_ID):
     except Exception as e:
         result['problem'] = f'the image could not be read by the model: {str(e)[:160]}'
         logger.warning(f"  ⚠️ {os.path.basename(path)}: {result['problem']}")
+        if 'ResourceNotFound' in str(e) or 'end of its life' in str(e) or 'ValidationException' in str(e):
+            _log_available_models(aws_client, model_id)
         return result
     if not got:
         result['problem'] = f'the model did not answer in JSON: {raw[:120]!r}'
