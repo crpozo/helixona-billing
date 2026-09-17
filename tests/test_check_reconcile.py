@@ -217,7 +217,7 @@ class TheTestOfOne(unittest.TestCase):
         result, checks = self._run({'blue_shield': True, 'limit_checks': 1})
         self.assertEqual(result['targets'], ['30925163'])
         self.assertEqual(self.capture_body['limit_checks'], 1)
-        self.assertTrue(self.capture_body['force'], 'a test re-opens the cheque for its status today')
+        self.assertFalse(self.capture_body['force'], 'an unnamed test takes the next cheque not yet on file')
         self.assertFalse(self.capture_body['download_eob'])
         self.assertEqual(self.prefer, {'30925163'})
         row = checks.items['30925163']
@@ -243,6 +243,11 @@ class TheTestOfOne(unittest.TestCase):
         row = checks.items['30925163']
         self.assertEqual((row['verdict'], row['ecw_payment_id'], row['flags']), ('posted', '5050', []))
         self.assertIn('30925163 on file', checks.items['_run']['steps']['ecw'])
+
+    def test_a_named_cheque_is_reopened_for_its_status_today(self):
+        self._run({'blue_shield': True, 'check_eft': '30925163'})
+        self.assertTrue(self.capture_body['force'])
+        self.assertEqual(self.capture_body['check_eft'], '30925163')
 
     def test_a_named_cheque_needs_no_portal_walk(self):
         result, checks = self._run({'blue_shield': False, 'check_eft': '30925163'})
@@ -476,7 +481,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         c = _read('src/eob/capture.py')
         self.assertIn("download_eob = bool(body.get('download_eob', False))", c)
         self.assertIn("pdf_path = _download_eob_pdf(page, check) if download_eob else ''", c)
-        self.assertIn("'force': bool(body.get('force', targeted)), 'download_eob': False", _read('src/checks/run.py'))
+        self.assertIn("'force': bool(body.get('force', bool(only))), 'download_eob': False", _read('src/checks/run.py'))
 
     def test_the_table_is_declared_and_self_creating(self):
         self.assertIn("CHECKS_TABLE = 'helixona-checks'", _read('src/checks/run.py'))

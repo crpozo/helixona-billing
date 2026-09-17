@@ -176,13 +176,14 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
 # ------------------------------------------------------------ blue shield
 def collect_blue_shield(page, aws_client, body, since, limit_checks, only):
     """Walk the portal for this run's cheques (src/eob/capture.py, cheque
-    data only). Returns the cheque numbers captured. A targeted run re-opens
-    the cheque even when it is on file — the point is its status today."""
+    data only). Returns the cheque numbers captured. A named cheque is
+    re-opened even when it is on file — the point is its status today; an
+    unnamed test of 1 takes the next cheque not yet on file, so each test
+    tries a different one."""
     from src.eob.capture import run_eob_capture
-    targeted = bool(limit_checks or only)
     got = run_eob_capture(page, aws_client, {
         'since': since, 'limit_checks': limit_checks, 'check_eft': only,
-        'force': bool(body.get('force', targeted)), 'download_eob': False}) or {}
+        'force': bool(body.get('force', bool(only))), 'download_eob': False}) or {}
     if not got.get('ok'):
         logger.error(f"❌ Blue Shield: {got.get('reason') or 'the portal could not be walked'}")
     return [norm_check(c) for c in got.get('captured_checks', []) if norm_check(c)]
