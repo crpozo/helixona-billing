@@ -176,7 +176,11 @@ def find_payments(page, check_no, since, navigate=True):
         return None
     _click_text(page, LOOKUP, timeout=5, what='lookup', after_target=True)
     time.sleep(3)
+    # What eCW answered, on record: the grid's headers and row count, and a
+    # screenshot — "not in eCW" must be checkable against the screen.
     hdrs, rows = _read_grid(page)
+    logger.info(f"  payments grid: {len(rows)} row(s) · columns {hdrs[:10] or 'not recognised'}")
+    _shot(page, f'{check_no}_payments_lookup')
     got = [p for p in rows_to_payments(hdrs, rows, assume_check=check_no) if p['check_no'].lstrip('0') == want]
     if not got:
         # A grid laid out differently from the one the headers describe:

@@ -63,6 +63,9 @@ PAYER_RADIO = 'Blue Shield of California'
 # The Payments screen, as eCW routes it. Clicking Billing → Payments in the
 # menu is tried first; these are the fallbacks, in order.
 PAYMENT_HASHES = [
+    # The route the Billing → Payments menu item took on 2026-09-17 (logged
+    # by open_payments); the rest were guesses that never answered.
+    '/mobiledoc/jsp/webemr/webpm/payments/paymentsListView.jsp',
     '/mobiledoc/jsp/webemr/webpm/paymentLookup.jsp',
     '/mobiledoc/jsp/webemr/webpm/paymentsLookup.jsp',
     '/mobiledoc/jsp/webemr/webpm/payments.jsp',
