@@ -1256,7 +1256,7 @@ window.scrollToEl = function(sel){
                     tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)'),
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)'),
                 ].join('') : '';
-                if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join('\n'))}" style="border-color:var(--bdr)"><div class="chk-tile-n" style="color:var(--warning)">${sm.unreadable}</div><div class="chk-tile-l">files not read (retried next run)</div></div>`;
+                if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join(' | '))}" style="border-color:var(--bdr)"><div class="chk-tile-n" style="color:var(--warning)">${sm.unreadable}</div><div class="chk-tile-l">files not read (retried next run)</div></div>`;
             }
             if (filt) filt.innerHTML = CHECK_FILTERS.map(([k, label]) =>
                 `<button class="chk-filter${window._checksFilter === k ? ' on' : ''}" onclick="setChecksFilter('${k}')">${label}</button>`).join('');
