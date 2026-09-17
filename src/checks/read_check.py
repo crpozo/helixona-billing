@@ -26,8 +26,8 @@ logger = get_logger(__name__)
 # helixona-prod-anthropic-api-key (the one provisioned with the account:
 # the bare key, or JSON with api_key / ANTHROPIC_API_KEY), else
 # prod/helixona/anthropic_credentials {"api_key": ...}. Model: VISION_MODEL_ID.
-KEY_SECRETS = [os.environ.get('ANTHROPIC_SECRET_NAME', 'helixona-prod-anthropic-api-key'),
-               'prod/helixona/anthropic_credentials']
+KEY_SECRETS = [os.environ.get('ANTHROPIC_SECRET_NAME', 'prod/helixona/anthropic_credentials'),
+               'helixona-prod-anthropic-api-key']  # the provisioned one, us-east-1, only if the first is missing
 # The provisioned secret lives in us-east-1 (the bot runs in us-west-2), so
 # each name is tried in the bot's region and then in these.
 KEY_SECRET_REGIONS = [r for r in os.environ.get('ANTHROPIC_SECRET_REGIONS', 'us-east-1').split(',') if r.strip()]
