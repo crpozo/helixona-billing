@@ -4,7 +4,7 @@ Two readers, cheapest first:
 
 * the PDF's own text layer, when the scan has one — a remittance stub
   prints "Check No." and the amount in plain text;
-* otherwise Claude on Bedrock looks at the image and answers in JSON.
+* otherwise Claude (the Anthropic API) looks at the image and answers in JSON.
 
 Either way the answer is checked for shape before it is believed: a cheque
 number is 5 to 11 digits, an amount has cents. Anything else is recorded as
@@ -21,8 +21,6 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Which Claude reads the images. Overridable per host: the model catalogue
-# on Bedrock moves, and the first vision run tells us what the account has.
 # The Claude API, directly (not Bedrock — 2026-09-17). The key comes from
 # ANTHROPIC_API_KEY, else the Secrets Manager secret
 # helixona-prod-anthropic-api-key (the one provisioned with the account:
@@ -53,7 +51,7 @@ If a field cannot be read, leave it as an empty string. Do not invent digits."""
 
 # ------------------------------------------------------------ the image
 def image_payload(path):
-    """(base64, media_type) for the image Bedrock will see. A PDF is rendered
+    """(base64, media_type) for the image the model will see. A PDF is rendered
     from its first page."""
     ext = os.path.splitext(path)[1].lower()
     if ext in IMAGE_TYPES:

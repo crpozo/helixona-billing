@@ -368,7 +368,8 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')", rc)
         self.assertIn("anthropic.Anthropic(api_key=key)", rc)
         self.assertIn("'helixona-prod-anthropic-api-key'", rc)
-        self.assertIn("aws_client.secrets.get_secret_value(SecretId=name)", rc)
+        self.assertIn("client.get_secret_value(SecretId=name)", rc)
+        self.assertIn("KEY_SECRET_REGIONS", rc)
         # The key is accepted bare or as JSON — the provisioned secret is a plain string.
         from src.checks.read_check import _key_from_secret
         class _Secrets:
