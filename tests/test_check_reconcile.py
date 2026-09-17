@@ -429,6 +429,14 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn('open it on the live screen (noVNC)', p)
         self.assertIn('that route belongs in PAYMENT_HASHES', p)
 
+    def test_a_cheque_captured_without_a_pdf_is_on_file(self):
+        c = _read('src/eob/capture.py')
+        self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'", c)
+        # ...and the optional SharePoint app secret is looked for without an error line.
+        r = _read('src/checks/run.py')
+        self.assertNotIn("aws_client.get_secret('sharepoint_credentials')", r)
+        self.assertIn("get_secret_value(SecretId='prod/helixona/sharepoint_credentials')", r)
+
     def test_the_capture_hands_back_the_cheques_it_opened(self):
         c = _read('src/eob/capture.py')
         self.assertIn("'captured_checks': captured_checks, 'failed_checks': failed_checks", c)

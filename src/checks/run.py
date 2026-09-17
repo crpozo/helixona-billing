@@ -80,8 +80,12 @@ def _sources(aws_client, body, get_page=None):
     bucket = os.environ.get('S3_BUCKET_NAME', '')
     source = body.get('source', 'auto')
     if source in ('auto', 'sharepoint'):
+        # Quietly: the app-registration secret is optional (the browser
+        # session is the usual way in), so its absence is not an error.
         try:
-            creds = aws_client.get_secret('sharepoint_credentials') or {}
+            raw = aws_client.secrets.get_secret_value(SecretId='prod/helixona/sharepoint_credentials').get('SecretString')
+            import json
+            creds = json.loads(raw) if raw else {}
         except Exception:
             creds = {}
         if creds.get('client_id'):

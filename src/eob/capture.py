@@ -526,7 +526,10 @@ def run_eob_capture(page, aws_client, body):
         ProjectionExpression='claim_id, subscriber_id, service_date, dos, charges'))
     done, known_pdfs = {}, {}
     for it in scan_all(aws_client.dynamodb.Table(EOB_TABLE),
-                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256'):
+                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'):
+        # On file = captured, with or without the report PDF. (captured_at
+        # was missing from the projection, so once the PDFs were skipped
+        # every cheque looked new and a test of 1 re-opened the same one.)
         done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path') or it.get('captured_at'))
         if it.get('eob_pdf_sha256'):
             known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),

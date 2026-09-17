@@ -102,7 +102,7 @@ class IdenticalReportsAreStoredOnce(unittest.TestCase):
         self.assertIn('not storing a second copy', block)
 
     def test_hashes_already_on_file_are_loaded_before_the_run(self):
-        self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256'", self._capture())
+        self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'", self._capture())
 
 
 class AStoredChequeIsPlannedFromItsReport(unittest.TestCase):
