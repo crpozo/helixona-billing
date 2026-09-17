@@ -94,7 +94,8 @@ def _sources(aws_client, body, get_page=None):
         if get_page is not None:
             page = get_page()
             site, folder = spb.open_folder(page, link=body.get('share_link') or creds.get('share_link'), creds=creds)
-            return (spb.list_folder(page, site, folder),
+            skip = tuple(body.get('skip_folders') or spb.SKIP_FOLDERS)
+            return (spb.list_folder(page, site, folder, skip=skip),
                     (lambda it, d: spb.download(page, it, d)), 'sharepoint')
         if source == 'sharepoint':
             raise RuntimeError('SharePoint needs the browser or an app registration — see src/checks/sharepoint_browser.py')
@@ -151,9 +152,11 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 'copy_date': got.get('check_date', ''),
                 'copy_payer': got.get('payer', ''),
                 'copy_file': f['path'],
-                # The folder the department filed it under — "Posted Checks"
-                # / "Unposted Checks" is the team's own word on the cheque.
-                'copy_folder': f['path'].split('/')[0] if '/' in f['path'] else '',
+                # Where the department filed it — 'Posted Checks/2026/07-2026'
+                # — the team's own word on the cheque, shown on the dashboard.
+                'copy_folder': f['path'].rsplit('/', 1)[0] if '/' in f['path'] else '',
+                'copy_status': ('posted' if f['path'].lower().startswith('posted')
+                                else 'unposted' if f['path'].lower().startswith('unposted') else ''),
                 'copy_etag': f.get('etag') or '',
                 'copy_url': f.get('web_url', ''),
                 'copy_source': source,

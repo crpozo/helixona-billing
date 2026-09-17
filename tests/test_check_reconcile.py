@@ -306,6 +306,8 @@ class _Page:
             _Page.got.append(url)
             from urllib.parse import unquote
             u = unquote(url)
+            if "01''2026" in u:
+                return _Resp(status=503)   # SharePoint's answer on that folder, 2026-09-17
             if '/Files?' in u and 'Insurance Checks/2026' in u:
                 return _Resp({'value': [{'Name': 'Check 30925163.pdf', 'ServerRelativeUrl': _Page.FOLDER + '/2026/Check 30925163.pdf',
                                           'Length': '120', 'UniqueId': 'u2', 'ETag': '"2"', 'TimeLastModified': '2026-09-15T10:00:00Z'}]})
@@ -317,7 +319,9 @@ class _Page:
                 return _Resp({'value': []})
             if '/Folders?' in u:
                 return _Resp({'value': [{'Name': 'Forms', 'ServerRelativeUrl': _Page.FOLDER + '/Forms'},
-                                        {'Name': '2026', 'ServerRelativeUrl': _Page.FOLDER + '/2026'}]})
+                                        {'Name': 'Insurance Check Tracker', 'ServerRelativeUrl': _Page.FOLDER + '/Insurance Check Tracker'},
+                                        {'Name': '2026', 'ServerRelativeUrl': _Page.FOLDER + '/2026'},
+                                        {'Name': "01'2026", 'ServerRelativeUrl': _Page.FOLDER + "/01'2026"}]})
             if u.endswith('Check 4022519.jpg'):
                 return _Resp(body=b'JPEGBYTES')
             return _Resp(status=404)
@@ -338,12 +342,28 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
 
     def test_images_in_the_folder_and_its_subfolders_but_not_forms(self):
         from src.checks import sharepoint_browser as spb
-        page = _Page()
-        files = spb.list_folder(page, 'https://helixona.sharepoint.com/sites/BillingDepartment', _Page.FOLDER)
+        with mock.patch.object(spb.time, 'sleep'):
+            page = _Page()
+            files = spb.list_folder(page, 'https://helixona.sharepoint.com/sites/BillingDepartment', _Page.FOLDER)
+        # The folder named 01'2026 answered 503 three times and was skipped; everything else is here.
         self.assertEqual([f['path'] for f in files], ['Check 4022519.jpg', '2026/Check 30925163.pdf'])
+        self.assertEqual(sum('01%27%272026' in u for u in _Page.got), 3)   # the quote doubled, then encoded
+        self.assertIn('GetFolderByServerRelativePath(decodedurl=@f)', _Page.got[0])
+        # The tracker spreadsheet folder is left out on purpose, never even listed.
+        self.assertFalse(any('Insurance%20Check%20Tracker' in u for u in _Page.got))
         self.assertEqual(files[0]['etag'], '"1"')
         self.assertTrue(files[0]['download_url'].startswith('https://helixona.sharepoint.com/sites/'))
         self.assertFalse(any('Forms' in u and '/Files?' in u for u in _Page.got))
+
+    def test_posted_2025_is_left_out_and_the_folder_is_the_teams_word(self):
+        from src.checks.sharepoint_browser import SKIP_FOLDERS, _skipped
+        self.assertIn('Posted Checks/2025', SKIP_FOLDERS)
+        self.assertTrue(_skipped('Posted Checks/2025', SKIP_FOLDERS))
+        self.assertTrue(_skipped('posted checks/2025/03-2025', SKIP_FOLDERS))
+        self.assertFalse(_skipped('Posted Checks/2026', SKIP_FOLDERS))
+        self.assertFalse(_skipped('Unposted Checks/07-13-2026', SKIP_FOLDERS))
+        r = _read('src/checks/run.py')
+        self.assertIn("'copy_status': ('posted' if f['path'].lower().startswith('posted')", r)
 
     def test_the_bytes_come_through_the_session(self):
         import tempfile
@@ -366,7 +386,7 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("if it.get('copy_file') and it.get('has_copy'):", r)
         self.assertIn("startswith(('_', 'unreadable:'))", r)
         self.assertIn("startswith(('_', 'unreadable:'))", _read('dashboard.py'))
-        self.assertIn("'copy_folder': f['path'].split('/')[0] if '/' in f['path'] else ''", r)
+        self.assertIn("'copy_folder': f['path'].rsplit('/', 1)[0] if '/' in f['path'] else ''", r)
 
     def test_the_images_are_read_by_the_claude_api_not_bedrock(self):
         rc = _read('src/checks/read_check.py')

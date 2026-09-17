@@ -31,6 +31,13 @@ DEFAULT_SHARE_LINK = ('https://helixona.sharepoint.com/:f:/s/BillingDepartment/'
                       'IgAYNAnmSwIdQpWut5OQKJFgAdhcdsUcGXqMk2MM5hm8TL4?e=bWPWNm')
 DEFAULT_FOLDER = '/sites/BillingDepartment/Shared Documents/Insurance Checks'
 LOGIN_HOSTS = ('login.microsoftonline.com', 'login.live.com', 'login.microsoft.com', 'adfs')
+# The folder, as the department keeps it (2026-09-17):
+#   Insurance Checks / Posted Checks / <year> / <month> / <scans>
+#                    / Unposted Checks / <date> / <scans>
+#                    / Insurance Check Tracker   (their spreadsheet, not scans)
+# Posted Checks/2025 is before the period reconciled (the operator said to
+# leave it out), so it is not read.
+SKIP_FOLDERS = ('Forms', 'Insurance Check Tracker', 'Posted Checks/2025')
 SITE_RX = re.compile(r'^(https://[^/]+/sites/[^/?#]+)', re.I)
 JSON_HEADERS = {'Accept': 'application/json;odata=nometadata'}
 
@@ -123,26 +130,51 @@ def open_folder(page, link=None, creds=None, wait_for_person=240):
     return site, folder
 
 
-def _api(page, site, folder, what, select):
-    """GET /_api/web/GetFolderByServerRelativeUrl(@f)/<what> with the
-    browser's cookies. `what` is 'Files' or 'Folders'."""
-    url = (f"{site}/_api/web/GetFolderByServerRelativeUrl(@f)/{what}"
+def _api(page, site, folder, what, select, tries=3):
+    """GET /_api/web/GetFolderByServerRelativePath(decodedurl=@f)/<what>
+    with the browser's cookies. `what` is 'Files' or 'Folders'. A 5xx is
+    retried: SharePoint answered 503 on a folder named "01'2026" once."""
+    url = (f"{site}/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/{what}"
            f"?@f='{quote(folder.replace(chr(39), chr(39) * 2), safe='')}'&$select={select}&$top=5000")
-    resp = page.request.get(url, headers=JSON_HEADERS)
-    if not resp.ok:
-        raise RuntimeError(f'SharePoint API {resp.status} for {what} of {folder}')
-    return resp.json()
+    last = None
+    for attempt in range(tries):
+        resp = page.request.get(url, headers=JSON_HEADERS)
+        if resp.ok:
+            return resp.json()
+        last = resp.status
+        if resp.status < 500:
+            break
+        time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f'SharePoint API {what} {last} for {folder}')
 
 
-def list_folder(page, site, folder):
-    """Every image under the folder (subfolders included), in the shape of
-    sharepoint.list_check_files: {'id','name','path','size','etag','modified',
-    'web_url','download_url'}."""
+def _skipped(rel, skip):
+    low = rel.lower()
+    return any(low == s.lower() or low.startswith(s.lower() + '/') for s in skip)
+
+
+def list_folder(page, site, folder, skip=SKIP_FOLDERS):
+    """Every image under the folder (subfolders included, `skip` left out),
+    in the shape of sharepoint.list_check_files: {'id','name','path','size',
+    'etag','modified','web_url','download_url'}. `path` is relative to the
+    folder — 'Posted Checks/2026/07-2026/scan.pdf' — so it says where the
+    department filed the cheque."""
     host = f"{urlparse(site).scheme}://{urlparse(site).netloc}"
     out = []
+    skipped = []
+    left_out = []
 
     def walk(rel_folder, rel):
-        files = _api(page, site, rel_folder, 'Files', 'Name,ServerRelativeUrl,TimeLastModified,Length,UniqueId,ETag')
+        try:
+            files = _api(page, site, rel_folder, 'Files', 'Name,ServerRelativeUrl,TimeLastModified,Length,UniqueId,ETag')
+        except Exception as e:
+            if not rel:
+                raise
+            # One subfolder SharePoint will not list is not the whole folder:
+            # note it, keep going, so the run still reads everything else.
+            skipped.append(rel)
+            logger.warning(f"  ⚠️ subfolder {rel!r} could not be listed ({str(e)[:80]}) — skipped this run")
+            return
         for it in files.get('value', []):
             name = it.get('Name', '')
             if not name.lower().endswith(IMAGE_EXT):
@@ -154,15 +186,26 @@ def list_folder(page, site, folder):
                 'web_url': host + quote(it.get('ServerRelativeUrl', '')),
                 'download_url': host + quote(it.get('ServerRelativeUrl', '')),
             })
-        subs = _api(page, site, rel_folder, 'Folders', 'Name,ServerRelativeUrl')
+        try:
+            subs = _api(page, site, rel_folder, 'Folders', 'Name,ServerRelativeUrl')
+        except Exception as e:
+            skipped.append(rel + '/*')
+            logger.warning(f"  ⚠️ subfolders of {rel or '/'!r} could not be listed ({str(e)[:80]}) — skipped this run")
+            return
         for sf in subs.get('value', []):
             name = sf.get('Name', '')
-            if not name or name == 'Forms':
+            if not name:
                 continue
-            walk(sf.get('ServerRelativeUrl') or f"{rel_folder}/{name}", f"{rel}/{name}" if rel else name)
+            sub_rel = f"{rel}/{name}" if rel else name
+            if _skipped(sub_rel, skip):
+                left_out.append(sub_rel)
+                continue
+            walk(sf.get('ServerRelativeUrl') or f"{rel_folder}/{name}", sub_rel)
 
     walk(folder, '')
-    logger.info(f"📁 SharePoint {folder.rsplit('/', 1)[-1]}: {len(out)} file(s)")
+    logger.info(f"📁 SharePoint {folder.rsplit('/', 1)[-1]}: {len(out)} file(s)"
+                + (f" · left out on purpose: {left_out}" if left_out else '')
+                + (f" · {len(skipped)} subfolder(s) could not be listed: {skipped[:5]}" if skipped else ''))
     return out
 
 
