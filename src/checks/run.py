@@ -38,6 +38,7 @@ from src.checks.ecw_payments import find_payments, list_payments
 from src.checks.read_check import read_check
 from src.checks.reconcile import norm_check, reconcile, summarize
 from src.checks import sharepoint as sp
+from src.checks import sharepoint_browser as spb
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -71,21 +72,29 @@ def ensure_table(aws_client):
 
 
 # ------------------------------------------------------------- the copies
-def _sources(aws_client, body):
-    """(files, download, source) for SharePoint when its secret exists, else
-    the S3 inbox. `download(item, dest_dir) -> path`."""
+def _sources(aws_client, body, get_page=None):
+    """(files, download, source). SharePoint through Graph when the secret
+    carries an app registration; else SharePoint through the bot's browser
+    (a Helixona account signed in once on the live screen); the S3 inbox
+    with source:'s3' or when there is no browser. `download(item, dest) -> path`."""
     bucket = os.environ.get('S3_BUCKET_NAME', '')
-    if body.get('source', 'auto') in ('auto', 'sharepoint'):
+    source = body.get('source', 'auto')
+    if source in ('auto', 'sharepoint'):
         try:
-            creds = aws_client.get_secret('sharepoint_credentials')
+            creds = aws_client.get_secret('sharepoint_credentials') or {}
         except Exception:
-            creds = None
-        if creds and creds.get('client_id'):
+            creds = {}
+        if creds.get('client_id'):
             token = sp.graph_token(creds)
             return sp.list_check_files(token, creds), (lambda it, d: sp.download(it, d)), 'sharepoint'
-        if body.get('source') == 'sharepoint':
-            raise RuntimeError('no sharepoint_credentials secret — see src/checks/sharepoint.py')
-        logger.info("  (no sharepoint_credentials secret — reading the S3 inbox instead)")
+        if get_page is not None:
+            page = get_page()
+            site, folder = spb.open_folder(page, link=body.get('share_link') or creds.get('share_link'), creds=creds)
+            return (spb.list_folder(page, site, folder),
+                    (lambda it, d: spb.download(page, it, d)), 'sharepoint')
+        if source == 'sharepoint':
+            raise RuntimeError('SharePoint needs the browser or an app registration — see src/checks/sharepoint_browser.py')
+        logger.info("  (no browser for SharePoint — reading the S3 inbox instead)")
     from src.config import settings
     bucket = bucket or settings.s3_bucket_name
     return (sp.list_s3_inbox(aws_client, bucket),
@@ -99,12 +108,12 @@ def _named_after(path, numbers):
     return any(n and n in digits for n in numbers)
 
 
-def read_new_copies(aws_client, table, body, prefer=()):
+def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
     """Read every cheque image not yet on file. Returns (read, skipped, failed).
 
     `prefer`: cheque numbers this run is about — files named after them are
     read first, so a capped test run reaches them before anything else."""
-    files, download, source = _sources(aws_client, body)
+    files, download, source = _sources(aws_client, body, get_page)
     limit = int(body.get('limit_files') or 0)
     want = {norm_check(p) for p in prefer if norm_check(p)}
     if want:
@@ -234,7 +243,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
     if do_copies:
         progress('copies', 'reading the cheque images…')
         try:
-            read, skipped, failed = read_new_copies(aws_client, table, body, prefer=targets)
+            read, skipped, failed = read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)
             progress('copies', f"{read} read · {skipped} on file · {failed} unreadable")
         except Exception as e:
             logger.error(f"❌ cheque images could not be read: {e}")

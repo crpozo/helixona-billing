@@ -198,7 +198,7 @@ class TheTestOfOne(unittest.TestCase):
             self.capture_body = cap_body
             return capture if capture is not None else {'ok': True, 'captured_checks': ['30925163']}
 
-        def fake_copies(aws_client, table, body, prefer=()):
+        def fake_copies(aws_client, table, body, prefer=(), **kw):
             self.prefer = set(prefer)
             table.update_item(Key={'check_number': '30925163'}, UpdateExpression='SET has_copy = :a, copy_amount = :b, copy_file = :c',
                               ExpressionAttributeValues={':a': True, ':b': '227.20', ':c': 'Check 30925163.pdf'})
@@ -255,6 +255,111 @@ class TheTestOfOne(unittest.TestCase):
         self.assertEqual(result, {'ok': False, 'reason': 'no cheque captured'})
         self.assertNotIn('30925163', checks.items)
         self.assertEqual(checks.items['_run']['steps']['done'], 'stopped')
+
+
+class _Resp:
+    def __init__(self, data=None, body=b'', status=200):
+        self._d, self._b, self.status = data, body, status
+
+    @property
+    def ok(self):
+        return self.status < 400
+
+    def json(self):
+        return self._d
+
+    def body(self):
+        return self._b
+
+
+class _Page:
+    """A browser already signed in to SharePoint: the sharing link lands
+    on the library view, the REST API answers with the browser's cookies."""
+    FOLDER = '/sites/BillingDepartment/Shared Documents/Insurance Checks'
+
+    def __init__(self):
+        self.url = ''
+        self.got = []
+
+    def goto(self, url, **kw):
+        self.url = ('https://helixona.sharepoint.com/sites/BillingDepartment/Shared%20Documents/Forms/AllItems.aspx'
+                    '?id=%2Fsites%2FBillingDepartment%2FShared%20Documents%2FInsurance%20Checks&viewid=x')
+
+    def locator(self, sel):
+        class L:
+            first = None
+            def count(self_inner):
+                return 0
+        return L()
+
+    def get_by_text(self, *a, **k):
+        return self.locator('')
+
+    class request:
+        @staticmethod
+        def get(url, headers=None):
+            _Page.got.append(url)
+            from urllib.parse import unquote
+            u = unquote(url)
+            if '/Files?' in u and 'Insurance Checks/2026' in u:
+                return _Resp({'value': [{'Name': 'Check 30925163.pdf', 'ServerRelativeUrl': _Page.FOLDER + '/2026/Check 30925163.pdf',
+                                          'Length': '120', 'UniqueId': 'u2', 'ETag': '"2"', 'TimeLastModified': '2026-09-15T10:00:00Z'}]})
+            if '/Files?' in u:
+                return _Resp({'value': [{'Name': 'notes.txt', 'ServerRelativeUrl': _Page.FOLDER + '/notes.txt', 'Length': '3', 'UniqueId': 'u0', 'ETag': '"0"'},
+                                        {'Name': 'Check 4022519.jpg', 'ServerRelativeUrl': _Page.FOLDER + '/Check 4022519.jpg',
+                                         'Length': '99', 'UniqueId': 'u1', 'ETag': '"1"', 'TimeLastModified': '2026-09-16T10:00:00Z'}]})
+            if '/Folders?' in u and 'Insurance Checks/2026' in u:
+                return _Resp({'value': []})
+            if '/Folders?' in u:
+                return _Resp({'value': [{'Name': 'Forms', 'ServerRelativeUrl': _Page.FOLDER + '/Forms'},
+                                        {'Name': '2026', 'ServerRelativeUrl': _Page.FOLDER + '/2026'}]})
+            if u.endswith('Check 4022519.jpg'):
+                return _Resp(body=b'JPEGBYTES')
+            return _Resp(status=404)
+
+    got = []
+
+
+class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
+    """2026-09-17: the folder is shared inside Helixona only and no Entra
+    admin is at hand, so the bot uses a person's session signed in once on
+    the live screen."""
+    def test_the_sharing_link_resolves_to_the_folder(self):
+        from src.checks import sharepoint_browser as spb
+        page = _Page()
+        site, folder = spb.open_folder(page, wait_for_person=1)
+        self.assertEqual(site, 'https://helixona.sharepoint.com/sites/BillingDepartment')
+        self.assertEqual(folder, '/sites/BillingDepartment/Shared Documents/Insurance Checks')
+
+    def test_images_in_the_folder_and_its_subfolders_but_not_forms(self):
+        from src.checks import sharepoint_browser as spb
+        page = _Page()
+        files = spb.list_folder(page, 'https://helixona.sharepoint.com/sites/BillingDepartment', _Page.FOLDER)
+        self.assertEqual([f['path'] for f in files], ['Check 4022519.jpg', '2026/Check 30925163.pdf'])
+        self.assertEqual(files[0]['etag'], '"1"')
+        self.assertTrue(files[0]['download_url'].startswith('https://helixona.sharepoint.com/sites/'))
+        self.assertFalse(any('Forms' in u and '/Files?' in u for u in _Page.got))
+
+    def test_the_bytes_come_through_the_session(self):
+        import tempfile
+        from src.checks import sharepoint_browser as spb
+        item = {'name': 'Check 4022519.jpg', 'path': 'Check 4022519.jpg',
+                'download_url': 'https://helixona.sharepoint.com' + _Page.FOLDER + '/Check%204022519.jpg'}
+        with tempfile.TemporaryDirectory() as d:
+            path = spb.download(_Page(), item, d)
+            with open(path, 'rb') as fh:
+                self.assertEqual(fh.read(), b'JPEGBYTES')
+
+    def test_the_run_prefers_it_over_the_s3_inbox_when_a_browser_is_there(self):
+        r = _read('src/checks/run.py')
+        self.assertIn("if get_page is not None:\n            page = get_page()\n            site, folder = spb.open_folder(", r)
+        self.assertIn("read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)", r)
+        self.assertIn("DEFAULT_SHARE_LINK = ('https://helixona.sharepoint.com/:f:/s/BillingDepartment/'", _read('src/checks/sharepoint_browser.py'))
+
+    def test_nothing_is_written_to_sharepoint(self):
+        s = _read('src/checks/sharepoint_browser.py')
+        for forbidden in ('request.post', 'request.put', 'request.patch', 'request.delete', 'X-RequestDigest'):
+            self.assertNotIn(forbidden, s)
 
 
 class TheTaskIsWiredReadOnly(unittest.TestCase):

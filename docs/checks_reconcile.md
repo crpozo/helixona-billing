@@ -38,8 +38,31 @@ cheque number.
 
 ## SharePoint access
 
-Microsoft Graph, app-only. A user login would need Microsoft's MFA on
-every run; an app registration needs none.
+Two ways in. The folder is shared inside Helixona only.
+
+### A. Through the bot's browser (no admin needed — the default)
+
+The bot's Chrome keeps a persistent profile, so a Helixona account signed
+in once stays signed in. On the first run the log says "SharePoint wants a
+sign-in — finish it on the live screen": open the Remittance bot's noVNC
+window, sign in with the Helixona account, answer Microsoft's MFA, and tick
+**Stay signed in**. The run then reads the folder through SharePoint's REST
+API with that session (src/checks/sharepoint_browser.py) and continues.
+Later runs need nothing.
+
+The folder comes from its sharing link (the one in the code, or
+`share_link` in the secret or the task body). Optional secret, so the bot
+types the e-mail/password itself and only the MFA is left to the person:
+
+```json
+{"share_link": "https://helixona.sharepoint.com/:f:/s/BillingDepartment/...",
+ "username": "someone@helixona.com", "password": "..."}
+```
+
+### B. App registration (Microsoft Graph, app-only)
+
+A user login would need Microsoft's MFA on every run; an app registration
+needs none — but it takes an Entra admin.
 
 1. Entra admin center → App registrations → New registration
    ("Helixona Remittance bot"). Note the **Application (client) ID** and
@@ -55,8 +78,8 @@ every run; an app registration needs none.
  "folder": "Insurance Checks"}
 ```
 
-Until that secret exists the run reads `s3://<claims bucket>/checks/inbox/`
-instead — drop the cheque images there by hand to try the flow.
+With `"source": "s3"` the run reads `s3://<claims bucket>/checks/inbox/`
+instead — cheque images dropped there by hand.
 
 ## The image reader
 

@@ -830,7 +830,7 @@ window.scrollToEl = function(sel){
                 copies: true,
                 limit_files: 0,
                 ecw: true,
-                note: "Read-only. blue_shield:true walks the portal first (limit_checks caps the cheques, check_eft names one); false reuses the cheques already captured. copies:true reads new cheque images from SharePoint (Insurance Checks; secret sharepoint_credentials) or, without that secret, from s3://<bucket>/checks/inbox/; limit_files caps them. ecw:true logs into eCW and reads Billing → Payments since `since` (by Check # when the run is about a few cheques). Then every cheque gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy."
+                note: "Read-only. blue_shield:true walks the portal first (limit_checks caps the cheques, check_eft names one); false reuses the cheques already captured. copies:true reads new cheque images from SharePoint (Insurance Checks, through the bot's browser — sign in once on the live screen; or the sharepoint_credentials app registration), or with source:'s3' from s3://<bucket>/checks/inbox/; limit_files caps them. ecw:true logs into eCW and reads Billing → Payments since `since` (by Check # when the run is about a few cheques). Then every cheque gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy."
             }, null, 2),
             check_test_one: JSON.stringify({
                 since: "07/01/2025",
@@ -840,7 +840,7 @@ window.scrollToEl = function(sel){
                 copies: true,
                 limit_files: 10,
                 ecw: true,
-                note: "One cheque, end to end. Blue Shield: the first cheque in the results (or check_eft) is opened and its status read today. SharePoint / S3 inbox: the images named after it are read first, then up to limit_files more. eCW: Billing → Payments, Check # = the cheque, Lookup. Its row lands in the ✅ Cheques table under the 🧪 Last run filter. Read-only; nothing is posted."
+                note: "One cheque, end to end. Blue Shield: the first cheque in the results (or check_eft) is opened and its status read today. SharePoint (Insurance Checks, through the bot's browser — sign in once on the live screen when the log asks): the images named after it are read first, then up to limit_files more. eCW: Billing → Payments, Check # = the cheque, Lookup. Its row lands in the ✅ Cheques table under the 🧪 Last run filter. Read-only; nothing is posted."
             }, null, 2)
         };
 

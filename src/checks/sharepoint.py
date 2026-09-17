@@ -14,10 +14,11 @@ in Secrets Manager (prefix prod/helixona/) carries:
     site_path      e.g. /sites/BillingDepartment
     folder         e.g. Insurance Checks     (inside the default library)
 
-A user login through the browser would need Microsoft's own MFA every run;
-an app registration needs none. Until it exists, the same reconciliation
-can be run from an S3 inbox (`checks/inbox/` in the claims bucket) where
-the images are dropped by hand — see `list_s3_inbox`.
+An app registration takes an Entra admin. Without one the run goes through
+the bot's browser instead — a Helixona account signed in once on the live
+screen, src/checks/sharepoint_browser.py — and, with source:'s3', through
+an S3 inbox (`checks/inbox/` in the claims bucket) where images are dropped
+by hand — see `list_s3_inbox`.
 
 Nothing here writes to SharePoint.
 """
