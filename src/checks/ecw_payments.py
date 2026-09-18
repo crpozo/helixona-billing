@@ -23,15 +23,22 @@ RCVD_RX = r'rcvd\s*pmt|received.*(from|date)|from\s*date|start'
 CHECK_RX = r'check\s*#|check\s*no|check\s*num|chk'
 LOOKUP = ['Lookup', 'Look Up', 'Search']
 
+# The Payments grid as it is (screenshot, 2026-09-18): BATCH ID · PAYMENT ID ·
+# POSTED BY · ERA EXCEPTION · DATE · PAYMENT FROM · PAYMENT TYPE · CHECK NO ·
+# CHECK DATE · DEPOSIT DATE · AMOUNT · POSTED · UNPOSTED. Matched by name,
+# most specific first, each header used once.
 COLUMNS = {
-    'payment_id': re.compile(r'^(payment\s*)?id$|pmt\s*id|payment\s*id', re.I),
-    'check_no': re.compile(r'check|chk|reference', re.I),
-    'amount': re.compile(r'^amount|^amt|total', re.I),
-    'posted': re.compile(r'^posted', re.I),
+    'payment_id': re.compile(r'^payment\s*id|^pmt\s*id|^id$', re.I),
+    'check_no': re.compile(r'^check\s*(no|#|num)|^chk\s*(no|#)|^check$|reference', re.I),
+    'check_date': re.compile(r'^check\s*date|^chk\s*date', re.I),
+    'deposit_date': re.compile(r'deposit', re.I),
     'unposted': re.compile(r'^un-?posted|balance|remaining', re.I),
-    'received': re.compile(r'rcvd|received|pmt\s*date|payment\s*date', re.I),
-    'payer': re.compile(r'payer|insurance|from|name', re.I),
+    'posted': re.compile(r'^posted(?!\s*by)', re.I),
+    'amount': re.compile(r'^amount|^amt|total', re.I),
+    'received': re.compile(r'rcvd|received|pmt\s*date|payment\s*date|^date$', re.I),
+    'payer': re.compile(r'payment\s*from|payer|insurance|^from', re.I),
 }
+TO_RX = r'^to$|toDate|to\s*date'
 
 GRID_JS = r"""() => {
     // eCW's list views come in two shapes: one table with <th> and rows, or a
@@ -47,8 +54,13 @@ GRID_JS = r"""() => {
     let best = null;
     tables.forEach((tb, i) => {
         const rows = rowsOf(tb);
-        if (!rows.length) return;
         let hdrs = headersOf(tb).filter(x => x !== '');
+        if (!rows.length) {
+            // No data rows: still an answer when the headers are the grid's
+            // (the filter simply matched nothing).
+            if (hdrs.length >= 3 && looksRight(hdrs) && !best) best = { hdrs, rows: [], score: 500, right: true };
+            return;
+        }
         if (hdrs.length < 3) {
             const width = rows[0].length;
             const same = headerTables.filter(h => h.i < i && h.hdrs.length === width);
@@ -120,25 +132,35 @@ def describe_screen(page, why):
 
 
 def _read_grid(page):
-    """(headers, rows) of the payments grid. The pairing whose headers name
-    an amount and a cheque/posted column wins; failing that, the biggest
-    table on screen, with its headers logged so the reader can be fixed."""
+    """(headers, rows, recognised) of the payments grid. Recognised = the
+    headers name an amount and a cheque/posted column; then an empty row
+    list is a real answer (the filter matched nothing). Otherwise the biggest
+    table on screen is returned with recognised=False and its headers logged."""
     best = None
     for frm in page.frames:
         try:
             data = frm.evaluate(_js(GRID_JS))
         except Exception:
             data = None
-        if not data or not data.get('rows'):
+        if not data:
             continue
         if data.get('right'):
-            return data['hdrs'], data['rows']
-        if not best or len(data['rows']) > len(best['rows']):
+            return data['hdrs'], data['rows'], True
+        if data.get('rows') and (not best or len(data['rows']) > len(best['rows'])):
             best = data
     if best:
         logger.warning(f"  ⚠️ a grid was read but its headers are not the ones expected: {best['hdrs'][:12]} · first row {best['rows'][0][:10]}")
-        return best['hdrs'], best['rows']
-    return [], []
+        return best['hdrs'], best['rows'], False
+    return [], [], False
+
+
+def _set_dates(page, since):
+    """Rcvd Pmt Dts from `since` to today — both, and both confirmed."""
+    ok_from = _set_field(page, RCVD_RX, since, what='Rcvd Pmt Dts from')
+    ok_to = _set_field(page, TO_RX, time.strftime('%m/%d/%Y'), what='Rcvd Pmt Dts to')
+    if not ok_from:
+        logger.warning("  ⚠️ the from-date did not take — the lookup may cover today only")
+    return ok_from and ok_to
 
 
 def _columns(hdrs):
@@ -180,6 +202,8 @@ def rows_to_payments(hdrs, rows, assume_check=''):
             'posted': cell('posted'),
             'unposted': cell('unposted'),
             'received': cell('received'),
+            'check_date': cell('check_date'),
+            'deposit_date': cell('deposit_date'),
             'payer': cell('payer'),
         })
     return out
@@ -191,15 +215,17 @@ def list_payments(page, since):
     if not open_payments(page):
         return None
     logger.info(f"🔎 Payments since {since}, every cheque")
-    _set_field(page, RCVD_RX, since, what='Rcvd Pmt Dts from')
+    _set_dates(page, since)
     _set_field(page, CHECK_RX, '', what='Check # (blank)')
     _click_text(page, LOOKUP, timeout=5, what='lookup', after_target=True)
     time.sleep(4)
 
     seen, payments = set(), []
     for _ in range(200):
-        hdrs, rows = _read_grid(page)
+        hdrs, rows, recognised = _read_grid(page)
         if not rows:
+            if recognised:
+                logger.info(f"  grid recognised ({hdrs[:8]}) but no rows for this filter")
             break
         batch = rows_to_payments(hdrs, rows)
         new = [p for p in batch if (p['payment_id'], p['check_no'], p['amount']) not in seen]
@@ -254,7 +280,7 @@ def find_payments(page, check_no, since, navigate=True):
     check_no = str(check_no).strip()
     want = check_no.lstrip('0')
     logger.info(f"🔎 Payments lookup: Rcvd Pmt Dts from {since}, Check # {check_no}")
-    _set_field(page, RCVD_RX, since, what='Rcvd Pmt Dts from')
+    _set_dates(page, since)
     if not _set_field(page, CHECK_RX, check_no, what='Check #'):
         _shot(page, f'{check_no}_no_check_field')
         return None
@@ -262,10 +288,10 @@ def find_payments(page, check_no, since, navigate=True):
     time.sleep(3)
     # What eCW answered, on record: the grid's headers and row count, and a
     # screenshot — "not in eCW" must be checkable against the screen.
-    hdrs, rows = _read_grid(page)
-    logger.info(f"  payments grid: {len(rows)} row(s) · columns {hdrs[:10] or 'not recognised'}")
+    hdrs, rows, recognised = _read_grid(page)
+    logger.info(f"  payments grid: {len(rows)} row(s) · columns {hdrs[:10] or 'none'}{'' if recognised else ' · not recognised'}")
     _shot(page, f'{check_no}_payments_lookup')
-    if not rows:
+    if not rows and not recognised:
         describe_screen(page, 'grid not recognised')
     got = [p for p in rows_to_payments(hdrs, rows, assume_check=check_no) if p['check_no'].lstrip('0') == want]
     if not got:
@@ -278,6 +304,11 @@ def find_payments(page, check_no, since, navigate=True):
                         'posted': '', 'unposted': '', 'received': '', 'payer': ''})
     if got:
         logger.info(f"  💾 in eCW: {len(got)} payment(s) under check {check_no} · {got[0]}")
-    else:
+    elif recognised:
         logger.info(f"  no payment on file under check {check_no}")
+    else:
+        # Neither the grid nor a row with the number: the screen was not
+        # read, which is not the same as "not in eCW".
+        logger.warning(f"  ⚠️ the Payments grid was not read for check {check_no} — eCW stays unchecked")
+        return None
     return got

@@ -254,13 +254,39 @@ def _set_field(page, label_rx, value, what='', prefer='first'):
             page.keyboard.press('Control+a')
             page.keyboard.press('Backspace')
             page.keyboard.type(str(value), delay=30)
+            # A date input (MM/DD/YYYY mask) commits on Enter; Tab alone left
+            # eCW's Rcvd Pmt Dts filter at today → today (2026-09-17).
+            if re.fullmatch(r'\d{2}/\d{2}/\d{4}', str(value)):
+                page.keyboard.press('Enter')
+                time.sleep(0.3)
             page.keyboard.press('Tab')
-        time.sleep(0.4)
+            time.sleep(0.4)
+            got = _read_value(frm)
+            if str(value) and got is not None and got.strip() != str(value).strip():
+                # The keystrokes did not stick: set the value and fire the
+                # events Angular listens to.
+                frm.evaluate(r"""(([sel, v]) => { const el = document.querySelector(sel); if (!el) return;
+                    el.focus(); el.value = v;
+                    for (const t of ['input', 'change', 'blur']) el.dispatchEvent(new Event(t, { bubbles: true })); })""",
+                             ['[data-helixona="target"]', str(value)])
+                time.sleep(0.4)
+                got = _read_value(frm)
+            if str(value) and got is not None and got.strip() != str(value).strip():
+                logger.warning(f"  ⚠️ {what or label_rx}: typed {value!r} but the field shows {got!r}")
+                return False
+        time.sleep(0.2)
         logger.info(f"  ✅ {what or label_rx} = {value!r}  ← {desc}")
         return True
     except Exception as e:
         logger.warning(f"  ⚠️ could not set {what or label_rx}: {str(e)[:100]}")
         return False
+
+
+def _read_value(frm):
+    try:
+        return frm.evaluate("""() => { const el = document.querySelector('[data-helixona="target"]'); return el ? (el.value ?? '') : null; }""")
+    except Exception:
+        return None
 
 
 def _tick(page, label_rx, what=''):

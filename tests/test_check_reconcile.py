@@ -131,6 +131,29 @@ class TheEcwPaymentsGridIsReadByName(unittest.TestCase):
         self.assertIn('headerTables', e)
         self.assertIn("a grid was read but its headers are not the ones expected", e)
 
+    def test_the_grid_as_ecw_shows_it(self):
+        # The Payments screen, 2026-09-18 (screenshot): POSTED BY sits before POSTED.
+        hdrs = ['', '', '', '', '', 'BATCH ID', 'PAYMENT ID', 'POSTED BY', 'ERA EXCEPTION', 'DATE', 'PAYMENT FROM',
+                'PAYMENT TYPE', 'CHECK NO', 'CHECK DATE', 'DEPOSIT DATE', 'AMOUNT', 'POSTED', 'UNPOSTED']
+        rows = [['', '', '', '', '', '', '934', 'Fernand...', '0', '01/07/2026', 'Cigna', 'Check', '766832993',
+                 '12/31/2025', '01/06/2026', '475.19', '475.19', '0.00']]
+        got = rows_to_payments(hdrs, rows)
+        self.assertEqual(len(got), 1)
+        p = got[0]
+        self.assertEqual((p['payment_id'], p['check_no'], p['amount'], p['posted'], p['unposted']),
+                         ('934', '766832993', '475.19', '475.19', '0.00'))
+        self.assertEqual((p['check_date'], p['deposit_date'], p['payer']), ('12/31/2025', '01/06/2026', 'Cigna'))
+
+    def test_an_unread_grid_is_not_called_empty(self):
+        e = _read('src/checks/ecw_payments.py')
+        self.assertIn('def _read_grid(page):', e)
+        self.assertIn('return best[\'hdrs\'], best[\'rows\'], False', e)
+        self.assertIn("the Payments grid was not read for check {check_no} — eCW stays unchecked", e)
+        self.assertIn('def _set_dates(page, since):', e)
+        p = _read('src/eob/post.py')
+        self.assertIn("page.keyboard.press('Enter')", p)
+        self.assertIn('def _read_value(frm):', p)
+
     def test_a_grid_filtered_by_check_number_need_not_show_the_column(self):
         hdrs = ['Payment ID', 'Rcvd Date', 'Amount', 'Posted', 'Unposted']
         rows = [['5043', '09/15/2026', '262.69', '262.69', '0.00'], ['', 'Total', '262.69', '', '']]
