@@ -516,6 +516,32 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn("'check data only'", c)
         self.assertNotIn("· PDF {'ok' if s3_path else 'MISSING'}", c)
 
+    def test_the_folders_are_shown_as_the_bot_walked_them(self):
+        import importlib, os as _os
+        _os.environ.setdefault('SQS_QUEUE_URL', 'x'); _os.environ.setdefault('AWS_ACCESS_KEY_ID', 'x'); _os.environ.setdefault('AWS_SECRET_ACCESS_KEY', 'x')
+        dash = importlib.import_module('dashboard')
+        items = [
+            {'check_number': '766832992', 'has_copy': True, 'copy_file': "Posted Checks/2026/01'2026/01-06-2026/Cigna._001.pdf", 'copy_amount': '491.18', 'copy_read_by': 'vision'},
+            {'check_number': '766832993', 'has_copy': True, 'copy_file': "Posted Checks/2026/01'2026/01-06-2026/Cigna..pdf", 'copy_amount': '475.19'},
+            {'check_number': '4018055', 'has_copy': True, 'copy_file': 'Unposted Checks/07-13-2026/Check No. 0004018055.pdf', 'copy_amount': '304.74'},
+            {'check_number': "unreadable:Posted Checks/2026/01'2026/01-09-2026/Helpful resources.pdf", 'has_copy': False,
+             'copy_file': "Posted Checks/2026/01'2026/01-09-2026/Helpful resources.pdf", 'copy_problem': 'no check number could be read off the image'},
+            {'check_number': '30925163', 'has_copy': False},   # a Blue Shield check with no scan: not a file
+        ]
+        t = dash._folder_tree(items)
+        self.assertEqual((t['total_files'], t['total_checks'], t['total_unreadable']), (4, 3, 1))
+        posted = t['tree']['Posted Checks']
+        self.assertEqual((posted['total_files'], posted['total_checks'], posted['total_unreadable']), (3, 2, 1))
+        jan = posted['children']['2026']['children']["01'2026"]
+        self.assertEqual(sorted(c['check_number'] for c in jan['children']['01-06-2026']['checks']), ['766832992', '766832993'])
+        self.assertEqual(jan['children']['01-09-2026']['unreadable'][0]['file'], 'Helpful resources.pdf')
+        self.assertEqual(t['tree']['Unposted Checks']['children']['07-13-2026']['checks'][0]['check_number'], '4018055')
+        d = _read('dashboard.py')
+        self.assertIn("@app.route('/api/checks/folders')", d)
+        self.assertIn('id="folders-section"', d)
+        self.assertIn('function renderFolders()', d)
+        self.assertIn("fldSec.hidden = (bot !== 'eob')", d)
+
     def test_the_team_has_its_own_page(self):
         d = _read('dashboard.py')
         self.assertIn("@app.route('/checks')", d)

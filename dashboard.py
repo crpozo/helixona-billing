@@ -301,7 +301,21 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
    the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #checks-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section, .main > #folders-section, .main > #claims-section-submissions{grid-column:1}
+.ftree details{margin:2px 0 2px 14px;border-left:1px solid var(--bdr);padding-left:10px}
+.ftree > details{margin-left:0;border-left:none;padding-left:0}
+.ftree summary{cursor:pointer;padding:6px 4px;list-style:none;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.ftree summary::-webkit-details-marker{display:none}
+.ftree summary::before{content:'▸';display:inline-block;width:12px;color:var(--text-muted);transition:transform .15s}
+.ftree details[open] > summary::before{transform:rotate(90deg)}
+.ftree .fname{font-weight:600}
+.ftree .fcount{font-size:11px;color:var(--text-muted)}
+.ftree .fcount b{color:var(--text-secondary);font-weight:600}
+.ftree table{width:auto;min-width:60%;margin:4px 0 8px 26px;font-size:12px}
+.ftree td{padding:5px 10px;border-bottom:1px solid var(--bdr);vertical-align:top}
+.ftree td.num{text-align:right;font-variant-numeric:tabular-nums}
+.ftree .unread{color:var(--warning)}
+.ftree mark{background:rgba(205,180,134,.35);color:inherit;border-radius:3px;padding:0 2px}
 .chk-filter{font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:12px;background:transparent;color:inherit;cursor:pointer}
 .chk-filter.on{border-color:var(--accent);color:var(--accent)}
 .chk-tiles{display:flex;flex-wrap:wrap;gap:10px;padding:10px 14px 4px}
@@ -537,6 +551,19 @@ tbody tr:last-child td{border-bottom:none}
             <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
           </table>
         </div>
+      </div>
+
+      <!-- SHAREPOINT FOLDERS (Remittance) — what was collected from each folder, to check the reading -->
+      <div class="claims-section" id="folders-section" hidden>
+        <div class="section-title">
+          📁 SharePoint · Insurance Checks, folder by folder
+          <span id="folders-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
+          <input id="folders-search" class="claims-search" autocomplete="off" placeholder="Find a check # or file…" style="margin-left:14px;max-width:260px" oninput="renderFolders()">
+          <button class="btn" style="margin-left:auto" onclick="foldersOpenAll(true)">Expand all</button>
+          <button class="btn" onclick="foldersOpenAll(false)">Collapse</button>
+          <button class="btn btn-refresh" onclick="loadFolders()">↻ Refresh</button>
+        </div>
+        <div class="ftree" id="folders-tree" style="padding:8px 14px 14px"><div class="empty-state">No folder has been read yet.</div></div>
       </div>
 
       <!-- CLAIMS TABLE -->
@@ -948,6 +975,9 @@ window.scrollToEl = function(sel){
             const claimsSec = document.getElementById('claims-section-submissions');
             if (claimsSec) claimsSec.hidden = (bot === 'eob');
             if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
+            const fldSec = document.getElementById('folders-section');
+            if (fldSec) fldSec.hidden = (bot !== 'eob');
+            if (bot === 'eob' && typeof loadFolders === 'function') loadFolders();
             // Re-render from the claims already loaded, THEN refetch. The
             // table used to keep showing the previous tab's claims until the
             // next full fetch came back.
@@ -2041,6 +2071,51 @@ window.scrollToEl = function(sel){
         setInterval(loadData, 15000);
         // The checks table is small; keep it live while a run is going.
         setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 15000);
+        setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
+
+        // ---- SharePoint folders (Remittance) ----
+        // The folder tree exactly as the bot walked it, with the check
+        // numbers it read in each folder — so a person can open
+        // Posted Checks → 2026 → 01'2026 → 01-06-2026 and compare with SharePoint.
+        function foldersOpenAll(open) { document.querySelectorAll('#folders-tree details').forEach(d => d.open = open); }
+        async function loadFolders() {
+            try {
+                const res = await fetch('/api/checks/folders');
+                window._foldersData = await res.json();
+                renderFolders();
+            } catch (e) { console.error('loadFolders failed', e); }
+        }
+        function renderFolders() {
+            const el = document.getElementById('folders-tree');
+            const meta = document.getElementById('folders-meta');
+            const data = window._foldersData;
+            if (!el || !data) return;
+            const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+            const q = (document.getElementById('folders-search')?.value || '').trim().toLowerCase();
+            // Highlight the search hit without a regex (no escaping to get wrong).
+            const hi = s => { const str = String(s ?? ''); if (!q) return esc(str); const at = str.toLowerCase().indexOf(q);
+                return at < 0 ? esc(str) : esc(str.slice(0, at)) + '<mark>' + esc(str.slice(at, at + q.length)) + '</mark>' + esc(str.slice(at + q.length)); };
+            const hit = f => !q || (f.checks || []).some(c => String(c.check_number).includes(q) || String(c.file).toLowerCase().includes(q))
+                                  || (f.unreadable || []).some(u => String(u.file).toLowerCase().includes(q))
+                                  || Object.values(f.children || {}).some(hit);
+            const node = (name, f, depth) => {
+                if (!hit(f)) return '';
+                const kids = Object.keys(f.children || {}).sort().map(k => node(k, f.children[k], depth + 1)).join('');
+                const rows = (f.checks || []).filter(c => !q || String(c.check_number).includes(q) || String(c.file).toLowerCase().includes(q) || Object.values(f.children || {}).length === 0 && hit(f))
+                    .sort((a, b) => String(a.file).localeCompare(String(b.file)));
+                const unread = (f.unreadable || []).filter(u => !q || String(u.file).toLowerCase().includes(q));
+                const table = (rows.length || unread.length) ? `<table><tbody>${rows.map(c => `
+                    <tr><td><strong>${hi(c.check_number)}</strong></td><td class="num">${c.amount ? '$' + esc(c.amount) : '<span class="unread">no amount</span>'}</td>
+                        <td>${c.url ? `<a href="${esc(c.url)}" target="_blank">${hi(c.file)}</a>` : hi(c.file)}</td>
+                        <td style="color:var(--text-muted)">${esc(c.read_by || '')}${c.payer ? ' · ' + esc(c.payer) : ''}</td></tr>`).join('')}${unread.map(u => `
+                    <tr><td class="unread">not read</td><td></td><td>${u.url ? `<a href="${esc(u.url)}" target="_blank">${hi(u.file)}</a>` : hi(u.file)}</td><td class="unread" style="font-size:11px">${esc(u.problem || '')}</td></tr>`).join('')}</tbody></table>` : '';
+                return `<details${q || depth === 0 ? ' open' : ''}><summary><span class="fname">${esc(name)}</span>
+                    <span class="fcount"><b>${f.total_checks}</b> check${f.total_checks === 1 ? '' : 's'} · ${f.total_files} file${f.total_files === 1 ? '' : 's'}${f.total_unreadable ? ` · <span class="unread">${f.total_unreadable} not read</span>` : ''}</span></summary>${table}${kids}</details>`;
+            };
+            const roots = Object.keys(data.tree || {}).sort();
+            el.innerHTML = roots.length ? roots.map(k => node(k, data.tree[k], 0)).join('') : '<div class="empty-state">No folder has been read yet.</div>';
+            if (meta) meta.textContent = `${data.total_checks} checks read from ${data.total_files} files in ${data.folders} folders` + (data.total_unreadable ? ` · ${data.total_unreadable} files not read` : '') + (data.skipped && data.skipped.length ? ` · left out: ${data.skipped.join(', ')}` : '');
+        }
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
     </script>
@@ -2125,6 +2200,64 @@ def api_mfa_code():
         return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _folder_tree(items):
+    """The SharePoint folder tree as the bot read it: every file it looked
+    at, under the folder it was in, with the check number it read (or why it
+    could not). Built from helixona-checks: one row per check read (its last
+    file) plus one 'unreadable:<file>' row per file that gave no check."""
+    def new():
+        return {'children': {}, 'checks': [], 'unreadable': [], 'total_files': 0, 'total_checks': 0, 'total_unreadable': 0}
+    tree = {}
+    files = set()
+    for it in items:
+        path = str(it.get('copy_file') or '')
+        if not path:
+            continue
+        files.add(path)
+        parts = path.split('/')
+        folders, name = parts[:-1], parts[-1]
+        node_path = []
+        cur = tree
+        for f in folders:
+            cur = cur.setdefault(f, new())
+            node_path.append(cur)
+            cur = cur['children']
+        leaf = node_path[-1] if node_path else tree.setdefault('(root)', new())
+        key = str(it.get('check_number', ''))
+        if key.startswith('unreadable:') or not it.get('has_copy'):
+            leaf['unreadable'].append({'file': name, 'url': it.get('copy_url', ''), 'problem': str(it.get('copy_problem') or '')})
+            for n in node_path or [leaf]:
+                n['total_files'] += 1
+                n['total_unreadable'] += 1
+        else:
+            leaf['checks'].append({'check_number': key, 'amount': str(it.get('copy_amount') or ''), 'file': name,
+                                   'url': it.get('copy_url', ''), 'read_by': str(it.get('copy_read_by') or ''),
+                                   'payer': str(it.get('copy_payer') or ''), 'verdict': str(it.get('verdict') or '')})
+            for n in node_path or [leaf]:
+                n['total_files'] += 1
+                n['total_checks'] += 1
+
+    def count(nodes):
+        return sum(1 + count(n['children']) for n in nodes.values())
+    return {'tree': tree, 'folders': count(tree), 'total_files': len(files),
+            'total_checks': sum(n['total_checks'] for n in tree.values()),
+            'total_unreadable': sum(n['total_unreadable'] for n in tree.values())}
+
+
+@app.route('/api/checks/folders')
+def api_checks_folders():
+    """What was collected from SharePoint, folder by folder."""
+    try:
+        items = scan_all(dynamodb.Table('helixona-checks'))
+        run = next((it for it in items if it.get('check_number') == '_run'), {})
+        out = _folder_tree([it for it in items if not str(it.get('check_number', '')).startswith('_')])
+        out['skipped'] = ['Insurance Check Tracker', 'Posted Checks/2025']
+        out['last_run'] = str(run.get('updated_at') or '')
+        return jsonify(json.loads(json.dumps(out, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'tree': {}, 'folders': 0, 'total_files': 0, 'total_checks': 0, 'total_unreadable': 0})
 
 
 def _checks_rows():

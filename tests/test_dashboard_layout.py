@@ -44,7 +44,7 @@ class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_the_panels_are_pinned_to_their_columns(self):
         # Defense in depth: even with both panels visible, the rail keeps its column.
         src = _src()
-        self.assertIn('.main > #checks-section, .main > #claims-section-submissions{grid-column:1}', src)
+        self.assertIn('.main > #checks-section, .main > #folders-section, .main > #claims-section-submissions{grid-column:1}', src)
         self.assertIn('.main > .task-panel{grid-column:2;grid-row:1}', src)
 
     def test_single_column_screens_release_the_pin(self):
