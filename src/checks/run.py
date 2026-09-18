@@ -312,57 +312,68 @@ def run_check_reconcile(aws_client, body, login, get_page):
     if not blue_shield:
         progress('blue_shield', f"{len(checks)} check(s) on file from earlier captures")
 
-    # 3. eCW.
-    payments, ecw_checked = [], False
-    if do_ecw:
-        progress('ecw', 'looking up the payments…')
+    # 3. eCW — one lookup per check, the operator's own step (2026-09-18):
+    # Check # = the number, Rcvd Pmt Dts from `since` to today, Lookup. The
+    # full Payments list is thousands of card payments and pages; a lookup
+    # is one row. Checks already posted in full (unposted 0.00) are settled
+    # and not asked again; their stored answer is reused.
+    copies = [it for it in scan_all(table) if it.get('has_copy')
+              and (not targets or norm_check(it.get('check_number')) in targets)]
+    settled = {norm_check(it.get('check_number')): it for it in scan_all(table)
+               if it.get('in_ecw') and it.get('verdict') == 'posted' and str(it.get('ecw_unposted') or '') in ('0.00', '0')}
+    to_check = targets or ({norm_check(q.get('check_eft')) for q in checks} | {norm_check(c.get('check_number')) for c in copies})
+    to_check = {k for k in to_check if k}
+    payments, checked = [], set()
+    for ck in sorted(to_check & set(settled)):
+        if not targets:   # a targeted run asks again; a full run trusts the settled answer
+            s = settled[ck]
+            payments.append({'check_no': ck, 'amount': s.get('ecw_amount', ''), 'posted': s.get('ecw_posted', ''),
+                             'unposted': s.get('ecw_unposted', ''), 'payment_id': s.get('ecw_payment_id', '')})
+            checked.add(ck)
+    ask = sorted(to_check - checked)
+    if do_ecw and ask:
+        progress('ecw', f"looking up {len(ask)} check(s)" + (f" ({len(checked)} already posted, kept)" if checked else '') + '…')
         page = get_page()
         creds = aws_client.get_secret('ecw_credentials')
         if login(page, creds, aws_client):
-            if targets:
-                found, ok = [], True
-                for i, ck in enumerate(sorted(targets)):
-                    got = find_payments(page, ck, since, navigate=(i == 0))
-                    if got is None:
-                        ok = False
+            failures, first = 0, True
+            for i, ck in enumerate(ask, 1):
+                got = find_payments(page, ck, since, navigate=first, shot=bool(targets))
+                first = False
+                if got is None:
+                    failures += 1
+                    if failures >= 3:
+                        logger.error("❌ eCW: the Payments screen could not be read three times in a row — stopping the lookups")
                         break
-                    found.extend(got)
-                if ok:
-                    payments, ecw_checked = found, True
-                    progress('ecw', ' · '.join(
-                        f"{ck} {'on file' if any(norm_check(p['check_no']) == ck for p in found) else 'not found'}"
-                        for ck in sorted(targets)))
-                else:
-                    progress('ecw', 'the Payments screen could not be read')
+                    first = True   # re-open the screen and try the next one
+                    continue
+                failures = 0
+                payments.extend(got)
+                checked.add(ck)
+                if i % 25 == 0 or i == len(ask):
+                    progress('ecw', f"{i}/{len(ask)} looked up · {sum(1 for p in payments if norm_check(p.get('check_no')) in checked)} on file")
+            if targets:
+                progress('ecw', ' · '.join(
+                    f"{ck} {'on file' if any(norm_check(p['check_no']) == ck for p in payments) else ('not found' if ck in checked else 'not read')}"
+                    for ck in sorted(targets)))
             else:
-                got = list_payments(page, since)
-                if got is not None:
-                    payments, ecw_checked = got, True
-                    table.put_item(Item={'check_number': SNAPSHOT_KEY, 'since': since, 'payments': payments[:2000],
-                                         'count': len(payments), 'read_at': _now()})
-                    progress('ecw', f"{len(payments)} payment(s) since {since}")
-                else:
-                    progress('ecw', 'the Payments screen could not be read')
+                progress('ecw', f"{len(checked)} check(s) looked up · {len({norm_check(p['check_no']) for p in payments})} on file"
+                         + (f" · {len(ask) - (len(checked) - len(set(settled) & to_check))} not read" if len(checked) < len(to_check) else ''))
         else:
             logger.error("❌ eCW login failed — payments not read this run")
             progress('ecw', 'login failed')
+    elif do_ecw:
+        progress('ecw', f"nothing to look up ({len(checked)} already posted, kept)")
     else:
         progress('ecw', 'skipped (ecw:false)')
-    if not ecw_checked:
-        snap = table.get_item(Key={'check_number': SNAPSHOT_KEY}).get('Item') or {}
-        if snap.get('payments'):
-            payments = [p for p in snap['payments'] if not targets or norm_check(p.get('check_no')) in targets]
-            ecw_checked = True
-            logger.info(f"  (using the eCW payments read on {snap.get('read_at')})")
-            progress('ecw', run['steps'].get('ecw', '') + f" · using the list read on {snap.get('read_at')}")
+    ecw_checked = checked
 
     # 4. The verdicts.
-    copies = [it for it in scan_all(table) if it.get('has_copy')
-              and (not targets or norm_check(it.get('check_number')) in targets)]
     rows, _ = reconcile(
         [{'check_number': c['check_number'], 'amount': c.get('copy_amount', ''), 'file': c.get('copy_file', ''),
           'url': c.get('copy_url', ''), 'check_date': c.get('copy_date', '')} for c in copies],
         checks, payments, ecw_checked=ecw_checked)
+    ecw_checked = bool(ecw_checked)   # for the summary: was eCW consulted at all
     if targets:
         rows = [r for r in rows if r['check_number'] in targets]
 

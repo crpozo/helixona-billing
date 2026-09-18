@@ -269,28 +269,53 @@ def _rows_with(page, check_no):
     return []
 
 
-def find_payments(page, check_no, since, navigate=True):
+def _grid_signature(page):
+    try:
+        hdrs, rows, _ = _read_grid(page)
+        return (len(rows), tuple(rows[0][:14]) if rows else ())
+    except Exception:
+        return (0, ())
+
+
+def find_payments(page, check_no, since, navigate=True, shot=True):
     """The payments eCW holds under one check number — the operator's own
-    step: Billing → Payments, Rcvd Pmt Dts from `since`, Check # = the
-    number, Lookup. [] when the grid comes back empty (not in eCW), None
-    when the screen could not be worked (a screenshot says what was on it).
-    `navigate` False: the Payments screen is already up from the last call."""
-    if navigate and not open_payments(page):
-        return None
+    step (2026-09-18: "put the check number in Check #, dates from 07/01/25
+    to today, look the check up"): Billing → Payments, Rcvd Pmt Dts from
+    `since` to today, Check # = the number, Lookup. [] when the grid comes
+    back empty (not in eCW), None when the screen could not be worked (a
+    screenshot says what was on it).
+
+    `navigate` True opens the screen and sets the dates; False means the
+    screen is up from the last call — only Check # changes, and the lookup
+    waits for the grid to answer instead of a fixed three seconds, so a run
+    over hundreds of checks costs a second or two each."""
     check_no = str(check_no).strip()
     want = check_no.lstrip('0')
-    logger.info(f"🔎 Payments lookup: Rcvd Pmt Dts from {since}, Check # {check_no}")
-    _set_dates(page, since)
+    if navigate:
+        if not open_payments(page):
+            return None
+        _set_dates(page, since)
+    before = _grid_signature(page)
+    logger.info(f"🔎 Payments lookup: Check # {check_no} (Rcvd Pmt Dts {since} → today)")
     if not _set_field(page, CHECK_RX, check_no, what='Check #'):
         _shot(page, f'{check_no}_no_check_field')
         return None
     _click_text(page, LOOKUP, timeout=5, what='lookup', after_target=True)
-    time.sleep(3)
-    # What eCW answered, on record: the grid's headers and row count, and a
-    # screenshot — "not in eCW" must be checkable against the screen.
+    # The answer is in when the grid differs from what was there. Two empty
+    # answers in a row look alike, so an unchanged empty grid is accepted
+    # after a shorter wait.
+    deadline = time.time() + (8 if before[0] else 3)
+    while time.time() < deadline:
+        time.sleep(0.25)
+        if _grid_signature(page) != before:
+            break
+    time.sleep(0.4)
+    # What eCW answered, on record: the grid's headers and row count, and
+    # (on a targeted run) a screenshot — "not in eCW" must be checkable.
     hdrs, rows, recognised = _read_grid(page)
     logger.info(f"  payments grid: {len(rows)} row(s) · columns {hdrs[:10] or 'none'}{'' if recognised else ' · not recognised'}")
-    _shot(page, f'{check_no}_payments_lookup')
+    if shot:
+        _shot(page, f'{check_no}_payments_lookup')
     if not rows and not recognised:
         describe_screen(page, 'grid not recognised')
     got = [p for p in rows_to_payments(hdrs, rows, assume_check=check_no) if p['check_no'].lstrip('0') == want]

@@ -882,8 +882,8 @@ window.scrollToEl = function(sel){
         const TASK_DESCRIPTIONS = {
             bs_missing_docs: {
                 title: 'ECW obtain claims documentation',
-                desc: 'Runs the full pipeline: extract claims from ECW, generate HCFA forms, capture Progress Notes and submit Missing Documentation cases to Blue Shield.',
-                steps: []
+                desc: 'eCW only — nothing is sent to Blue Shield. Discovers the claims in eCW, generates the HCFA forms and captures the Progress Notes, and stores them. Uploading to Blue Shield is the separate task "Blueshield Submissions".',
+                steps: ['eCW → Billing → Claims: discover the claims and store them', 'Generate the HCFA form for each claim', 'Capture the Progress Notes', 'Nothing is uploaded — run Blueshield Submissions for that']
             },
             blueshield_submissions: {
                 title: 'Blueshield Submissions',

@@ -227,7 +227,7 @@ class TheTestOfOne(unittest.TestCase):
     CHEQUE = {'check_eft': '30925163', 'check_amount': '227.20', 'check_status': 'Check Cashed',
               'check_date': '04/17/2026', 'cashed_date': '07/27/2026'}
 
-    def _run(self, body, find=lambda page, ck, since, navigate=True: [], capture=None, copies=None):
+    def _run(self, body, find=lambda page, ck, since, navigate=True, shot=True: [], capture=None, copies=None):
         checks = _Table('helixona-checks', [
             {'check_number': '11111111', 'verdict': 'posted', 'flags': [], 'has_copy': True, 'reconciled_at': 'before'},
             {'check_number': '22222222', 'verdict': 'not in eCW', 'flags': ['no copy of the check'], 'reconciled_at': 'before'}])
@@ -280,11 +280,30 @@ class TheTestOfOne(unittest.TestCase):
     def test_the_payment_on_file_makes_it_posted(self):
         result, checks = self._run(
             {'blue_shield': True, 'limit_checks': 1},
-            find=lambda page, ck, since, navigate=True: [{'check_no': ck, 'amount': '227.20', 'posted': '227.20',
-                                                          'unposted': '0.00', 'payment_id': '5050'}])
+            find=lambda page, ck, since, navigate=True, shot=True: [{'check_no': ck, 'amount': '227.20', 'posted': '227.20',
+                                                                     'unposted': '0.00', 'payment_id': '5050'}])
         row = checks.items['30925163']
         self.assertEqual((row['verdict'], row['ecw_payment_id'], row['flags']), ('posted', '5050', []))
         self.assertIn('30925163 on file', checks.items['_run']['steps']['ecw'])
+
+    def test_ecw_is_asked_check_by_check_and_settled_ones_are_kept(self):
+        # 2026-09-18, the operator: put the number in Check #, dates from
+        # 07/01/25 to today, look the check up — never the whole list.
+        r = _read('src/checks/run.py')
+        self.assertIn("got = find_payments(page, ck, since, navigate=first, shot=bool(targets))", r)
+        self.assertIn("settled = {norm_check(it.get('check_number')): it for it in scan_all(table)", r)
+        self.assertIn("if not targets:   # a targeted run asks again; a full run trusts the settled answer", r)
+        e = _read('src/checks/ecw_payments.py')
+        self.assertIn('def find_payments(page, check_no, since, navigate=True, shot=True):', e)
+        self.assertIn('deadline = time.time() + (8 if before[0] else 3)', e)
+        # eCW checked per check number: the ones not looked up stay 'eCW not checked'.
+        rows, _ = reconcile([], [{'check_eft': '1', 'check_status': 'Check Cashed', 'cashed_date': '01/01/2026'},
+                                 {'check_eft': '2', 'check_status': 'Check Cashed', 'cashed_date': '01/01/2026'}],
+                            [], ecw_checked={'1'})
+        by = {x['check_number']: x['verdict'] for x in rows}
+        self.assertEqual((by['1'], by['2']), ('not in eCW', 'eCW not checked'))
+        d = _read('dashboard.py')
+        self.assertIn('eCW only — nothing is sent to Blue Shield.', d)
 
     def test_a_named_check_is_reopened_for_its_status_today(self):
         self._run({'blue_shield': True, 'check_eft': '30925163'})

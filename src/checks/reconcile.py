@@ -52,10 +52,16 @@ def _cashed(status):
 def reconcile(copies, checks, payments, ecw_checked=True):
     """Rows keyed by check number, plus a summary.
 
-    `ecw_checked` False means eCW was not consulted this run: rows then say
-    'eCW not checked' instead of 'not in eCW'.
+    `ecw_checked`: True/False for every check, or the set of check numbers
+    that were looked up in eCW this run — the rest say 'eCW not checked'
+    instead of 'not in eCW'.
     """
     by = {}
+    if isinstance(ecw_checked, (set, frozenset, list, tuple)):
+        checked_keys = {norm_check(k) for k in ecw_checked}
+        checked = lambda key: key in checked_keys
+    else:
+        checked = lambda key: bool(ecw_checked)
 
     def row(key):
         return by.setdefault(key, {
@@ -92,7 +98,7 @@ def reconcile(copies, checks, payments, ecw_checked=True):
         if r['in_ecw']:
             unposted = _d(r['ecw_unposted'])
             r['verdict'] = 'unposted' if (unposted is not None and unposted > 0) else 'posted'
-        elif not ecw_checked:
+        elif not checked(r['check_number']):
             r['verdict'] = 'eCW not checked'
         elif r['in_blue_shield'] and not cashed:
             r['verdict'] = 'not cashed'
