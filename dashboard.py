@@ -1206,12 +1206,16 @@ window.scrollToEl = function(sel){
         // One row per check number: the copy we hold, Blue Shield's word,
         // eCW's payment, and the verdict. Filters are client-side.
         window._checksFilter = window._checksFilter || 'mismatch';
-        const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Does not match'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
+        const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Needs attention'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
                                ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'],
                                ['copy only', 'Copy only'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
-        // A check "matches" when the three sources agree: a copy on file,
-        // Blue Shield cashed it, eCW has it posted, and the amounts agree.
-        const checkMismatch = r => r.verdict !== 'posted' || (r.flags || []).length > 0;
+        // "Needs attention" — the same definition as the team view: what a
+        // person must act on. Cashed but not in eCW, entered but unposted, a
+        // cashed check with no copy, amounts that disagree. Copy-only checks
+        // (other payers), not-yet-cashed ones and an unread eCW are shown in
+        // their own tiles, not counted here.
+        const checkMismatch = r => ['not in eCW', 'unposted'].includes(r.verdict)
+            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('amounts differ'));
         // The rows the last run wrote: its targets (a test of 1), else
         // whatever carries the last reconciliation's timestamp.
         const inLastRun = (r, sm) => {
@@ -1234,7 +1238,7 @@ window.scrollToEl = function(sel){
             if (!window._checksFilterChosen) window._checksFilter = (lr.targets || []).length ? 'last run' : 'mismatch';
             const mism = data.rows.filter(checkMismatch).length;
             if (meta) meta.textContent = data.rows.length
-                ? `${sm.checks} checks · ${data.rows.length - mism} match · ${mism} do not` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
+                ? `${sm.checks} checks · ${data.rows.filter(r => r.verdict === 'posted' && !(r.flags || []).length).length} posted & matching · ${mism} need attention` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
                 : '';
             const runEl = document.getElementById('checks-run');
             if (runEl) {
@@ -1249,7 +1253,7 @@ window.scrollToEl = function(sel){
             if (tiles) {
                 const tile = (label, n, f, color) => `<div class="chk-tile" onclick="setChecksFilter('${f}')" style="border-color:${window._checksFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${n ?? 0}</div><div class="chk-tile-l">${label}</div></div>`;
                 tiles.innerHTML = data.rows.length ? [
-                    tile('do not match', mism, 'mismatch', 'var(--bad)'),
+                    tile('needs attention', mism, 'mismatch', 'var(--bad)'),
                     tile('posted in eCW', sm.posted, 'posted', 'var(--success)'),
                     tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)'),
                     tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)'),

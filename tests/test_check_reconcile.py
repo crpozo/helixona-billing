@@ -562,7 +562,9 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
     def test_the_dashboard_opens_on_what_does_not_match(self):
         d = _read('dashboard.py')
         self.assertIn("window._checksFilter = window._checksFilter || 'mismatch';", d)
-        self.assertIn("const checkMismatch = r => r.verdict !== 'posted' || (r.flags || []).length > 0;", d)
+        # The same definition as the team view: what a person must act on.
+        self.assertIn("const checkMismatch = r => ['not in eCW', 'unposted'].includes(r.verdict)", d)
+        self.assertIn("['mismatch', '⚠ Needs attention']", d)
         self.assertIn('id="checks-tiles"', d)
 
     def test_the_blue_shield_side_no_longer_needs_the_eob_report(self):
