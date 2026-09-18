@@ -350,20 +350,19 @@ class _Page:
             u = unquote(url)
             if "01''2026" in u:
                 return _Resp(status=503)   # SharePoint's answer on that folder, 2026-09-17
-            if '/Files?' in u and 'Insurance Checks/2026' in u:
-                return _Resp({'value': [{'Name': 'Check 30925163.pdf', 'ServerRelativeUrl': _Page.FOLDER + '/2026/Check 30925163.pdf',
-                                          'Length': '120', 'UniqueId': 'u2', 'ETag': '"2"', 'TimeLastModified': '2026-09-15T10:00:00Z'}]})
-            if '/Files?' in u:
-                return _Resp({'value': [{'Name': 'notes.txt', 'ServerRelativeUrl': _Page.FOLDER + '/notes.txt', 'Length': '3', 'UniqueId': 'u0', 'ETag': '"0"'},
+            # One expanded call per folder: Files and Folders together.
+            if '$expand=Files,Folders' in u and 'Insurance Checks/2026' in u:
+                return _Resp({'Files': [{'Name': 'Check 30925163.pdf', 'ServerRelativeUrl': _Page.FOLDER + '/2026/Check 30925163.pdf',
+                                         'Length': '120', 'UniqueId': 'u2', 'ETag': '"2"', 'TimeLastModified': '2026-09-15T10:00:00Z'}],
+                              'Folders': []})
+            if '$expand=Files,Folders' in u:
+                return _Resp({'Files': [{'Name': 'notes.txt', 'ServerRelativeUrl': _Page.FOLDER + '/notes.txt', 'Length': '3', 'UniqueId': 'u0', 'ETag': '"0"'},
                                         {'Name': 'Check 4022519.jpg', 'ServerRelativeUrl': _Page.FOLDER + '/Check 4022519.jpg',
-                                         'Length': '99', 'UniqueId': 'u1', 'ETag': '"1"', 'TimeLastModified': '2026-09-16T10:00:00Z'}]})
-            if '/Folders?' in u and 'Insurance Checks/2026' in u:
-                return _Resp({'value': []})
-            if '/Folders?' in u:
-                return _Resp({'value': [{'Name': 'Forms', 'ServerRelativeUrl': _Page.FOLDER + '/Forms'},
-                                        {'Name': 'Insurance Check Tracker', 'ServerRelativeUrl': _Page.FOLDER + '/Insurance Check Tracker'},
-                                        {'Name': '2026', 'ServerRelativeUrl': _Page.FOLDER + '/2026'},
-                                        {'Name': "01'2026", 'ServerRelativeUrl': _Page.FOLDER + "/01'2026"}]})
+                                         'Length': '99', 'UniqueId': 'u1', 'ETag': '"1"', 'TimeLastModified': '2026-09-16T10:00:00Z'}],
+                              'Folders': [{'Name': 'Forms', 'ServerRelativeUrl': _Page.FOLDER + '/Forms'},
+                                          {'Name': 'Insurance Check Tracker', 'ServerRelativeUrl': _Page.FOLDER + '/Insurance Check Tracker'},
+                                          {'Name': '2026', 'ServerRelativeUrl': _Page.FOLDER + '/2026'},
+                                          {'Name': "01'2026", 'ServerRelativeUrl': _Page.FOLDER + "/01'2026"}]})
             if u.endswith('Check 4022519.jpg'):
                 return _Resp(body=b'JPEGBYTES')
             return _Resp(status=404)
@@ -395,7 +394,9 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertFalse(any('Insurance%20Check%20Tracker' in u for u in _Page.got))
         self.assertEqual(files[0]['etag'], '"1"')
         self.assertTrue(files[0]['download_url'].startswith('https://helixona.sharepoint.com/sites/'))
-        self.assertFalse(any('Forms' in u and '/Files?' in u for u in _Page.got))
+        self.assertFalse(any('Forms' in u and '$expand' in u for u in _Page.got))
+        # One round trip per folder, not two.
+        self.assertEqual(sum('$expand=Files,Folders' in u for u in _Page.got if 'Insurance%20Checks%2F2026' in u or u.endswith("Insurance%20Checks'&$select=Files/Name,Files/ServerRelativeUrl,Files/TimeLastModified,Files/Length,Files/UniqueId,Files/ETag,Folders/Name,Folders/ServerRelativeUrl&$expand=Files,Folders&$top=5000")), 2)
 
     def test_posted_2025_is_left_out_and_the_folder_is_the_teams_word(self):
         from src.checks.sharepoint_browser import SKIP_FOLDERS, _skipped
@@ -507,6 +508,15 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
             self.assertIn(sel, c)
         self.assertIn('page.mouse.wheel(0, 20000)', c)
         self.assertIn('def _js_next_number():', c)
+
+    def test_the_walk_waits_for_the_page_not_for_the_clock(self):
+        c = _read('src/eob/capture.py')
+        self.assertIn('def _wait_for(page, ready, timeout=15.0, poll=0.2):', c)
+        self.assertNotIn("page.wait_for_load_state('networkidle', timeout=15000)", c)
+        self.assertNotIn("page.wait_for_load_state('networkidle', timeout=20000)", c)
+        self.assertNotIn('time.sleep(6)', c)
+        self.assertNotIn('time.sleep(3)', c)
+        self.assertNotIn("page.wait_for_load_state('networkidle', timeout=20000)", _read('src/blueshield/session.py'))
 
     def test_the_capture_hands_back_the_checks_it_opened(self):
         c = _read('src/eob/capture.py')

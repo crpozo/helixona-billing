@@ -79,6 +79,36 @@ TABLE_JS = r"""(() => {
 })"""
 
 
+def _wait_for(page, ready, timeout=15.0, poll=0.2):
+    """Poll `ready()` until it is true or `timeout` seconds pass. Every fixed
+    sleep in the walk used to be the worst case; the portal usually answers
+    in well under a second, and a run over hundreds of checks paid the
+    difference each time (2026-09-18: 18 s a check)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if ready():
+                return True
+        except Exception:
+            pass
+        time.sleep(poll)
+    return False
+
+
+def _row_count(page):
+    try:
+        return page.evaluate("() => document.querySelectorAll('table tbody tr, mat-row, [role=\"row\"]').length")
+    except Exception:
+        return 0
+
+
+def _on_details(page):
+    try:
+        return 'Check/EFT details' in page.inner_text('body')
+    except Exception:
+        return False
+
+
 def _shot(page, name):
     path = os.path.join(DIAG_DIR, f'eob_{name}.png')
     try:
@@ -190,7 +220,8 @@ def _apply_filters(page, since):
     except Exception:
         page.click('button[type="submit"]', timeout=5000)
     logger.info("  ✅ Search")
-    time.sleep(6)
+    if not _wait_for(page, lambda: _row_count(page) > 0, timeout=20):
+        time.sleep(1.5)  # a "no results" answer has no rows; give the message a moment
 
 
 def _read_table(page):
@@ -227,9 +258,10 @@ def _show_more(page):
     next control at the bottom of the list. False when there is no more."""
     try:
         page.mouse.wheel(0, 20000)
-        time.sleep(0.6)
+        time.sleep(0.2)
     except Exception:
         pass
+    before = (_row_count(page), _first_check_on_screen(page))
     for sel in NEXT_PAGE_SELECTORS:
         try:
             btn = page.query_selector(sel)
@@ -243,7 +275,8 @@ def _show_more(page):
         btn.click()
         if 'Show more' not in sel:
             logger.info(f"  ⏭ next page via {sel}")
-        time.sleep(3)
+        _wait_for(page, lambda: (_row_count(page), _first_check_on_screen(page)) != before, timeout=8)
+        time.sleep(0.3)
         return True
     # A numbered pager with no next arrow: the page after the current one.
     try:
@@ -252,9 +285,17 @@ def _show_more(page):
         clicked = False
     if clicked:
         logger.info(f"  ⏭ next page via page number {clicked}")
-        time.sleep(3)
+        _wait_for(page, lambda: (_row_count(page), _first_check_on_screen(page)) != before, timeout=8)
+        time.sleep(0.3)
         return True
     return False
+
+
+def _first_check_on_screen(page):
+    try:
+        return page.evaluate("() => { const a = document.querySelector('table tbody tr a, mat-row a'); return a ? a.textContent.trim() : ''; }")
+    except Exception:
+        return ''
 
 
 def _js_next_number():
@@ -286,11 +327,8 @@ def _back_to_results(page):
     else:
         page.go_back(wait_until='domcontentloaded', timeout=30000)
         logger.info("  ↩ browser back to the results")
-    try:
-        page.wait_for_load_state('networkidle', timeout=15000)
-    except Exception:
-        pass
-    time.sleep(2)
+    _wait_for(page, lambda: not _on_details(page) and _row_count(page) > 0, timeout=15)
+    time.sleep(0.3)
 
 
 # --------------------------------------------------------- per-check work
@@ -399,11 +437,10 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
     # /claims/checkeftDetails (the portal's markup, 2026-09-15) and the app
     # decides which check to show from the click itself.
     _open_check_link(page, check)
-    try:
-        page.wait_for_load_state('networkidle', timeout=15000)
-    except Exception:
-        pass
-    time.sleep(2)
+    # The details page is up when its heading and the transaction summary
+    # are on screen; the summary's amount is what says the data has loaded.
+    _wait_for(page, lambda: _on_details(page) and bool(parse_check_summary(page.inner_text('body')).get('check_amount')), timeout=15)
+    time.sleep(0.3)
 
     body = page.inner_text('body')
     summary = parse_check_summary(body)
@@ -562,11 +599,8 @@ def run_eob_capture(page, aws_client, body):
         logger.error("❌ Blue Shield login failed — nothing captured")
         return {'ok': False, 'reason': 'login'}
     page.goto(CLAIM_STATUS_URL, wait_until='domcontentloaded', timeout=60000)
-    try:
-        page.wait_for_load_state('networkidle', timeout=20000)
-    except Exception:
-        pass
-    time.sleep(2)
+    _wait_for(page, lambda: page.query_selector('mat-select, [role="combobox"]') is not None, timeout=20)
+    time.sleep(0.5)
 
     _apply_filters(page, since)
 

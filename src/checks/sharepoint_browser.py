@@ -132,10 +132,14 @@ def open_folder(page, link=None, creds=None, wait_for_person=240):
 
 def _api(page, site, folder, what, select, tries=3):
     """GET /_api/web/GetFolderByServerRelativePath(decodedurl=@f)/<what>
-    with the browser's cookies. `what` is 'Files' or 'Folders'. A 5xx is
-    retried: SharePoint answered 503 on a folder named "01'2026" once."""
-    url = (f"{site}/_api/web/GetFolderByServerRelativePath(decodedurl=@f)/{what}"
-           f"?@f='{quote(folder.replace(chr(39), chr(39) * 2), safe='')}'&$select={select}&$top=5000")
+    with the browser's cookies. `what` is 'Files' or 'Folders' — or '' for
+    the folder itself with both expanded, one round trip instead of two (the
+    819-file listing took a minute at two calls a folder). A 5xx is retried:
+    SharePoint answered 503 on a folder named "01'2026" once."""
+    what_path = f'/{what}' if what else ''
+    expand = '' if what else '&$expand=Files,Folders'
+    url = (f"{site}/_api/web/GetFolderByServerRelativePath(decodedurl=@f){what_path}"
+           f"?@f='{quote(folder.replace(chr(39), chr(39) * 2), safe='')}'&$select={select}{expand}&$top=5000")
     last = None
     for attempt in range(tries):
         resp = page.request.get(url, headers=JSON_HEADERS)
@@ -166,7 +170,11 @@ def list_folder(page, site, folder, skip=SKIP_FOLDERS):
 
     def walk(rel_folder, rel):
         try:
-            files = _api(page, site, rel_folder, 'Files', 'Name,ServerRelativeUrl,TimeLastModified,Length,UniqueId,ETag')
+            both = _api(page, site, rel_folder, '',
+                        'Files/Name,Files/ServerRelativeUrl,Files/TimeLastModified,Files/Length,Files/UniqueId,Files/ETag,'
+                        'Folders/Name,Folders/ServerRelativeUrl')
+            files = {'value': both.get('Files', [])}
+            subs = {'value': both.get('Folders', [])}
         except Exception as e:
             if not rel:
                 raise
@@ -186,12 +194,6 @@ def list_folder(page, site, folder, skip=SKIP_FOLDERS):
                 'web_url': host + quote(it.get('ServerRelativeUrl', '')),
                 'download_url': host + quote(it.get('ServerRelativeUrl', '')),
             })
-        try:
-            subs = _api(page, site, rel_folder, 'Folders', 'Name,ServerRelativeUrl')
-        except Exception as e:
-            skipped.append(rel + '/*')
-            logger.warning(f"  ⚠️ subfolders of {rel or '/'!r} could not be listed ({str(e)[:80]}) — skipped this run")
-            return
         for sf in subs.get('value', []):
             name = sf.get('Name', '')
             if not name:

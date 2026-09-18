@@ -48,11 +48,19 @@ def login_to_provider_portal(page, aws_client) -> bool:
     logger.info(f"Navigating to: {target_url}")
     page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
 
-    try:
-        page.wait_for_load_state('networkidle', timeout=20000)
-    except Exception:
-        pass
-    time.sleep(1)
+    # Ready when the login form or the portal itself is on screen — not
+    # networkidle, which the portal's long-polling kept from ever arriving
+    # (20 s spent on every run even with the session already open).
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            if page.query_selector('input[type="password"], input[name*="user" i], mat-select, [role="combobox"]') is not None \
+                    or 'claimStatus' in page.url and 'login' not in page.url.lower() and page.query_selector('table, mat-select'):
+                break
+        except Exception:
+            pass
+        time.sleep(0.3)
+    time.sleep(0.5)
 
     # Dismiss cookie consent
     try:
