@@ -544,11 +544,11 @@ tbody tr:last-child td{border-bottom:none}
           <table>
             <thead>
               <tr>
-                <th>Check #</th><th>Copy</th><th class="num">Copy $</th><th class="num">Blue Shield $</th><th>BS status</th>
+                <th>Check #</th><th>SharePoint</th><th>Folder · file</th><th class="num">Copy $</th><th class="num">Blue Shield $</th><th>BS status</th>
                 <th>Cashed</th><th>eCW</th><th class="num">Posted</th><th class="num">Unposted</th><th>Verdict</th><th>Flags</th>
               </tr>
             </thead>
-            <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
+            <tbody id="checks-body"><tr><td colspan="12" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -586,7 +586,7 @@ tbody tr:last-child td{border-bottom:none}
                 <th>HCFA</th><th>IV Note</th><th>Progress Note Date</th><th>Progress Note</th><th>Submission</th><th>Stage</th>
               </tr>
             </thead>
-            <tbody id="claims-body"><tr><td colspan="11" class="empty-state">No claims yet. Send a task to begin.</td></tr></tbody>
+            <tbody id="claims-body"><tr><td colspan="12" class="empty-state">No claims yet. Send a task to begin.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1307,14 +1307,15 @@ window.scrollToEl = function(sel){
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
                 : r.verdict === f);
             if (!rows.length) {
-                body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.'}</td></tr>`;
+                body.innerHTML = `<tr><td colspan="12" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.'}</td></tr>`;
                 return;
             }
             const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
             body.innerHTML = rows.map(r => `
                 <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
                   <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
-                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</a>` : `<span title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</span>`) : '<span style="color:var(--bad)">none</span>'}</td>
+                  <td>${r.has_copy ? '<span style="color:var(--success);font-weight:600">✓ yes</span>' : '<span style="color:var(--bad);font-weight:600">✗ no</span>'}</td>
+                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`) + (r.copy_file ? `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file).split('/').pop())}</div>` : '') : '<span style="color:var(--text-muted)">—</span>'}</td>
                   <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
                   <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
                   <td>${esc(r.bs_status || (r.in_blue_shield ? '' : 'not in results'))}</td>
@@ -1606,8 +1607,8 @@ window.scrollToEl = function(sel){
             const searching = claims.length !== beforeSearch;
             if (!claims.length) {
                 body.innerHTML = searching
-                    ? '<tr><td colspan="11" class="empty-state">No claims match the search.</td></tr>'
-                    : '<tr><td colspan="11" class="empty-state">No claims yet. Send a task to begin.</td></tr>';
+                    ? '<tr><td colspan="12" class="empty-state">No claims match the search.</td></tr>'
+                    : '<tr><td colspan="12" class="empty-state">No claims yet. Send a task to begin.</td></tr>';
                 if (meta) meta.textContent = searching ? `0 of ${beforeSearch} claims match` : '';
                 return;
             }

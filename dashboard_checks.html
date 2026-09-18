@@ -167,10 +167,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
   <div class="tbl">
     <table>
       <thead><tr>
-        <th>Check #</th><th>Where the copy is</th><th class="num">Copy $</th><th class="num">Blue Shield $</th>
+        <th>Check #</th><th>SharePoint</th><th>Folder · file</th><th class="num">Copy $</th><th class="num">Blue Shield $</th>
         <th>Blue Shield</th><th>eCW</th><th>Verdict</th><th>What to do</th>
       </tr></thead>
-      <tbody id="body"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+      <tbody id="body"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
     </table>
     <button class="more" id="more" hidden onclick="showAll()">Show all rows</button>
   </div>
@@ -297,16 +297,19 @@ function render() {
 
   const body = document.getElementById('body');
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="8" class="empty">${d.rows.length ? 'No checks under this filter.' : 'No reconciliation has run yet.'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" class="empty">${d.rows.length ? 'No checks under this filter.' : 'No reconciliation has run yet.'}</td></tr>`;
     document.getElementById('more').hidden = true;
     return;
   }
   const shown = rows.slice(0, LIMIT);
   body.innerHTML = shown.map(r => {
     const c = classify(r);
+    const sp = r.has_copy ? `<span class="pill good">✓ Yes</span>` : `<span class="pill critical">✗ No</span>`;
+    const fileName = r.copy_file ? String(r.copy_file).split('/').pop() : '';
     const copy = r.has_copy
-      ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" rel="noopener" title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</a>` : `<span title="${esc(r.copy_file)}">🖼 ${esc(r.copy_folder || 'copy')}</span>`)
-      : `<span class="muted">no copy</span>`;
+      ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" rel="noopener" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`)
+        + (fileName ? `<div class="small muted">${esc(fileName)}</div>` : '')
+      : `<span class="muted">—</span>`;
     const bs = r.in_blue_shield
       ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div class="small">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div class="small">issued ${esc(r.bs_date)}</div>` : ''}`
       : `<span class="muted">other payer</span>`;
@@ -317,6 +320,7 @@ function render() {
       : r.verdict === 'eCW not checked' ? `<span class="pill info">not checked</span>` : `<span class="muted">not found</span>`;
     return `<tr>
       <td class="mono">${esc(r.check_number)}</td>
+      <td>${sp}</td>
       <td>${copy}</td>
       <td class="num">${money(r.copy_amount)}</td>
       <td class="num">${money(r.bs_amount)}</td>
