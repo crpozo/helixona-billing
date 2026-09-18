@@ -1,4 +1,4 @@
-"""What gets typed into eCW for a cheque — the values, not the clicking.
+"""What gets typed into eCW for a check — the values, not the clicking.
 
 Keeping this apart from the browser work means the numbers that land in the
 ledger are decided by tested code, and a plan can be shown to a person before
@@ -6,8 +6,8 @@ anything is entered. docs/ecw_posting.md records where each rule comes from.
 
 Two things here are easy to get wrong and cost money:
 
-* the payment's amount is the EOB's APPROVE-TO-PAY, not the cheque's amount.
-  Blue Shield's cheque includes interest ($262.69 approved, $0.98 interest,
+* the payment's amount is the EOB's APPROVE-TO-PAY, not the check's amount.
+  Blue Shield's check includes interest ($262.69 approved, $0.98 interest,
   $263.67 paid), and interest is not a payment on any claim.
 * eCW warns when Deduct + CoIns + CoPay + Paid + Adjust + Withheld exceeds the
   billed fee. Adjust is Billed − Allowed, so that happens exactly when
@@ -29,7 +29,7 @@ def _d(v):
 
 
 def payment_header(eob, check):
-    """The `Payments` popup for one cheque: {field label: value or None}.
+    """The `Payments` popup for one check: {field label: value or None}.
 
     `eob` is the parsed report (src/eob/eob_pdf.py), `check` the portal's
     Check/EFT summary (check_eft, check_date, cashed_date). Fields the operator
@@ -47,13 +47,13 @@ def payment_header(eob, check):
         problems.append('Blue Shield paid the member, not the clinic — there is no payment to enter')
     check_no = str(check.get('check_eft') or '').strip()
     if not check_no:
-        problems.append('the cheque has no Check/EFT number')
+        problems.append('the check has no Check/EFT number')
     check_date = str(check.get('check_date') or '').strip()
     if not check_date:
-        problems.append('the cheque has no Check/EFT date')
+        problems.append('the check has no Check/EFT date')
     deposit = str(check.get('cashed_date') or '').strip()
     if not deposit:
-        problems.append('the cheque has no cashed date for the deposit date')
+        problems.append('the check has no cashed date for the deposit date')
 
     fields = {
         'Facility': None,                     # left empty
@@ -63,7 +63,7 @@ def payment_header(eob, check):
         'Amount $': f'{amount:.2f}' if amount is not None else '',
         'Received Date': None,                # left at today
         'Check Date': check_date,
-        # The operator puts the cheque's date in both boxes, not the EOB's
+        # The operator puts the check's date in both boxes, not the EOB's
         # receipt date. docs/ecw_posting.md: confirm this is policy.
         'EOB Date': check_date,
         'Deposit Date': deposit,

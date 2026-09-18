@@ -20,7 +20,7 @@ def _read(rel):
 class TheDryRunStopsBeforeTheSave(unittest.TestCase):
     def setUp(self):
         self.p = _read('src/eob/post.py')
-        self.body = self.p[self.p.index('def post_cheque('):]
+        self.body = self.p[self.p.index('def post_check('):]
 
     def test_post_false_returns_before_payment_advisory_is_clicked(self):
         i = self.body.index("if not post:")

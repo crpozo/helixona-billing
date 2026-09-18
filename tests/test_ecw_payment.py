@@ -1,6 +1,6 @@
 """The values that go into eCW, taken from the two operator recordings.
 
-Cheque 30979207 pays $263.67, of which $0.98 is interest; the payment entered
+Check 30979207 pays $263.67, of which $0.98 is interest; the payment entered
 in eCW is the EOB's $262.69 approve-to-pay. See docs/ecw_posting.md.
 """
 import unittest
@@ -21,12 +21,12 @@ class ThePaymentHeader(unittest.TestCase):
         self.assertEqual(fields['Check Date'], '05/05/2026')
         self.assertEqual(fields['Deposit Date'], '05/14/2026')
 
-    def test_the_amount_is_what_the_eob_approves_not_what_the_cheque_pays(self):
+    def test_the_amount_is_what_the_eob_approves_not_what_the_check_pays(self):
         fields, _ = payment_header(EOB, CHECK)
         self.assertEqual(fields['Amount $'], '262.69')
         self.assertNotEqual(fields['Amount $'], EOB['check_amount'])
 
-    def test_the_eob_date_is_the_cheque_date(self):
+    def test_the_eob_date_is_the_check_date(self):
         fields, _ = payment_header(EOB, CHECK)
         self.assertEqual(fields['EOB Date'], fields['Check Date'])
 
@@ -35,11 +35,11 @@ class ThePaymentHeader(unittest.TestCase):
         for f in ('Facility', 'Batch No.', 'Received Date', 'Notes'):
             self.assertIsNone(fields[f], f)
 
-    def test_a_cheque_paid_to_the_member_has_nothing_to_enter(self):
+    def test_a_check_paid_to_the_member_has_nothing_to_enter(self):
         _, problems = payment_header({**EOB, 'payment_issued_to': 'the member'}, CHECK)
         self.assertTrue(any('paid the member' in p for p in problems), problems)
 
-    def test_a_cheque_missing_its_dates_is_refused(self):
+    def test_a_check_missing_its_dates_is_refused(self):
         _, problems = payment_header(EOB, {'check_eft': '30979207'})
         self.assertEqual(len(problems), 2, problems)
 

@@ -2,12 +2,12 @@
 column names.
 
 Two ways in. `list_payments`: no Check # filter, every payment since a
-date — one lookup instead of one per cheque, since a thousand cheques
+date — one lookup instead of one per check, since a thousand checks
 against eCW is a thousand round trips while the Payments list since
 07/01/2025 is a few pages. `find_payments`: the operator's own step for one
-cheque — Check # = the number, Lookup — used when a run is about one or a
-few cheques (the test of 1). The grid's columns (docs/ecw_posting.md:
-PAYMENT ID · AMOUNT · POSTED · UNPOSTED, plus the cheque number and dates)
+check — Check # = the number, Lookup — used when a run is about one or a
+few checks (the test of 1). The grid's columns (docs/ecw_posting.md:
+PAYMENT ID · AMOUNT · POSTED · UNPOSTED, plus the check number and dates)
 are matched by name, and a run that finds none of them says so with a
 screenshot.
 """
@@ -133,7 +133,7 @@ def describe_screen(page, why):
 
 def _read_grid(page):
     """(headers, rows, recognised) of the payments grid. Recognised = the
-    headers name an amount and a cheque/posted column; then an empty row
+    headers name an amount and a check/posted column; then an empty row
     list is a real answer (the filter matched nothing). Otherwise the biggest
     table on screen is returned with recognised=False and its headers logged."""
     best = None
@@ -176,7 +176,7 @@ def _columns(hdrs):
 
 
 def rows_to_payments(hdrs, rows, assume_check=''):
-    """Grid rows -> payment dicts, by header name. Rows without a cheque
+    """Grid rows -> payment dicts, by header name. Rows without a check
     number or an amount are not payments (totals, spacers).
 
     `assume_check`: the grid was filtered by that Check # and may not show
@@ -214,7 +214,7 @@ def list_payments(page, since):
     not be read (a screenshot says what was on it)."""
     if not open_payments(page):
         return None
-    logger.info(f"🔎 Payments since {since}, every cheque")
+    logger.info(f"🔎 Payments since {since}, every check")
     _set_dates(page, since)
     _set_field(page, CHECK_RX, '', what='Check # (blank)')
     _click_text(page, LOOKUP, timeout=5, what='lookup', after_target=True)
@@ -258,7 +258,7 @@ ROWS_WITH_JS = r"""(ck) => {
 
 
 def _rows_with(page, check_no):
-    """Every grid row (any frame, any layout) with a cell that is the cheque number."""
+    """Every grid row (any frame, any layout) with a cell that is the check number."""
     for frm in page.frames:
         try:
             rows = frm.evaluate(_js(ROWS_WITH_JS), str(check_no))
@@ -270,7 +270,7 @@ def _rows_with(page, check_no):
 
 
 def find_payments(page, check_no, since, navigate=True):
-    """The payments eCW holds under one cheque number — the operator's own
+    """The payments eCW holds under one check number — the operator's own
     step: Billing → Payments, Rcvd Pmt Dts from `since`, Check # = the
     number, Lookup. [] when the grid comes back empty (not in eCW), None
     when the screen could not be worked (a screenshot says what was on it).

@@ -1,4 +1,4 @@
-"""A cheque's posting plan, and the duplicate-report rule.
+"""A check's posting plan, and the duplicate-report rule.
 
 A plan is what the posting step will type into eCW. It must refuse — with a
 reason — whenever the money does not add up or a line cannot be placed,
@@ -7,7 +7,7 @@ because a wrong posting puts dollars on the wrong line of the ledger.
 import os
 import unittest
 
-from src.eob.plan import plan_cheque, plan_from_item
+from src.eob.plan import plan_check, plan_from_item
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -28,23 +28,23 @@ def EOB(claims, approve):
     return {'approve_to_pay': approve, 'check_amount': approve, 'interest': '0.00', 'claims': claims}
 
 
-class AChequeIsReadyOnlyWhenEveryClaimIs(unittest.TestCase):
-    def test_a_clean_cheque(self):
+class ACheckIsReadyOnlyWhenEveryClaimIs(unittest.TestCase):
+    def test_a_clean_check(self):
         eob = EOB([{'patient_account_number': '2627', 'bsc_claim_number': '260703051601',
                     'claim_paid': '150.00',
                     'lines': [L('96365', '325.00', '100.00'), L('J3490', '40.00', '50.00')]}], '150.00')
-        p = plan_cheque(eob, ECW.get, claim_charges={'2627': '940.00'})
+        p = plan_check(eob, ECW.get, claim_charges={'2627': '940.00'})
         self.assertEqual(p['status'], 'ready', p)
         claim = p['claims'][0]
         self.assertEqual(claim['claim_id'], '2627')
         self.assertEqual(len(claim['rows']), 2)
         self.assertEqual(claim['unposted_ecw'], [1])          # 96375 not on this EOB
 
-    def test_one_bad_claim_holds_the_whole_cheque(self):
+    def test_one_bad_claim_holds_the_whole_check(self):
         eob = EOB([{'patient_account_number': '11', 'claim_paid': '50.00', 'lines': [L('99213', '197.00', '50.00')]},
                    {'patient_account_number': '404', 'claim_paid': '10.00', 'lines': [L('96365', '1.00', '10.00')]}],
                   '60.00')
-        p = plan_cheque(eob, ECW.get)
+        p = plan_check(eob, ECW.get)
         self.assertEqual(p['status'], 'needs_review')
         self.assertEqual(p['claims'][0]['status'], 'ready')
         self.assertIn('no HCFA lines on file for claim 404', p['claims'][1]['reasons'])
@@ -54,29 +54,29 @@ class TheMoneyIsReconciled(unittest.TestCase):
     def test_claims_must_add_up_to_approve_to_pay(self):
         eob = EOB([{'patient_account_number': '11', 'claim_paid': '50.00',
                     'lines': [L('99213', '197.00', '50.00')]}], '75.00')
-        p = plan_cheque(eob, ECW.get)
+        p = plan_check(eob, ECW.get)
         self.assertEqual(p['status'], 'needs_review')
         self.assertIn('claims paid add up to 50.00, the EOB approves 75.00', p['reasons'])
 
     def test_a_missed_hcfa_line_is_caught_by_the_charges_on_record(self):
         eob = EOB([{'patient_account_number': '11', 'claim_paid': '50.00',
                     'lines': [L('99213', '197.00', '50.00')]}], '50.00')
-        p = plan_cheque(eob, ECW.get, claim_charges={'11': '394.00'})
+        p = plan_check(eob, ECW.get, claim_charges={'11': '394.00'})
         self.assertEqual(p['status'], 'needs_review')
         self.assertIn('a line was not read', p['claims'][0]['reasons'][0])
 
     def test_totals_are_reported(self):
         eob = EOB([{'patient_account_number': '11', 'claim_paid': '50.00',
                     'lines': [L('99213', '197.00', '50.00')]}], '50.00')
-        t = plan_cheque(eob, ECW.get)['totals']
+        t = plan_check(eob, ECW.get)['totals']
         self.assertEqual((t['claims_paid'], t['approve_to_pay']), ('50.00', '50.00'))
 
     def test_an_eob_with_no_claims_is_not_ready(self):
-        self.assertEqual(plan_cheque(EOB([], '0.00'), ECW.get)['status'], 'needs_review')
+        self.assertEqual(plan_check(EOB([], '0.00'), ECW.get)['status'], 'needs_review')
 
     def test_a_claim_without_an_account_number_is_not_guessed(self):
         eob = EOB([{'patient_account_number': '', 'claim_paid': '5.00', 'lines': []}], '5.00')
-        p = plan_cheque(eob, ECW.get)
+        p = plan_check(eob, ECW.get)
         self.assertIn('no patient account number', p['claims'][0]['reasons'][0])
 
 
@@ -105,7 +105,7 @@ class IdenticalReportsAreStoredOnce(unittest.TestCase):
         self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'", self._capture())
 
 
-class AStoredChequeIsPlannedFromItsReport(unittest.TestCase):
+class AStoredCheckIsPlannedFromItsReport(unittest.TestCase):
     CLAIMS = {'11': {'claim_id': '11', 'hcfa_s3_path': 's3://b/hcfa/11.pdf', 'charges': '197.00'}}
 
     def _item(self, **kw):
@@ -134,7 +134,7 @@ class AStoredChequeIsPlannedFromItsReport(unittest.TestCase):
         self.assertEqual(p['status'], 'ready')
         self.assertIn('could not be read by position', p['notes'][0])
 
-    def test_a_member_paid_cheque_stays_held_from_storage(self):
+    def test_a_member_paid_check_stays_held_from_storage(self):
         p = plan_from_item(self._item(paid_to_member=True), self.CLAIMS.get, lambda path: ECW['11'])
         self.assertTrue(any('paid the member' in r for r in p['reasons']), p['reasons'])
 
@@ -152,8 +152,8 @@ class AStoredChequeIsPlannedFromItsReport(unittest.TestCase):
 
 
 class ThePlanIsNoLongerOnTheDashboard(unittest.TestCase):
-    """2026-09-17: the bot compares cheques and does not enter payments, so
-    the posting plan (what to type into eCW per cheque) left the dashboard.
+    """2026-09-17: the bot compares checks and does not enter payments, so
+    the posting plan (what to type into eCW per check) left the dashboard.
     The planner itself stays a library, pinned above."""
     def test_the_dashboard_neither_plans_nor_posts(self):
         with open(os.path.join(REPO, 'dashboard.py'), encoding='utf-8') as fh:

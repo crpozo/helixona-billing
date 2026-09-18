@@ -65,7 +65,7 @@ class ResultsAreReadByHeaderName(unittest.TestCase):
         self.assertEqual(r['check_eft'], '30979207')
         self.assertEqual(r['amount_paid'], '$0.00')
 
-    def test_the_cheque_cell_carries_a_label_with_the_number(self):
+    def test_the_check_cell_carries_a_label_with_the_number(self):
         # The screen, 2026-09-15: '30912971 Check/EFT information'. The link
         # text is the same. The number is what we keep.
         row = ['FINALIZED 09/14/2026', '260308710901 (adjusted)', 'Medical', '01/02/2026–01/02/2026',
@@ -85,7 +85,7 @@ class ResultsAreReadByHeaderName(unittest.TestCase):
 
     def test_an_unnamed_column_does_not_shift_the_values(self):
         # A select-all checkbox column has a cell in every row and no header
-        # text. 2026-09-15: fifty rows read, not one cheque number among them.
+        # text. 2026-09-15: fifty rows read, not one check number among them.
         r = rows_by_header(FINALIZED_HEADERS, [[''] + FINALIZED_ROW])[0]
         self.assertEqual(r['check_eft'], '30979207')
         self.assertEqual(r['amount_paid'], '$263.67')
@@ -100,8 +100,8 @@ class ResultsAreReadByHeaderName(unittest.TestCase):
                'GRAY', '909681878', 'HELIXONA', '$1.00', '$1.00', '$0.00', '30979207']
         self.assertEqual(rows_by_header(FINALIZED_HEADERS, [row]), [])
 
-    def test_the_cheque_link_is_the_fallback_for_the_cheque_number(self):
-        # A layout whose cheque column is named something new: the number is
+    def test_the_check_link_is_the_fallback_for_the_check_number(self):
+        # A layout whose check column is named something new: the number is
         # still the row's one numeric link that is not the claim number.
         hdrs = [h if h != 'Check/EFT number' else 'Payment reference' for h in FINALIZED_HEADERS]
         raw = [{'cells': FINALIZED_ROW,
@@ -315,7 +315,7 @@ class OneLoginSharedByEveryBot(unittest.TestCase):
 
 
 class TheCaptureIsSafeToRepeat(unittest.TestCase):
-    def test_a_cheque_already_on_file_with_its_pdf_is_skipped(self):
+    def test_a_check_already_on_file_with_its_pdf_is_skipped(self):
         c = _read('src/eob/capture.py')
         self.assertIn("done.get(ck) and not force", c)
 
@@ -334,9 +334,9 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn("'0.01'", c)
         self.assertIn("DEFAULT_SINCE = '07/01/2025'", c)
 
-    def test_the_next_cheque_is_opened_from_the_results_not_the_details_page(self):
+    def test_the_next_check_is_opened_from_the_results_not_the_details_page(self):
         # Export rows carry no href; after one details page the results are
-        # gone, and clicking the next link there timed out on every cheque but
+        # gone, and clicking the next link there timed out on every check but
         # the first (2026-09-15).
         c = _read('src/eob/capture.py')
         self.assertIn('def _open_check_link(page, check):', c)
@@ -349,7 +349,7 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
 
     def test_results_are_walked_on_screen_page_by_page_not_exported(self):
         # The operator's call (2026-09-15): the export did not line up with the
-        # screen. Cheques are read off the results as shown, "Show more claims"
+        # screen. Checks are read off the results as shown, "Show more claims"
         # at a time, and each one is saved as soon as it is captured.
         c = _read('src/eob/capture.py')
         self.assertNotIn('_try_export', c)
@@ -368,7 +368,7 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
         self.assertIn("querySelectorAll('table, mat-table, [role=\"table\"], [role=\"grid\"]')", js)
         self.assertIn("querySelectorAll('a, button')", js)
 
-    def test_a_layout_without_cheque_numbers_is_reported_not_paged(self):
+    def test_a_layout_without_check_numbers_is_reported_not_paged(self):
         c = _read('src/eob/capture.py')
         run = c[c.index('def run_eob_capture('):]
         self.assertIn("logger.info(f\"  columns: {hdrs}\")", run)
@@ -377,13 +377,13 @@ class TheCaptureIsSafeToRepeat(unittest.TestCase):
 
     def test_the_eob_report_is_optional_and_stored_as_a_pdf_when_asked(self):
         # The dashboard no longer links the report (the reconciliation is
-        # about cheques); when download_eob:true stores one, it is a PDF.
+        # about checks); when download_eob:true stores one, it is a PDF.
         self.assertIn("if download_eob else ''", _read('src/eob/capture.py'))
         self.assertIn('mimetypes', _read('src/aws/clients.py'))
 
-    def test_the_cheque_is_always_opened_by_clicking_its_link(self):
-        # Every cheque's href is the same /claims/checkeftDetails; the app
-        # picks the cheque from the click. Navigating to the href shows nothing.
+    def test_the_check_is_always_opened_by_clicking_its_link(self):
+        # Every check's href is the same /claims/checkeftDetails; the app
+        # picks the check from the click. Navigating to the href shows nothing.
         c = _read('src/eob/capture.py')
         body = c[c.index('def _capture_check('):c.index('def run_eob_capture(')]
         self.assertIn('_open_check_link(page, check)', body)
@@ -430,14 +430,14 @@ class RemittanceHasItsPlaceOnTheDashboard(unittest.TestCase):
     def test_the_headline_changes_meaning_on_the_eob_tab(self):
         html = self._dash().DASHBOARD_HTML
         self.assertIn('id="hero-denom-label"', html)
-        self.assertIn("'cheques compared: copy · Blue Shield · eCW'", html)
+        self.assertIn("'checks compared: copy · Blue Shield · eCW'", html)
 
     def test_the_novnc_map_comes_from_the_server(self):
         html = self._dash().DASHBOARD_HTML
         self.assertIn('const BOT_NOVNC = {{ bot_novnc | tojson }}', html)
         self.assertNotIn('const BOT_NOVNC = {submissions: 6080', html)
 
-    def test_the_cheque_endpoints_exist_and_the_eob_ones_are_gone(self):
+    def test_the_check_endpoints_exist_and_the_eob_ones_are_gone(self):
         src = _read('dashboard.py')
         self.assertIn("@app.route('/api/checks')", src)
         self.assertIn("@app.route('/api/checks.csv')", src)
@@ -447,7 +447,7 @@ class RemittanceHasItsPlaceOnTheDashboard(unittest.TestCase):
 
     def test_the_counts_gain_an_eob_key_without_touching_the_partition(self):
         src = _read('dashboard.py')
-        self.assertIn("'eob': {'submitted': len(matching), 'total': len(cheque_rows)}", src)
+        self.assertIn("'eob': {'submitted': len(matching), 'total': len(check_rows)}", src)
 
 
 class TheHostSideIsWiredToo(unittest.TestCase):

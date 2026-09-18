@@ -29,7 +29,7 @@ Nothing else in the procedure touches the server.
 Billing → Payments. Filters: `Rcvd Pmt Dts` from **07/01/2025**, `Check #` =
 the Blue Shield Check/EFT number, `Lookup`.
 
-* Rows returned → a payment for this cheque already exists.
+* Rows returned → a payment for this check already exists.
 * **No rows** (an empty grid, no message) → `Single Ins Payment (F4)`, then in
   the `Single Insurance Payment` dialog type the **EOB's PATIENT ACCOUNT NUMBER**
   into `Claim No:` (2627 — our claim id, *not* the 12-digit Blue Shield claim
@@ -147,6 +147,6 @@ exactly what the EOB shows.
 * The EOB's fourth J3490 ($20.00 billed, $4.80 paid) matches no eCW row and was
   never posted.
 * Vignesh's table has no Glutathione row and no J3490 at $20.00 Medicare.
-* A non-zero deductible, a denied line, and a cheque covering more than one
+* A non-zero deductible, a denied line, and a check covering more than one
   claim never occur in either recording.
 * What `Auto Post (F2)` does that `Post Payment (F4)` does not.

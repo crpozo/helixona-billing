@@ -63,7 +63,7 @@ BOT_ROUTING = {
         'service': 'helixona-agent-eob',
         'name': 'Remittance',
         'emoji': '🧾',
-        'label': 'Cheque reconciliation',
+        'label': 'Check reconciliation',
         'novnc_port': 6083,
     },
 }
@@ -299,7 +299,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .claims-table-wrap{overflow-x:auto;max-height:760px;overflow-y:auto}
 .claims-table-wrap.hide-payer .col-payer{display:none}
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
-   the cheques table on Remittance — pinned so an extra panel can never again
+   the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
 .main > #checks-section, .main > #claims-section-submissions{grid-column:1}
 .chk-filter{font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:12px;background:transparent;color:inherit;cursor:pointer}
@@ -473,7 +473,7 @@ tbody tr:last-child td{border-bottom:none}
     <div class="subtabs" id="bot-tabs">
       <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">📋 Intake · Blue Shield Submissions</div>
       <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🩺 Follow-up · Blue Shield Resubmissions</div>
-      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · Cheques</div>
+      <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · Checks</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -517,7 +517,7 @@ tbody tr:last-child td{border-bottom:none}
       <!-- CHEQUES (Remittance) — posted / unposted / not in eCW / no copy -->
       <div class="claims-section" id="checks-section" hidden>
         <div class="section-title">
-          ✅ Cheques · SharePoint copies vs Blue Shield vs eCW
+          ✅ Checks · SharePoint copies vs Blue Shield vs eCW
           <span id="checks-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
           <span id="checks-filters" style="margin-left:14px;display:inline-flex;gap:6px;flex-wrap:wrap"></span>
           <a class="btn" href="/checks" target="_blank" style="margin-left:auto" title="One page for the billing team: what does not match and what to do">↗ Team view</a>
@@ -534,7 +534,7 @@ tbody tr:last-child td{border-bottom:none}
                 <th>Cashed</th><th>eCW</th><th class="num">Posted</th><th class="num">Unposted</th><th>Verdict</th><th>Flags</th>
               </tr>
             </thead>
-            <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile cheques</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
+            <tbody id="checks-body"><tr><td colspan="11" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -599,8 +599,8 @@ tbody tr:last-child td{border-bottom:none}
               <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
             </optgroup>
             <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
-              <option value="check_reconcile" data-bot="eob">✅ Reconcile cheques: copies · Blue Shield · eCW</option>
-              <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield cheque vs SharePoint vs eCW</option>
+              <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
+              <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield check vs SharePoint vs eCW</option>
             </optgroup>
           </select>
 
@@ -832,7 +832,7 @@ window.scrollToEl = function(sel){
                 copies: true,
                 limit_files: 0,
                 ecw: true,
-                note: "Read-only. blue_shield:true walks the portal first (limit_checks caps the cheques, check_eft names one); false reuses the cheques already captured. copies:true reads new cheque images from SharePoint (Insurance Checks, through the bot's browser — sign in once on the live screen; or the sharepoint_credentials app registration), or with source:'s3' from s3://<bucket>/checks/inbox/; limit_files caps them. ecw:true logs into eCW and reads Billing → Payments since `since` (by Check # when the run is about a few cheques). Then every cheque gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy."
+                note: "Read-only. blue_shield:true walks the portal first (limit_checks caps the checks, check_eft names one); false reuses the checks already captured. copies:true reads new check images from SharePoint (Insurance Checks, through the bot's browser — sign in once on the live screen; or the sharepoint_credentials app registration), or with source:'s3' from s3://<bucket>/checks/inbox/; limit_files caps them. ecw:true logs into eCW and reads Billing → Payments since `since` (by Check # when the run is about a few checks). Then every check gets a verdict: posted / unposted / not in eCW / not cashed / copy only, and a flag when we hold no copy."
             }, null, 2),
             check_test_one: JSON.stringify({
                 since: "07/01/2025",
@@ -842,12 +842,12 @@ window.scrollToEl = function(sel){
                 copies: true,
                 limit_files: 10,
                 ecw: true,
-                note: "One cheque, end to end. Blue Shield: the first cheque in the results (or check_eft) is opened and its status read today. SharePoint (Insurance Checks, through the bot's browser — sign in once on the live screen when the log asks): the images named after it are read first, then up to limit_files more. eCW: Billing → Payments, Check # = the cheque, Lookup. Its row lands in the ✅ Cheques table under the 🧪 Last run filter. Read-only; nothing is posted."
+                note: "One check, end to end. Blue Shield: the first check in the results (or check_eft) is opened and its status read today. SharePoint (Insurance Checks, through the bot's browser — sign in once on the live screen when the log asks): the images named after it are read first, then up to limit_files more. eCW: Billing → Payments, Check # = the check, Lookup. Its row lands in the ✅ Checks table under the 🧪 Last run filter. Read-only; nothing is posted."
             }, null, 2)
         };
 
         // Maps a dropdown value into a different SQS payload {task_type, stage?}.
-        // The test of 1 is the reconciliation with one cheque taken from the
+        // The test of 1 is the reconciliation with one check taken from the
         // portal first; every other task sends its own value as the task_type.
         const TASK_DISPATCH = { check_test_one: { task_type: 'check_reconcile' } };
 
@@ -868,14 +868,14 @@ window.scrollToEl = function(sel){
                 steps: []
             },
             check_reconcile: {
-                title: 'Reconcile cheques',
-                desc: 'Which cheques are posted, which are not, which never reached eCW, and which we hold no copy of. Reads only: cheque images, the Blue Shield cheques (walked now with blue_shield:true, else the ones captured before), and the eCW Payments list.',
-                steps: ['Blue Shield (blue_shield:true): Claims → Check claim status → each Check/EFT: amount, status, cashed date', 'SharePoint → Insurance Checks: read each cheque image (number + amount)', 'Flag every cashed cheque we hold no copy of', 'eCW → Billing → Payments since 07/01/2025: on file = posted (or entered but unposted)', 'Verdict per cheque in the ✅ Cheques table; CSV export']
+                title: 'Reconcile checks',
+                desc: 'Which checks are posted, which are not, which never reached eCW, and which we hold no copy of. Reads only: check images, the Blue Shield checks (walked now with blue_shield:true, else the ones captured before), and the eCW Payments list.',
+                steps: ['Blue Shield (blue_shield:true): Claims → Check claim status → each Check/EFT: amount, status, cashed date', 'SharePoint → Insurance Checks: read each check image (number + amount)', 'Flag every cashed check we hold no copy of', 'eCW → Billing → Payments since 07/01/2025: on file = posted (or entered but unposted)', 'Verdict per check in the ✅ Checks table; CSV export']
             },
             check_test_one: {
-                title: 'Test of 1 — one cheque, end to end',
-                desc: 'The whole flow on a single cheque, to watch it on the live screen and see what the bot tracks. Same task as Reconcile cheques, with blue_shield:true and limit_checks:1.',
-                steps: ['Blue Shield → Claims → Check claim status → the first cheque in the results (or check_eft) → Check/EFT details: amount, status (Check Cashed?), cashed date', 'SharePoint (or the S3 inbox): the image named after that cheque is read first — number + amount — then up to limit_files more', 'eCW → Billing → Payments → Rcvd Pmt Dts from since → Check # = the cheque → Lookup: on file or not, posted / unposted', 'Its row in ✅ Cheques (filter 🧪 Last run); the steps show above the tiles as they happen']
+                title: 'Test of 1 — one check, end to end',
+                desc: 'The whole flow on a single check, to watch it on the live screen and see what the bot tracks. Same task as Reconcile checks, with blue_shield:true and limit_checks:1.',
+                steps: ['Blue Shield → Claims → Check claim status → the first check in the results (or check_eft) → Check/EFT details: amount, status (Check Cashed?), cashed date', 'SharePoint (or the S3 inbox): the image named after that check is read first — number + amount — then up to limit_files more', 'eCW → Billing → Payments → Rcvd Pmt Dts from since → Check # = the check → Lookup: on file or not, posted / unposted', 'Its row in ✅ Checks (filter 🧪 Last run); the steps show above the tiles as they happen']
             }
         };
 
@@ -931,16 +931,16 @@ window.scrollToEl = function(sel){
             const firstVisible = Array.from(sel.options).find(o => !o.hidden);
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             // The headline counts something different per bot: what each has
-            // sent, or — for Remittance — how many cheques the three sources
+            // sent, or — for Remittance — how many checks the three sources
             // agree on (a copy on file, cashed, posted in eCW, amounts equal).
             const denom = document.getElementById('hero-denom-label');
             if (denom) denom.textContent = bot === 'eob'
-                ? 'cheques compared: copy · Blue Shield · eCW' : 'claims submitted';
+                ? 'checks compared: copy · Blue Shield · eCW' : 'claims submitted';
             const pctLabel = document.getElementById('hero-pct-label');
             if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'match' : 'complete';
             const remLabel = document.getElementById('hero-remaining-label');
             if (remLabel) remLabel.textContent = bot === 'eob' ? 'do not match' : 'remaining';
-            // Remittance works per cheque, not per claim document — the claims
+            // Remittance works per check, not per claim document — the claims
             // table's HCFA / IV note / progress-note columns mean nothing
             // there — so each tab shows exactly one main panel.
             const chkSec = document.getElementById('checks-section');
@@ -1141,7 +1141,7 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
-            if (window.activeBot === 'eob') return [];  // Remittance shows cheques, not claims
+            if (window.activeBot === 'eob') return [];  // Remittance shows checks, not claims
             return claims;
         }
 
@@ -1202,14 +1202,14 @@ window.scrollToEl = function(sel){
         }
         try { if (localStorage.getItem('liveScreen') === '1') setTimeout(toggleLiveScreen, 300); } catch (e) {}
 
-        // ---- Cheques (Remittance) ----
-        // One row per cheque number: the copy we hold, Blue Shield's word,
+        // ---- Checks (Remittance) ----
+        // One row per check number: the copy we hold, Blue Shield's word,
         // eCW's payment, and the verdict. Filters are client-side.
         window._checksFilter = window._checksFilter || 'mismatch';
         const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Does not match'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
                                ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'],
                                ['copy only', 'Copy only'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
-        // A cheque "matches" when the three sources agree: a copy on file,
+        // A check "matches" when the three sources agree: a copy on file,
         // Blue Shield cashed it, eCW has it posted, and the amounts agree.
         const checkMismatch = r => r.verdict !== 'posted' || (r.flags || []).length > 0;
         // The rows the last run wrote: its targets (a test of 1), else
@@ -1229,19 +1229,19 @@ window.scrollToEl = function(sel){
             const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
             const sm = data.summary || {};
             const lr = sm.last_run || {};
-            // After a targeted run the tab opens on its cheque(s); the
+            // After a targeted run the tab opens on its check(s); the
             // operator's own choice of filter sticks for the session.
             if (!window._checksFilterChosen) window._checksFilter = (lr.targets || []).length ? 'last run' : 'mismatch';
             const mism = data.rows.filter(checkMismatch).length;
             if (meta) meta.textContent = data.rows.length
-                ? `${sm.checks} cheques · ${data.rows.length - mism} match · ${mism} do not` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
+                ? `${sm.checks} checks · ${data.rows.length - mism} match · ${mism} do not` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
                 : '';
             const runEl = document.getElementById('checks-run');
             if (runEl) {
                 const running = lr.started_at && !(lr.steps || {}).done;
                 const chip = (label, text) => `<span style="display:inline-block;margin-right:10px"><strong>${esc(label)}:</strong> ${esc(text)}</span>`;
                 runEl.innerHTML = lr.started_at ? [
-                    `<span style="display:inline-block;margin-right:10px">${running ? '⏳' : '🧪'} <strong>${esc(lr.mode || 'run')}</strong>${(lr.targets || []).length ? ' · cheque ' + esc(lr.targets.join(', ')) : ''} · ${esc(lr.started_at)}${running ? ' · running…' : ''}</span>`,
+                    `<span style="display:inline-block;margin-right:10px">${running ? '⏳' : '🧪'} <strong>${esc(lr.mode || 'run')}</strong>${(lr.targets || []).length ? ' · check ' + esc(lr.targets.join(', ')) : ''} · ${esc(lr.started_at)}${running ? ' · running…' : ''}</span>`,
                     ...RUN_STEPS.filter(([k]) => (lr.steps || {})[k] && k !== 'done').map(([k, label]) => chip(label, lr.steps[k])),
                 ].join('') : '';
             }
@@ -1253,7 +1253,7 @@ window.scrollToEl = function(sel){
                     tile('posted in eCW', sm.posted, 'posted', 'var(--success)'),
                     tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)'),
                     tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)'),
-                    tile('no copy of cheque', sm.no_copy, 'no copy', 'var(--bad)'),
+                    tile('no copy of check', sm.no_copy, 'no copy', 'var(--bad)'),
                     tile('copy only', sm.copy_only, 'copy only', 'var(--text-muted)'),
                     tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)'),
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)'),
@@ -1271,7 +1271,7 @@ window.scrollToEl = function(sel){
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
                 : r.verdict === f);
             if (!rows.length) {
-                body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile cheques</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.'}</td></tr>`;
+                body.innerHTML = `<tr><td colspan="11" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.'}</td></tr>`;
                 return;
             }
             const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
@@ -2033,7 +2033,7 @@ window.scrollToEl = function(sel){
         // a slower beat.
         setInterval(loadCounts, 4000);
         setInterval(loadData, 15000);
-        // The cheques table is small; keep it live while a run is going.
+        // The checks table is small; keep it live while a run is going.
         setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 15000);
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
@@ -2122,15 +2122,15 @@ def api_mfa_code():
 
 
 def _checks_rows():
-    """The cheque rows, the counts over them (so the tiles always agree with
+    """The check rows, the counts over them (so the tiles always agree with
     the table, whatever the last run looked at), and the last run's trace."""
     from src.checks.reconcile import summarize
     table = dynamodb.Table('helixona-checks')
     items = scan_all(table)
     meta = next((it for it in items if it.get('check_number') == '_summary'), {})
     run = next((it for it in items if it.get('check_number') == '_run'), {})
-    # Files the reader could not make a cheque out of live under
-    # 'unreadable:<file>' and are not cheques; they are counted separately.
+    # Files the reader could not make a check out of live under
+    # 'unreadable:<file>' and are not checks; they are counted separately.
     rows = [it for it in items if not str(it.get('check_number', '')).startswith(('_', 'unreadable:'))]
     unreadable = [it for it in items if str(it.get('check_number', '')).startswith('unreadable:')]
     for r in rows:
@@ -2145,7 +2145,7 @@ def _checks_rows():
 
 @app.route('/checks')
 def checks_client_view():
-    """The billing team's page: one screen, the cheques that do not match and
+    """The billing team's page: one screen, the checks that do not match and
     what to do about each. No bot controls, no logs. dashboard_checks.html
     next to this file; it reads /api/checks."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard_checks.html')
@@ -2155,7 +2155,7 @@ def checks_client_view():
 
 @app.route('/api/checks')
 def api_checks():
-    """The cheque reconciliation: one row per cheque number, and the summary."""
+    """The check reconciliation: one row per check number, and the summary."""
     try:
         rows, summary = _checks_rows()
         return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
@@ -2181,7 +2181,7 @@ def api_checks_csv():
     for r in rows:
         w.writerow([' | '.join(r['flags']) if c == 'flags' else str(r.get(c, '')) for c in cols])
     return Response(buf.getvalue(), mimetype='text/csv',
-                    headers={'Content-Disposition': 'attachment; filename="cheques.csv"'})
+                    headers={'Content-Disposition': 'attachment; filename="checks.csv"'})
 
 
 @app.route('/api/claim-counts')
@@ -2217,16 +2217,16 @@ def api_claim_counts():
 
         is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
         # Remittance's headline is not a slice of the submissions/resubmissions
-        # partition: of the cheques compared, how many the three sources agree on.
+        # partition: of the checks compared, how many the three sources agree on.
         try:
-            cheque_rows, _sm = _checks_rows()
+            check_rows, _sm = _checks_rows()
         except Exception:
-            cheque_rows = []
-        matching = [r for r in cheque_rows if r.get('verdict') == 'posted' and not r.get('flags')]
+            check_rows = []
+        matching = [r for r in check_rows if r.get('verdict') == 'posted' and not r.get('flags')]
         return jsonify({
             'submissions': tally([r for r in items if not is_resub(r)]),
             'resubmissions': tally([r for r in items if is_resub(r)]),
-            'eob': {'submitted': len(matching), 'total': len(cheque_rows)},
+            'eob': {'submitted': len(matching), 'total': len(check_rows)},
             'all': tally(items),
         })
     except Exception as e:

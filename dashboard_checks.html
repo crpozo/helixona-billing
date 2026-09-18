@@ -3,76 +3,93 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Insurance Cheques — Reconciliation</title>
+<title>Insurance Checks — Reconciliation</title>
 <link rel="icon" type="image/png" href="/static/helixona-logo.png">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* One page for the billing team: which cheques do not match, and what to do.
-   Tokens on :root; dark mode is its own set of steps, not a flip. Status
-   colors are reserved and always paired with an icon + a word. */
+/* One page for the billing team: which checks do not match, and what to do.
+   Tokens on :root, in Helixona's website palette — white, warm hairlines,
+   gold (#CDB486), near-black ink, a serif display face for the title. Dark
+   mode is its own set of steps, not a flip. Status colors are reserved and
+   always paired with a mark + a word. */
 :root{
-  --surface:#fcfcfb;--surface-2:#f3f3f0;--card:#ffffff;--line:#e4e4df;
-  --ink:#0b0b0b;--ink-2:#52514e;--ink-3:#8a8984;
-  --accent:#8b6f3b;--brand-bg:#0b0b10;--brand-ink:#f1f5f9;--brand-muted:#94a3b8;--brand-gold:#CDB486;
+  --surface:#ffffff;--surface-2:#faf8f3;--card:#ffffff;--line:#e9e2d3;
+  --ink:#1a1a1a;--ink-2:#4b4a46;--ink-3:#8b857a;
+  --accent:#CDB486;--accent-ink:#1a1a1a;--accent-line:#d9c39a;--accent-soft:#f6efe1;
+  --brand-bg:#ffffff;--brand-ink:#1a1a1a;--brand-muted:#6f6a61;--brand-gold:#CDB486;
   --good:#0ca30c;--warning:#b47a00;--serious:#c65a2e;--critical:#d03b3b;--info:#2a78d6;
-  --good-bg:#eaf7ea;--warning-bg:#fff4dc;--serious-bg:#fdeee7;--critical-bg:#fbe9e9;--info-bg:#e9f1fb;--neutral-bg:#f0f0ec;
+  --good-bg:#eaf7ea;--warning-bg:#fff4dc;--serious-bg:#fdeee7;--critical-bg:#fbe9e9;--info-bg:#e9f1fb;--neutral-bg:#f2efe8;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --surface:#1a1a19;--surface-2:#222221;--card:#232322;--line:#33332f;
-    --ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#8f8e86;
-    --accent:#cdb486;
+    --surface:#0c0c10;--surface-2:#15151c;--card:#14141a;--line:#26262f;
+    --ink:#f1f5f9;--ink-2:#b8b6ad;--ink-3:#84827a;
+    --accent:#cdb486;--accent-ink:#0c0c10;--accent-line:#8b7748;--accent-soft:#2a2418;
+    --brand-bg:#0b0b10;--brand-ink:#f1f5f9;--brand-muted:#94a3b8;
     --good:#3fc03f;--warning:#fab219;--serious:#ec835a;--critical:#e05252;--info:#3987e5;
-    --good-bg:#1d2e1d;--warning-bg:#332a12;--serious-bg:#35221a;--critical-bg:#361d1d;--info-bg:#1b2738;--neutral-bg:#2a2a28;
+    --good-bg:#1d2e1d;--warning-bg:#332a12;--serious-bg:#35221a;--critical-bg:#361d1d;--info-bg:#1b2738;--neutral-bg:#26262f;
   }
 }
 :root[data-theme="dark"]{
-  --surface:#1a1a19;--surface-2:#222221;--card:#232322;--line:#33332f;
-  --ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#8f8e86;
-  --accent:#cdb486;
+  --surface:#0c0c10;--surface-2:#15151c;--card:#14141a;--line:#26262f;
+  --ink:#f1f5f9;--ink-2:#b8b6ad;--ink-3:#84827a;
+  --accent:#cdb486;--accent-ink:#0c0c10;--accent-line:#8b7748;--accent-soft:#2a2418;
+  --brand-bg:#0b0b10;--brand-ink:#f1f5f9;--brand-muted:#94a3b8;
   --good:#3fc03f;--warning:#fab219;--serious:#ec835a;--critical:#e05252;--info:#3987e5;
-  --good-bg:#1d2e1d;--warning-bg:#332a12;--serious-bg:#35221a;--critical-bg:#361d1d;--info-bg:#1b2738;--neutral-bg:#2a2a28;
+  --good-bg:#1d2e1d;--warning-bg:#332a12;--serious-bg:#35221a;--critical-bg:#361d1d;--info-bg:#1b2738;--neutral-bg:#26262f;
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--surface);color:var(--ink);font-family:'Inter',system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
-a{color:var(--info)}
+a{color:var(--ink);text-decoration-color:var(--accent);text-underline-offset:3px}
 .wrap{max-width:1400px;margin:0 auto;padding:20px 16px 48px}
-/* The brand bar is Helixona's own: dark with the gold X, in both themes. */
-.brandbar{background:var(--brand-bg);color:var(--brand-ink);border-bottom:1px solid #1f1f2b}
-.brandbar .wrap{padding:16px 16px}
+/* The brand bar follows the website: white, a thin gold rule, the title in
+   the serif. The PNG logo is drawn for dark surfaces, so light mode shows
+   the wordmark in type (HELI·X·ONA, the X in gold) and dark mode the image. */
+.brandbar{background:var(--brand-bg);color:var(--brand-ink);border-bottom:1px solid var(--line)}
+.brandbar .wrap{padding:18px 16px 16px}
 header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px}
-.logo{height:34px;display:block}
-.brand-sep{width:1px;height:34px;background:#2a2a38}
-h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em;color:var(--brand-ink)}
-.sub{color:var(--brand-muted);font-size:13px;margin-top:3px}
-.brandbar .btn{background:transparent;color:var(--brand-ink);border-color:#2a2a38}
-.brandbar .btn:hover{border-color:var(--brand-gold);color:var(--brand-gold)}
+.logo{height:34px;display:none}
+.wordmark{font-family:'Inter',sans-serif;font-weight:500;font-size:22px;letter-spacing:.42em;color:var(--brand-ink);white-space:nowrap;padding-left:.1em}
+.wordmark .x{color:var(--accent);font-weight:600}
+:root:not([data-theme="light"]) .logo{display:block} :root:not([data-theme="light"]) .wordmark{display:none}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .logo{display:none} :root:not([data-theme="dark"]) .wordmark{display:block} }
+:root[data-theme="light"] .logo{display:none} :root[data-theme="light"] .wordmark{display:block}
+:root[data-theme="dark"] .logo{display:block} :root[data-theme="dark"] .wordmark{display:none}
+.brand-sep{width:1px;height:34px;background:var(--line)}
+.title-rule{width:56px;height:1px;background:var(--accent);margin-bottom:8px}
+h1{font-family:'Playfair Display',Georgia,serif;font-size:26px;font-weight:500;margin:0;letter-spacing:.005em;color:var(--brand-ink);line-height:1.1}
+.sub{color:var(--brand-muted);font-size:13px;margin-top:5px}
 .spacer{flex:1}
-.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;text-decoration:none;font-weight:500}
-.btn:hover{border-color:var(--ink-3)}
+.btn{border:1px solid var(--accent-line);background:var(--card);color:var(--ink);border-radius:2px;padding:9px 14px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;text-decoration:none;font-weight:600;outline:1px solid transparent;outline-offset:3px}
+.btn:hover{border-color:var(--accent);outline-color:var(--accent-line)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);outline-color:var(--accent-line)}
+.btn.primary:hover{filter:brightness(1.04)}
 /* hero */
 .hero{display:grid;grid-template-columns:minmax(220px,1fr) 2fr;gap:16px;margin-bottom:16px}
-.hero-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+.hero-card{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:22px 22px 20px;position:relative}
+.hero-card::before{content:'';position:absolute;left:22px;top:0;width:56px;height:2px;background:var(--accent)}
 .hero-n{font-size:52px;font-weight:700;line-height:1;letter-spacing:-.02em}
-.hero-l{color:var(--ink-2);font-size:14px;margin-top:8px}
+.hero-l{color:var(--ink-2);font-size:14px;margin-top:8px;font-family:'Playfair Display',Georgia,serif;font-size:17px}
 .hero-s{color:var(--ink-3);font-size:12px;margin-top:6px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
-.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 14px 12px;cursor:pointer;text-align:left;font:inherit;color:inherit;position:relative}
-.tile:hover{border-color:var(--ink-3)}
-.tile.on{outline:2px solid var(--accent);outline-offset:-1px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:14px 14px 12px;cursor:pointer;text-align:left;font:inherit;color:inherit;position:relative}
+.tile:hover{border-color:var(--accent-line)}
+.tile.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:var(--accent-soft)}
 .tile-n{font-size:26px;font-weight:700;line-height:1.1}
 .tile-l{font-size:13px;font-weight:600;margin-top:6px;display:flex;align-items:center;gap:6px}
 .tile-m{font-size:12px;color:var(--ink-2);margin-top:4px;line-height:1.4}
 .dot{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
 /* filters */
 .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0 10px}
-.filters input,.filters select{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
+.filters input,.filters select{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:2px;padding:8px 10px;font:inherit;font-size:13px}
+.filters input:focus,.filters select:focus{outline:none;border-color:var(--accent)}
 .filters input{min-width:220px}
-.chip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);border-radius:999px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
-.chip.on{border-color:var(--accent);color:var(--ink);font-weight:600}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--ink-2);border-radius:2px;padding:6px 12px;font:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.chip:hover{border-color:var(--accent-line)}
+.chip.on{border-color:var(--accent);background:var(--accent);color:var(--accent-ink);font-weight:600}
 .count{color:var(--ink-3);font-size:12px;margin-left:auto}
 /* table */
-.tbl{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:auto}
+.tbl{background:var(--card);border:1px solid var(--line);border-radius:4px;overflow:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{position:sticky;top:0;background:var(--surface-2);color:var(--ink-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
@@ -90,8 +107,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .small{font-size:12px;color:var(--ink-2)}
 .todo{max-width:320px}
 .empty{padding:40px;text-align:center;color:var(--ink-2)}
-.legend{margin-top:22px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-.legend h2{font-size:14px;margin:0 0 10px}
+.legend{margin-top:22px;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:18px 20px}
+.legend h2{font-family:'Playfair Display',Georgia,serif;font-size:18px;font-weight:500;margin:0 0 12px}
 .legend dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 14px;margin:0;font-size:13px}
 .legend dt{white-space:nowrap}
 .legend dd{margin:0;color:var(--ink-2)}
@@ -105,14 +122,16 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
   <div class="wrap">
     <header>
       <img class="logo" src="/static/helixona-logo.png" alt="Helixona">
+      <div class="wordmark" aria-label="Helixona">HELI<span class="x">X</span>ONA</div>
       <div class="brand-sep"></div>
       <div>
-        <h1>Insurance cheques · reconciliation</h1>
+        <div class="title-rule"></div>
+        <h1>Insurance checks · reconciliation</h1>
         <div class="sub" id="sub">Loading…</div>
       </div>
       <div class="spacer"></div>
-      <a class="btn" href="/api/checks.csv">⬇ Download CSV</a>
-      <button class="btn" onclick="load()">↻ Refresh</button>
+      <a class="btn primary" href="/api/checks.csv">Download CSV</a>
+      <button class="btn" onclick="load()">Refresh</button>
       <button class="btn" onclick="toggleTheme()" title="Light / dark">◐</button>
     </header>
   </div>
@@ -122,14 +141,14 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
   <section class="hero">
     <div class="hero-card">
       <div class="hero-n" id="hero-n">—</div>
-      <div class="hero-l">cheques need attention</div>
+      <div class="hero-l">checks need attention</div>
       <div class="hero-s" id="hero-s"></div>
     </div>
     <div class="tiles" id="tiles"></div>
   </section>
 
   <div class="filters">
-    <input id="q" type="search" placeholder="Search cheque #, amount, folder…" oninput="render()">
+    <input id="q" type="search" placeholder="Search check #, amount, folder…" oninput="render()">
     <select id="folder" onchange="render()">
       <option value="">Any folder</option>
       <option value="posted">Copy in Posted Checks</option>
@@ -139,7 +158,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
     <select id="sort" onchange="render()">
       <option value="date">Newest first</option>
       <option value="amount">Largest amount</option>
-      <option value="check">Cheque #</option>
+      <option value="check">Check #</option>
     </select>
     <span id="chips" style="display:contents"></span>
     <span class="count" id="count"></span>
@@ -148,7 +167,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
   <div class="tbl">
     <table>
       <thead><tr>
-        <th>Cheque #</th><th>Where the copy is</th><th class="num">Copy $</th><th class="num">Blue Shield $</th>
+        <th>Check #</th><th>Where the copy is</th><th class="num">Copy $</th><th class="num">Blue Shield $</th>
         <th>Blue Shield</th><th>eCW</th><th>Verdict</th><th>What to do</th>
       </tr></thead>
       <tbody id="body"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
@@ -159,13 +178,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
   <section class="legend">
     <h2>How to read this</h2>
     <dl>
-      <dt><span class="pill critical">● Cashed, not in eCW</span></dt><dd>Blue Shield shows the cheque was cashed, but eCW has no payment under that number. <strong>Enter the payment in eCW.</strong></dd>
+      <dt><span class="pill critical">● Cashed, not in eCW</span></dt><dd>Blue Shield shows the check was cashed, but eCW has no payment under that number. <strong>Enter the payment in eCW.</strong></dd>
       <dt><span class="pill warning">● Entered, unposted</span></dt><dd>The payment exists in eCW but part of it was never applied to claims. <strong>Finish posting it.</strong></dd>
-      <dt><span class="pill serious">● No copy of cheque</span></dt><dd>A cashed cheque with no image in the SharePoint folder. <strong>Scan it into Insurance Checks.</strong></dd>
+      <dt><span class="pill serious">● No copy of check</span></dt><dd>A cashed check with no image in the SharePoint folder. <strong>Scan it into Insurance Checks.</strong></dd>
       <dt><span class="pill warning">● Amounts differ</span></dt><dd>The copy, Blue Shield and eCW do not agree on the amount. <strong>Check which one is right.</strong></dd>
       <dt><span class="pill good">● Posted</span></dt><dd>In eCW, fully applied, copy on file, amounts agree. Nothing to do.</dd>
       <dt><span class="pill neutral">● Not cashed yet</span></dt><dd>Blue Shield issued it but the bank has not cashed it. Wait.</dd>
-      <dt><span class="pill neutral">● Copy only</span></dt><dd>We hold a copy but Blue Shield does not list this cheque: another payer (Aetna, Health Net…) or outside the search window. Not tracked here.</dd>
+      <dt><span class="pill neutral">● Copy only</span></dt><dd>We hold a copy but Blue Shield does not list this check: another payer (Aetna, Health Net…) or outside the search window. Not tracked here.</dd>
     </dl>
     <p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks), Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. Each scan is read once and kept; the comparison is refreshed on every run.</p>
   </section>
@@ -192,14 +211,14 @@ function classify(r) {
     ? {cls: 'warning', label: 'Posted, but…', key: 'posted', todo: 'Posted in eCW, yet:'}
     : {cls: 'good', label: 'Posted', key: 'posted', todo: 'Nothing — the three sources agree.'};
   if (v === 'not cashed') return {cls: 'neutral', label: 'Not cashed yet', key: 'not cashed', todo: 'Wait: Blue Shield has not cashed it.'};
-  if (v === 'copy only') return {cls: 'neutral', label: 'Copy only', key: 'copy only', todo: 'Not a Blue Shield cheque (or outside the search window). Not tracked here.'};
+  if (v === 'copy only') return {cls: 'neutral', label: 'Copy only', key: 'copy only', todo: 'Not a Blue Shield check (or outside the search window). Not tracked here.'};
   if (v === 'eCW not checked') return {cls: 'info', label: 'eCW not checked', key: 'eCW not checked', todo: 'eCW was not read on the last run.'};
   return {cls: 'info', label: v || 'pending', key: v, todo: 'Awaiting the next run.'};
 }
 function todoFor(r) {
   const c = classify(r);
   const extra = [];
-  if (hasFlag(r, 'no copy') && c.key !== 'copy only') extra.push('Scan the cheque into SharePoint › Insurance Checks.');
+  if (hasFlag(r, 'no copy') && c.key !== 'copy only') extra.push('Scan the check into SharePoint › Insurance Checks.');
   const amt = flags(r).find(f => String(f).startsWith('amounts differ'));
   if (amt) extra.push('Check the amounts: ' + esc(String(amt).replace('amounts differ: ', '')) + '.');
   return [c.todo, ...extra].join(' ');
@@ -212,12 +231,12 @@ const TILES = [
   ['attention', 'Needs attention', 'critical', 'Anything a person must act on', d => d.rows.filter(attention).length],
   ['not in eCW', 'Cashed, not in eCW', 'critical', 'Enter the payment in eCW', d => d.rows.filter(r => r.verdict === 'not in eCW').length],
   ['unposted', 'Entered, unposted', 'warning', 'Finish posting in eCW', d => d.rows.filter(r => r.verdict === 'unposted').length],
-  ['no copy', 'No copy of cheque', 'serious', 'Cashed, no scan in SharePoint', d => d.rows.filter(r => hasFlag(r, 'no copy')).length],
+  ['no copy', 'No copy of check', 'serious', 'Cashed, no scan in SharePoint', d => d.rows.filter(r => hasFlag(r, 'no copy')).length],
   ['amounts', 'Amounts differ', 'warning', 'Copy, Blue Shield and eCW disagree', d => d.rows.filter(r => hasFlag(r, 'amounts differ')).length],
   ['posted', 'Posted & matching', 'good', 'Nothing to do', d => d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length],
   ['not cashed', 'Not cashed yet', 'neutral', 'Issued, waiting on the bank', d => d.rows.filter(r => r.verdict === 'not cashed').length],
   ['copy only', 'Copy only', 'neutral', 'Other payer or outside the window', d => d.rows.filter(r => r.verdict === 'copy only').length],
-  ['all', 'All cheques', 'info', 'Everything compared', d => d.rows.length],
+  ['all', 'All checks', 'info', 'Everything compared', d => d.rows.length],
 ];
 const CHIPS = ['attention', 'not in eCW', 'unposted', 'no copy', 'amounts', 'posted', 'not cashed', 'copy only', 'all'];
 
@@ -240,7 +259,7 @@ function render() {
   const n = d.rows.filter(attention).length;
   document.getElementById('hero-n').textContent = n.toLocaleString('en-US');
   document.getElementById('hero-s').textContent = d.rows.length
-    ? `${d.rows.length.toLocaleString('en-US')} cheques compared · ${d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length.toLocaleString('en-US')} fully matching`
+    ? `${d.rows.length.toLocaleString('en-US')} checks compared · ${d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length.toLocaleString('en-US')} fully matching`
       + (sm.unreadable ? ` · ${sm.unreadable} scans could not be read yet` : '') : '';
   document.getElementById('sub').textContent = sm.reconciled_at ? `Last reconciled ${sm.reconciled_at}` + (sm.ecw_checked === false ? ' · eCW was not read on this run' : '') : 'No reconciliation yet';
 
@@ -268,11 +287,11 @@ function render() {
   rows.sort((a, b) => sort === 'amount' ? Math.max(num(b.bs_amount), num(b.copy_amount)) - Math.max(num(a.bs_amount), num(a.copy_amount))
                     : sort === 'check' ? String(a.check_number).localeCompare(String(b.check_number))
                     : String(b.bs_date || b.copy_date || '').localeCompare(String(a.bs_date || a.copy_date || '')));
-  document.getElementById('count').textContent = `${rows.length.toLocaleString('en-US')} cheque${rows.length === 1 ? '' : 's'}`;
+  document.getElementById('count').textContent = `${rows.length.toLocaleString('en-US')} check${rows.length === 1 ? '' : 's'}`;
 
   const body = document.getElementById('body');
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="8" class="empty">${d.rows.length ? 'No cheques under this filter.' : 'No reconciliation has run yet.'}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8" class="empty">${d.rows.length ? 'No checks under this filter.' : 'No reconciliation has run yet.'}</td></tr>`;
     document.getElementById('more').hidden = true;
     return;
   }
@@ -285,8 +304,10 @@ function render() {
     const bs = r.in_blue_shield
       ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div class="small">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div class="small">issued ${esc(r.bs_date)}</div>` : ''}`
       : `<span class="muted">not in results</span>`;
+    const amounts = [r.ecw_posted !== '' && r.ecw_posted != null ? `posted ${money(r.ecw_posted)}` : '',
+                     r.ecw_unposted !== '' && r.ecw_unposted != null ? `unposted ${money(r.ecw_unposted)}` : ''].filter(Boolean);
     const ecw = r.in_ecw
-      ? `on file${r.ecw_payment_id ? ` · #${esc(r.ecw_payment_id)}` : ''}<div class="small">posted ${money(r.ecw_posted) || '—'} · unposted ${money(r.ecw_unposted) || '—'}</div>`
+      ? `on file${r.ecw_payment_id ? ` · #${esc(r.ecw_payment_id)}` : ''}${amounts.length ? `<div class="small">${amounts.join(' · ')}</div>` : ''}`
       : `<span class="muted">not found</span>`;
     return `<tr>
       <td class="mono">${esc(r.check_number)}</td>

@@ -5,7 +5,7 @@ Three things come out of the Blue Shield portal and one out of a PDF:
 
 * the claim-status results table (one row per finalized, paid claim),
 * the Check/EFT transaction summary (label/value pairs),
-* the Check/EFT claims table (the claims one cheque paid),
+* the Check/EFT claims table (the claims one check paid),
 * the EOB report PDF (per-claim CPT lines, and the PATIENT ACCOUNT NUMBER,
   which is the eCW claim number — our `claim_id`).
 
@@ -79,7 +79,7 @@ def rows_by_header(headers, rows):
     — puts one cell more in each row than there are headers, and every value
     lands one column to the left of its name. Each row is therefore slid
     until its claim number sits under the "Claim number" header (2026-09-15:
-    fifty rows parsed, not one cheque number among them).
+    fifty rows parsed, not one check number among them).
     """
     keys = [header_key(h) for h in headers]
     claim_at = next((i for i, k in enumerate(keys) if k == 'bsc_claim_number'), None)
@@ -107,7 +107,7 @@ def rows_by_header(headers, rows):
             d['claim_note'] = m.group(2)
         if shift:
             d['column_shift'] = shift
-        # The cheque cell carries a label with the number — "30912971
+        # The check cell carries a label with the number — "30912971
         # Check/EFT information" on screen (2026-09-15). Keep the number.
         if d.get('check_eft'):
             cm = CHECK_NO_RE.search(d['check_eft'])
@@ -120,9 +120,9 @@ def rows_by_header(headers, rows):
 
 def rows_with_links(headers, raw_rows):
     """rows_by_header over DOM rows ({'cells', 'links'}), with each row's
-    cheque and EOB links attached.
+    check and EOB links attached.
 
-    The cheque number is a link on the results page. When the header
+    The check number is a link on the results page. When the header
     mapping did not yield one (a column named unexpectedly, a layout not
     seen before) the link is the fallback: the row's one link whose text is
     a 5-to-11-digit number that is not the 12-digit claim number.
@@ -137,7 +137,7 @@ def rows_with_links(headers, raw_rows):
     def number_in(text):
         t = norm_text(text)
         if re.search(r'\b\d{12}\b', t):
-            return ''                       # the claim number, not a cheque
+            return ''                       # the claim number, not a check
         m = CHECK_NO_RE.search(t)
         return m.group(0) if m else ''
 

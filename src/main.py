@@ -2874,7 +2874,7 @@ def _dump_insurance_grid(page, claim_id, aws_client):
 
 IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 
-# The Remittance bot reconciles cheques — the copies we hold, Blue Shield's
+# The Remittance bot reconciles checks — the copies we hold, Blue Shield's
 # status, eCW's payments — and never submits; the submitting bots never touch
 # payments. Fenced both ways, like the IV bot. (Entering payments into eCW is
 # Vignesh's team's work, not the bot's: the old eob_post task is gone.)
@@ -11323,13 +11323,13 @@ def process_message(message: dict, aws_client: AWSClient):
                     ecw_manager.stop()
 
     elif task_type == 'check_reconcile':
-        # Remittance: which cheques are posted, unposted, missing from eCW,
-        # and which we hold no copy of. Cheque images from SharePoint (or the
-        # S3 inbox) + Blue Shield's cheques (collected in this run with
+        # Remittance: which checks are posted, unposted, missing from eCW,
+        # and which we hold no copy of. Check images from SharePoint (or the
+        # S3 inbox) + Blue Shield's checks (collected in this run with
         # blue_shield:true, else the ones already captured) + eCW's Payments.
         # Read-only everywhere. One browser, opened on demand and shared by
         # the Blue Shield and eCW steps: the profile dir admits one Chrome.
-        logger.info("═══ Remittance — cheque reconciliation ═══")
+        logger.info("═══ Remittance — check reconciliation ═══")
         from src.checks.run import run_check_reconcile
         holder = {}
 
@@ -11341,7 +11341,7 @@ def process_message(message: dict, aws_client: AWSClient):
         try:
             run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)
         except Exception as e:
-            logger.error(f"Cheque reconciliation failed: {e}")
+            logger.error(f"Check reconciliation failed: {e}")
         finally:
             if holder.get('manager'):
                 holder['manager'].stop()

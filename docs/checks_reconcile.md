@@ -1,22 +1,22 @@
-# Reconciling cheques: copies · Blue Shield · eCW
+# Reconciling checks: copies · Blue Shield · eCW
 
 The operator's procedure (2026-09-16), as the Remittance bot runs it
 (`check_reconcile`, src/checks/run.py). Read-only against all three systems.
 
 1. **SharePoint** — `Shared Documents / Insurance Checks` on the
-   BillingDepartment site holds an image of every cheque the clinic received:
+   BillingDepartment site holds an image of every check the clinic received:
    `Posted Checks / <year> / <month>` and `Unposted Checks / <date>`
    (`Insurance Check Tracker` is the team's spreadsheet and `Posted
    Checks/2025` is before the period; both are left out). Each new file is
-   read **once** for its cheque number and amount (the PDF's text layer when
+   read **once** for its check number and amount (the PDF's text layer when
    it has one, else Claude looking at the image) and stored with the folder
    it was found in; later runs only read files that are new or changed.
-2. **Blue Shield** — the cheque's `Check/EFT status`: `Check Cashed` or not.
+2. **Blue Shield** — the check's `Check/EFT status`: `Check Cashed` or not.
    With `blue_shield:true` the run walks the portal itself (Claims → Check
-   claim status → each Check/EFT, cheque data only); otherwise it takes the
-   cheques an earlier run with `blue_shield:true` stored (helixona-eobs).
-3. **No copy** — every cashed cheque we hold no image of is flagged.
-4. **eCW** — Billing → Payments since 07/01/2025, every cheque. A payment
+   claim status → each Check/EFT, check data only); otherwise it takes the
+   checks an earlier run with `blue_shield:true` stored (helixona-eobs).
+3. **No copy** — every cashed check we hold no image of is flagged.
+4. **eCW** — Billing → Payments since 07/01/2025, every check. A payment
    under the number means it was entered: `posted` when nothing is left
    unposted, `unposted` when a balance remains (the payment was created and
    the lines never finished; see docs/ecw_posting.md).
@@ -32,13 +32,13 @@ the one whose "not in eCW" list is real.
 | `unposted` | in eCW, a balance still unposted |
 | `not in eCW` | Blue Shield shows it cashed, eCW has no payment for it |
 | `not cashed` | Blue Shield has not cashed it — nothing to enter yet |
-| `copy only` | we hold an image of a cheque Blue Shield's results do not list |
+| `copy only` | we hold an image of a check Blue Shield's results do not list |
 
-Flags alongside: `no copy of the cheque`; `amounts differ: copy 275.09, bs 257.09`.
+Flags alongside: `no copy of the check`; `amounts differ: copy 275.09, bs 257.09`.
 
-Everything lands in the **✅ Cheques** table on the Remittance tab (filters
+Everything lands in the **✅ Checks** table on the Remittance tab (filters
 per verdict, CSV export) and in the `helixona-checks` table, one item per
-cheque number.
+check number.
 
 ## SharePoint access
 
@@ -83,7 +83,7 @@ needs none — but it takes an Entra admin.
 ```
 
 With `"source": "s3"` the run reads `s3://<claims bucket>/checks/inbox/`
-instead — cheque images dropped there by hand.
+instead — check images dropped there by hand.
 
 ## The image reader
 
@@ -109,9 +109,9 @@ could not be read are tried again on every run and shown on the tab as
  "copies": true, "limit_files": 0, "ecw": true}
 ```
 
-`blue_shield:true` walks the portal first (`limit_checks` caps the cheques,
+`blue_shield:true` walks the portal first (`limit_checks` caps the checks,
 `check_eft` names one; `force` defaults to true on such a targeted run so
-the cheque is re-opened for its status today). `copies:false` skips the
+the check is re-opened for its status today). `copies:false` skips the
 images (reconcile what is already read); `limit_files` caps the images read.
 `ecw:false` reuses the last Payments list read.
 
@@ -124,14 +124,14 @@ The dashboard's **🧪 Test of 1** task is the same `check_reconcile` with
  "copies": true, "limit_files": 10, "ecw": true}
 ```
 
-One cheque, end to end, on the live screen:
+One check, end to end, on the live screen:
 
-1. Blue Shield: the first cheque in the results (or `check_eft`) is opened —
+1. Blue Shield: the first check in the results (or `check_eft`) is opened —
    amount, status, cashed date.
-2. The copies: files named after that cheque are read first, then up to
+2. The copies: files named after that check are read first, then up to
    `limit_files` more.
 3. eCW: Billing → Payments, Rcvd Pmt Dts from `since`, **Check # = the
-   cheque**, Lookup — the operator's own step, one cheque at a time (a full
+   check**, Lookup — the operator's own step, one check at a time (a full
    run lists every payment once instead).
 4. Its row alone is written; the tab opens on the **🧪 Last run** filter and
    the steps show above the tiles as they happen (`_run` item). The tiles

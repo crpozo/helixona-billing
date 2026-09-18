@@ -1,24 +1,24 @@
-"""Three lists of cheques, one answer per cheque number.
+"""Three lists of checks, one answer per check number.
 
-* copies   — cheque images from SharePoint (or the S3 inbox), as read by
+* copies   — check images from SharePoint (or the S3 inbox), as read by
              src/checks/read_check.py: {'check_number', 'amount', 'file', ...}
-* cheques  — what Blue Shield says (the helixona-eobs table Remittance
+* checks  — what Blue Shield says (the helixona-eobs table Remittance
              captured): {'check_eft', 'check_amount', 'check_status',
              'check_date', 'cashed_date', ...}
 * payments — what eCW has on file (Billing → Payments since a date):
              {'check_no', 'amount', 'posted', 'unposted', 'payment_id', ...}
 
-The verdict, per cheque:
+The verdict, per check:
 
     posted        in eCW, nothing left unposted
     unposted      in eCW, but a balance is still unposted — the payment was
                   created and the lines never finished (see docs/ecw_posting.md)
     not in eCW    Blue Shield shows it cashed, eCW has no payment for it
     not cashed    Blue Shield has not cashed it yet — nothing to enter
-    copy only     we hold an image of a cheque Blue Shield's results do not
+    copy only     we hold an image of a check Blue Shield's results do not
                   list (a different payer, or outside the search window)
 
-and, alongside, whether we hold a copy of the cheque and whether the
+and, alongside, whether we hold a copy of the check and whether the
 amounts agree between the three sources. Pure: no browser, no AWS.
 """
 from decimal import Decimal, InvalidOperation
@@ -27,7 +27,7 @@ from src.eob.parse import money, norm_text
 
 
 def norm_check(s):
-    """A cheque number as a key: digits only, leading zeros dropped — a scan
+    """A check number as a key: digits only, leading zeros dropped — a scan
     reads 0031401901 where the portal prints 31401901."""
     digits = ''.join(ch for ch in str(s or '') if ch.isdigit())
     return digits.lstrip('0') or ('0' if digits else '')
@@ -44,8 +44,8 @@ def _cashed(status):
     return 'cashed' in norm_text(status).lower()
 
 
-def reconcile(copies, cheques, payments, ecw_checked=True):
-    """Rows keyed by cheque number, plus a summary.
+def reconcile(copies, checks, payments, ecw_checked=True):
+    """Rows keyed by check number, plus a summary.
 
     `ecw_checked` False means eCW was not consulted this run: rows then say
     'eCW not checked' instead of 'not in eCW'.
@@ -67,7 +67,7 @@ def reconcile(copies, cheques, payments, ecw_checked=True):
         r = row(key)
         r.update(has_copy=True, copy_amount=money(c.get('amount')), copy_file=c.get('file', ''),
                  copy_url=c.get('url', ''), copy_date=c.get('check_date', ''))
-    for q in cheques:
+    for q in checks:
         key = norm_check(q.get('check_eft'))
         if not key:
             continue
@@ -95,7 +95,7 @@ def reconcile(copies, cheques, payments, ecw_checked=True):
             r['verdict'] = 'not in eCW' if ecw_checked else 'eCW not checked'
 
         if r['in_blue_shield'] and cashed and not r['has_copy']:
-            r['flags'].append('no copy of the cheque')
+            r['flags'].append('no copy of the check')
         amounts = {k: _d(r[k]) for k in ('copy_amount', 'bs_amount', 'ecw_amount') if _d(r[k]) is not None}
         if len(set(amounts.values())) > 1:
             r['flags'].append('amounts differ: ' + ', '.join(f"{k.split('_')[0]} {v:.2f}" for k, v in amounts.items()))
@@ -107,7 +107,7 @@ def reconcile(copies, cheques, payments, ecw_checked=True):
 def summarize(rows):
     """The counts behind the dashboard tiles, from any reconciled rows —
     this run's, or the whole helixona-checks table so the tiles always agree
-    with the table below them after a run that looked at one cheque."""
+    with the table below them after a run that looked at one check."""
     def flags(r):
         return [str(f) for f in (r.get('flags') or [])]
     return {
@@ -117,6 +117,6 @@ def summarize(rows):
         'not_in_ecw': sum(r.get('verdict') == 'not in eCW' for r in rows),
         'not_cashed': sum(r.get('verdict') == 'not cashed' for r in rows),
         'copy_only': sum(r.get('verdict') == 'copy only' for r in rows),
-        'no_copy': sum('no copy of the cheque' in flags(r) for r in rows),
+        'no_copy': sum('no copy of the check' in flags(r) for r in rows),
         'amount_mismatch': sum(any(f.startswith('amounts differ') for f in flags(r)) for r in rows),
     }

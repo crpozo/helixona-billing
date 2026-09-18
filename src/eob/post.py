@@ -1,13 +1,13 @@
-"""Remittance — entering a planned cheque into eCW.
+"""Remittance — entering a planned check into eCW.
 
 The clicking, and only the clicking. Every number typed here was decided by
 src/eob/plan.py (which eCW line gets which EOB money) and src/eob/ecw_payment.py
-(the popup's values, the grid's cells); a cheque whose plan is not `ready` is
+(the popup's values, the grid's cells); a check whose plan is not `ready` is
 never opened. docs/ecw_posting.md is the procedure, read off the operator's
 two recordings, and the order below is that order.
 
     Billing → Payments · Rcvd Pmt Dts from 07/01/2025 · Check # · Lookup
-        rows → a payment for this cheque exists: nothing to do
+        rows → a payment for this check exists: nothing to do
         none → Single Ins Payment (F4) → Claim No: = the EOB's PATIENT ACCOUNT
                NUMBER (our claim id) → Get Insurance → the radio beside
                "Blue Shield of California" → OK
@@ -482,7 +482,7 @@ def open_payments(page, wait_for_person=90):
 
 def payment_exists(page, check_eft, since):
     """Lookup by Check # on the Payments screen. True when a payment already
-    carries this cheque number, False when the grid comes back empty, None
+    carries this check number, False when the grid comes back empty, None
     when the screen could not be worked."""
     logger.info(f"🔎 Payments lookup: Rcvd Pmt Dts from {since}, Check # {check_eft}")
     _set_field(page, r'rcvd\s*pmt|received.*(from|date)|from\s*date|start', since, what='Rcvd Pmt Dts from')
@@ -505,7 +505,7 @@ def payment_exists(page, check_eft, since):
         if rows:
             logger.info(f"  💾 already in eCW: {len(rows)} payment row(s) carry check {check_eft}: {rows[0]}")
             return True
-    logger.info("  no payment on file for this cheque")
+    logger.info("  no payment on file for this check")
     return False
 
 
@@ -693,12 +693,12 @@ def cancel_popups(page):
         time.sleep(1)
 
 
-# ------------------------------------------------------------- one cheque
-def post_cheque(page, item, plan, since, post):
-    """Enter one planned cheque. Returns the result dict stored on the item."""
+# ------------------------------------------------------------- one check
+def post_check(page, item, plan, since, post):
+    """Enter one planned check. Returns the result dict stored on the item."""
     check = str(item['check_eft'])
     claims = plan.get('claims') or []
-    logger.info(f"═══ Cheque {check} · approve-to-pay ${plan['totals'].get('approve_to_pay')} · "
+    logger.info(f"═══ Check {check} · approve-to-pay ${plan['totals'].get('approve_to_pay')} · "
                 f"{len(claims)} claim(s) · {'POST' if post else 'DRY RUN'} ═══")
     fields, problems = payment_header({'approve_to_pay': plan['totals'].get('approve_to_pay')}, item)
     if problems:
@@ -825,7 +825,7 @@ def run_eob_post(page, aws_client, body, login):
             continue
         todo.append(it)
     todo.sort(key=lambda it: str(it.get('check_date', '')))
-    logger.info(f"📋 {len(todo)} cheque(s) to consider")
+    logger.info(f"📋 {len(todo)} check(s) to consider")
 
     # Plan first, so a run with nothing ready never opens eCW.
     ready = []
@@ -843,11 +843,11 @@ def run_eob_post(page, aws_client, body, login):
             ExpressionAttributeValues={':s': plan['status'], ':r': len(held), ':t': _now()})
         if plan['status'] != 'ready':
             counts['held'] += 1
-            logger.info(f"  ⏸ cheque {ck} held: {held[:3]}")
+            logger.info(f"  ⏸ check {ck} held: {held[:3]}")
             _record(eobs, ck, {'status': 'held', 'reason': '; '.join(held)[:600]}, post)
             continue
         ready.append((it, plan))
-    logger.info(f"🧮 {len(ready)} cheque(s) ready to enter, {counts['held']} held for review")
+    logger.info(f"🧮 {len(ready)} check(s) ready to enter, {counts['held']} held for review")
     if not ready:
         return dict({'ok': True, 'checks': len(todo)}, **counts)
 
@@ -863,14 +863,14 @@ def run_eob_post(page, aws_client, body, login):
         done += 1
         ck = str(it['check_eft'])
         try:
-            res = post_cheque(page, it, plan, since, post)
+            res = post_check(page, it, plan, since, post)
         except Exception as e:
             res = {'status': 'failed', 'reason': str(e)[:300]}
-            logger.error(f"  ❌ cheque {ck}: {e}")
+            logger.error(f"  ❌ check {ck}: {e}")
             _shot(page, f'{ck}_error')
             cancel_popups(page)
         counts[res['status']] = counts.get(res['status'], 0) + 1
-        logger.info(f"  → cheque {ck}: {res['status']} — {res.get('reason', '')}")
+        logger.info(f"  → check {ck}: {res['status']} — {res.get('reason', '')}")
         _record(eobs, ck, res, post)
         if res['status'] in ('posted', 'existing'):
             for c in plan.get('claims', []):

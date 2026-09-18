@@ -7,7 +7,7 @@ for step, up to the point where money would be posted into eCW:
        information = "Claim amount paid" from $0.01 → Search.
     2. Every Check/EFT number in the results → its Check/EFT details page:
        the transaction summary (check number, amount, date, status, cashed
-       date, payee) and the claims that cheque paid.
+       date, payee) and the claims that check paid.
     3. "Download EOB report" → the EOB PDF, which carries the PATIENT ACCOUNT
        NUMBER — the eCW claim number, our `claim_id` — and the CPT-level
        amounts a payment posting needs.
@@ -15,7 +15,7 @@ for step, up to the point where money would be posted into eCW:
 Read-only against the payer. Posting into eCW is a separate task with its
 own gate, because it writes money into the practice's ledger.
 
-Idempotent by cheque: a Check/EFT already stored with its PDF is skipped, so a
+Idempotent by check: a Check/EFT already stored with its PDF is skipped, so a
 run can be repeated after a crash or a portal outage without re-downloading
 anything. Every miss leaves a screenshot in /tmp and a log line naming it —
 the selectors here were written from a recording, not from the live DOM, and
@@ -205,7 +205,7 @@ def _check_no(row):
 
 
 def _visible_results(page):
-    """The rows on screen right now, with the cheque links they carry."""
+    """The rows on screen right now, with the check links they carry."""
     hdrs, raw = _read_table(page)
     return rows_with_links(hdrs, raw), hdrs, raw
 
@@ -213,7 +213,7 @@ def _visible_results(page):
 # The results list pages two ways: a "Show more claims" button that appends
 # rows, and a pager at the bottom (Angular's mat-paginator or a numbered
 # pager) whose next control replaces them. The operator (2026-09-17): "there
-# are more cheques — use the pagination at the bottom".
+# are more checks — use the pagination at the bottom".
 NEXT_PAGE_SELECTORS = (
     'button:has-text("Show more claims")',
     'button[aria-label*="Next page" i]', 'button.mat-paginator-navigation-next', 'button.mat-mdc-paginator-navigation-next',
@@ -293,7 +293,7 @@ def _back_to_results(page):
     time.sleep(2)
 
 
-# --------------------------------------------------------- per-cheque work
+# --------------------------------------------------------- per-check work
 def _download_eob_pdf(page, check):
     path = os.path.join(DIAG_DIR, f'eob_{check}.pdf')
     try:
@@ -363,12 +363,12 @@ def _sha256(path):
 
 
 def _open_check_link(page, check):
-    """Click the cheque's link in the search results.
+    """Click the check's link in the search results.
 
-    Rows are read off the screen page by page, and the portal's cheque link
+    Rows are read off the screen page by page, and the portal's check link
     is not always a plain href — so the link is clicked. If a details page is
-    still up from the previous cheque, back to the results first; then "Show
-    more claims" until this cheque's link is on the page (the portal may
+    still up from the previous check, back to the results first; then "Show
+    more claims" until this check's link is on the page (the portal may
     reset to the first page after a back).
     """
     link = f'a:has-text("{check}"), button:has-text("{check}")'
@@ -389,15 +389,15 @@ def _open_check_link(page, check):
             break
     if not visible():
         _shot(page, f'{check}_link_missing')
-        raise RuntimeError(f'the link for cheque {check} is not on the results page')
+        raise RuntimeError(f'the link for check {check} is not on the results page')
     page.click(link, timeout=10000)
 
 
 def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs, download_eob=False):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
-    # Always the click, never the href: every cheque's link points at the same
+    # Always the click, never the href: every check's link points at the same
     # /claims/checkeftDetails (the portal's markup, 2026-09-15) and the app
-    # decides which cheque to show from the click itself.
+    # decides which check to show from the click itself.
     _open_check_link(page, check)
     try:
         page.wait_for_load_state('networkidle', timeout=15000)
@@ -418,11 +418,11 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
     logger.info(f"  summary: {summary} · claims table: {len(detail_rows)} row(s)")
 
     # The EOB report is optional (2026-09-16): the reconciliation compares
-    # cheques — number, amount, status, cashed date — not the report's lines.
+    # checks — number, amount, status, cashed date — not the report's lines.
     pdf_path = _download_eob_pdf(page, check) if download_eob else ''
     s3_path, parsed, sha = '', {}, ''
     if not download_eob:
-        logger.info("  (EOB report not downloaded — cheque data only)")
+        logger.info("  (EOB report not downloaded — check data only)")
     if pdf_path:
         # The operator's step 2: the same report downloaded twice is one
         # report. Identical bytes are stored once and shared.
@@ -452,7 +452,7 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
         for prob in (parsed.get('problems') or [])[:10]:
             logger.warning(f"    ⚠️ {prob}")
 
-    # Pin each claim the cheque paid to one of ours. The PDF's account number
+    # Pin each claim the check paid to one of ours. The PDF's account number
     # is definitive when its claim number matches; otherwise subscriber+DOS.
     acct_by_bsc = {c['bsc_claim_number']: c['patient_account_number']
                    for c in parsed.get('claims', []) if c.get('bsc_claim_number')}
@@ -544,7 +544,7 @@ def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_
     logger.info(f"  💰 Check {check} · ${item['check_amount'] or '?'} · {item['check_date'] or '?'} "
                 f"· {item['check_status'] or '?'} · cashed {item['cashed_date'] or '?'} "
                 f"· {len(claims_out)} claim(s), matched {matched} · "
-                f"{'PDF ok' if s3_path else ('PDF MISSING' if download_eob else 'cheque data only')}")
+                f"{'PDF ok' if s3_path else ('PDF MISSING' if download_eob else 'check data only')}")
     return item
 
 
@@ -579,14 +579,14 @@ def run_eob_capture(page, aws_client, body):
                        ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'):
         # On file = captured, with or without the report PDF. (captured_at
         # was missing from the projection, so once the PDFs were skipped
-        # every cheque looked new and a test of 1 re-opened the same one.)
+        # every check looked new and a test of 1 re-opened the same one.)
         done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path') or it.get('captured_at'))
         if it.get('eob_pdf_sha256'):
             known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
                                                      str(it.get('eob_pdf_s3_path') or ''))
-    logger.info(f"💾 {len(done)} cheque(s) already on file")
+    logger.info(f"💾 {len(done)} check(s) already on file")
 
-    # Page by page through the results on screen. Every cheque is saved the
+    # Page by page through the results on screen. Every check is saved the
     # moment it is captured, so a crash or a portal hiccup loses nothing and
     # the next run picks up where this one stopped. No export: the portal's
     # file did not line up with the screen.
@@ -615,7 +615,7 @@ def run_eob_capture(page, aws_client, body):
                 logger.info(f"  first row: {raw[0]['cells'][:14]}")
                 logger.info(f"  first row links: {[l['text'] for l in raw[0]['links']][:8]}")
             if rows and not any(_check_no(r) for r in rows):
-                logger.warning("  ⚠️ rows were read but none carries a cheque number — the results "
+                logger.warning("  ⚠️ rows were read but none carries a check number — the results "
                                "table is not laid out as expected; not paging further")
                 _shot(page, 'results_no_checks')
                 break
@@ -630,7 +630,7 @@ def run_eob_capture(page, aws_client, body):
             if r.get('check_href') and not checks[ck]['href']:
                 checks[ck]['href'] = r['check_href']
         new = [ck for ck in checks if ck not in seen]
-        logger.info(f"📄 results page {pages + 1}: {len(rows)} row(s) on screen, {len(new)} cheque(s) not yet looked at")
+        logger.info(f"📄 results page {pages + 1}: {len(rows)} row(s) on screen, {len(new)} check(s) not yet looked at")
 
         for ck in new:
             seen.add(ck)
@@ -640,7 +640,7 @@ def run_eob_capture(page, aws_client, body):
             if done.get(ck) and not force:
                 skipped += 1
                 if only:
-                    logger.info(f"  cheque {only} is already on file (force:true re-opens it)")
+                    logger.info(f"  check {only} is already on file (force:true re-opens it)")
                     stop = True
                     break
                 continue
@@ -660,7 +660,7 @@ def run_eob_capture(page, aws_client, body):
                 _shot(page, f'{ck}_error')
             logger.info(f"  progress: {captured} captured · {skipped} on file · {failed} failed")
             if only:
-                # The one cheque asked for has been looked at; no need to
+                # The one check asked for has been looked at; no need to
                 # page through the rest of the results.
                 stop = True
                 break
@@ -683,7 +683,7 @@ def run_eob_capture(page, aws_client, body):
             break
 
     logger.info(f"═══ Remittance complete: {captured} captured · {skipped} already on file · {failed} failed "
-                f"· {len(seen)} cheque(s) seen over {pages + 1} page(s) ═══")
+                f"· {len(seen)} check(s) seen over {pages + 1} page(s) ═══")
     return {'ok': True, 'captured': captured, 'skipped': skipped, 'failed': failed,
             'checks': len(seen), 'rows': rows_seen,
             'captured_checks': captured_checks, 'failed_checks': failed_checks}

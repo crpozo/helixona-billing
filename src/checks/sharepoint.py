@@ -1,8 +1,8 @@
-"""The Insurance Checks folder on SharePoint — a copy of every physical cheque.
+"""The Insurance Checks folder on SharePoint — a copy of every physical check.
 
-The billing department scans each cheque Blue Shield mails and files the
+The billing department scans each check Blue Shield mails and files the
 image under Shared Documents / Insurance Checks on the BillingDepartment
-site. Those images are the first source of the reconciliation: a cheque we
+site. Those images are the first source of the reconciliation: a check we
 hold a copy of, with its number and amount read off the image.
 
 Access is Microsoft Graph, app-only. The secret `sharepoint_credentials`

@@ -332,7 +332,7 @@ def parse_eob_pages(pages):
             'member_id': names[k] if k < len(names) else '',
             'group_number': names[k + 1] if k + 1 < len(names) else '',
             'receipt_date': c.get('receipt_date') or '',
-            # What this cheque pays on the claim. An adjustment pays its own
+            # What this check pays on the claim. An adjustment pays its own
             # amount, which need not equal the lines' paid total.
             'claim_paid': adjusted or totals.get('paid', ''),
             'adjusted_payment': adjusted,

@@ -7,7 +7,7 @@ people and numbers.
 import unittest
 
 from src.eob.eob_pdf import keep_char, money, parse_eob_pages
-from src.eob.plan import plan_cheque
+from src.eob.plan import plan_check
 
 COLS = {'patient': (18.0, 67.68), 'account': (84.0, 141.36), 'dos': (151.44, 178.08),
         'procedure': (213.12, 251.52), 'units': (265.2, 291.84), 'billed': (316.8, 342.72),
@@ -183,29 +183,29 @@ ECW = {'1001': [C('99213', '197.00'), C('J3490', '900.00', drug='50 ML ASCORBIC 
 
 
 class FromTheReportToAPlan(unittest.TestCase):
-    def test_a_clean_cheque_is_ready(self):
-        p = plan_cheque(parse_eob_pages(statement()), ECW.get)
+    def test_a_clean_check_is_ready(self):
+        p = plan_check(parse_eob_pages(statement()), ECW.get)
         self.assertEqual(p['status'], 'ready', (p['reasons'], [c['reasons'] for c in p['claims']]))
         rows = {(r['cpt'], r['ecw_billed']): r['paid'] for r in p['claims'][0]['rows']}
         self.assertEqual(rows, {('99213', '197.00'): '60.00', ('J3490', '900.00'): '3.19',
                                 ('J3490', '40.00'): '9.60'})
 
-    def test_a_cheque_paid_to_the_member_is_not_posted(self):
+    def test_a_check_paid_to_the_member_is_not_posted(self):
         e = parse_eob_pages(statement(paid_to_member=True))
         self.assertEqual((e['payment_issued_to'], e['check_amount'], e['problems']), ('JANE DOE', '0.00', []))
-        p = plan_cheque(e, ECW.get)
+        p = plan_check(e, ECW.get)
         self.assertEqual(p['status'], 'needs_review')
         self.assertTrue(any('paid the member' in r for r in p['reasons']), p['reasons'])
 
     def test_an_adjusted_claim_is_held(self):
         e = parse_eob_pages(statement(adjusted=True))
         self.assertEqual(e['claims'][1]['adjusted_payment'], '52.12')
-        p = plan_cheque(e, ECW.get)
+        p = plan_check(e, ECW.get)
         self.assertEqual((p['claims'][0]['status'], p['claims'][1]['status']), ('ready', 'needs_review'))
         self.assertIn('adjusted an earlier payment', p['claims'][1]['reasons'][-1])
 
-    def test_a_report_that_disagrees_with_itself_holds_the_cheque(self):
-        p = plan_cheque(parse_eob_pages(statement(tamper='3.20')), ECW.get)
+    def test_a_report_that_disagrees_with_itself_holds_the_check(self):
+        p = plan_check(parse_eob_pages(statement(tamper='3.20')), ECW.get)
         self.assertEqual(p['status'], 'needs_review')
         self.assertTrue(any('J3490' in r for r in p['reasons']), p['reasons'])
 

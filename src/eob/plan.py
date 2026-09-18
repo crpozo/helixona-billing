@@ -1,4 +1,4 @@
-"""The posting plan for one cheque: every claim it paid, every line's money.
+"""The posting plan for one check: every claim it paid, every line's money.
 
 Input is the EOB as parsed per claim, and a way to fetch eCW's own lines for a
 claim (the HCFA PDF in S3, read by src/eob/hcfa_lines.py). Output is exactly
@@ -34,15 +34,15 @@ def _sum(values):
     return sum((_d(v) or Decimal('0') for v in values), Decimal('0'))
 
 
-def plan_cheque(parsed_eob, load_ecw_lines, claim_charges=None):
-    """Plan every claim on a cheque.
+def plan_check(parsed_eob, load_ecw_lines, claim_charges=None):
+    """Plan every claim on a check.
 
     `load_ecw_lines(claim_id)` returns eCW's service lines for the claim (from
     its HCFA) or None when there is no HCFA to read. `claim_charges` maps
     claim_id -> the charges on record, used to prove no HCFA line was missed.
 
     Returns {'status', 'reasons', 'claims': [per-claim plan], 'totals': {...}}.
-    A cheque is 'ready' only when every claim on it is.
+    A check is 'ready' only when every claim on it is.
     """
     claim_charges = claim_charges or {}
     plans, reasons = [], []
@@ -90,7 +90,7 @@ def plan_cheque(parsed_eob, load_ecw_lines, claim_charges=None):
                        f"{parsed_eob.get('check_amount') or '0.00'}) — there is no insurance payment to post")
     offsets = _d(parsed_eob.get('offsets'))
     if offsets:
-        reasons.append(f'Blue Shield took an offset of {offsets:.2f} out of this cheque — '
+        reasons.append(f'Blue Shield took an offset of {offsets:.2f} out of this check — '
                        f'the posting has to account for it')
     if parsed_eob.get('adjusted_claim') and not any(c.get('adjusted_payment') for c in claims):
         reasons.append('the EOB says it adjusts a previously processed claim')
@@ -112,7 +112,7 @@ def plan_cheque(parsed_eob, load_ecw_lines, claim_charges=None):
 
 
 def _stored(item):
-    """What capture stored for a cheque, in plan_cheque's shape."""
+    """What capture stored for a check, in plan_check's shape."""
     return {
         'eob_number': item.get('eob_number', ''),
         'approve_to_pay': item.get('approve_to_pay', ''),
@@ -127,11 +127,11 @@ def _stored(item):
 
 
 def plan_from_item(eob_item, get_claim, read_hcfa, read_eob=None):
-    """The plan for a stored cheque (a helixona-eobs item).
+    """The plan for a stored check (a helixona-eobs item).
 
     `get_claim(claim_id)` returns our claim record or None; `read_hcfa(s3_path)`
     returns the HCFA's service lines; `read_eob(s3_path)` re-reads the EOB
-    report, so a cheque captured before a parser fix is planned from its
+    report, so a check captured before a parser fix is planned from its
     report rather than from what was stored at the time.
     """
     parsed, notes = None, []
@@ -163,7 +163,7 @@ def plan_from_item(eob_item, get_claim, read_hcfa, read_eob=None):
             return None
 
     charges = {cid: r['charges'] for cid, r in records.items() if r.get('charges') not in (None, '')}
-    plan = plan_cheque(parsed, load, claim_charges=charges)
+    plan = plan_check(parsed, load, claim_charges=charges)
     plan.update({'check_eft': eob_item.get('check_eft', ''), 'eob_number': parsed.get('eob_number', ''),
                  'notes': notes})
     return plan

@@ -158,7 +158,7 @@ def list_folder(page, site, folder, skip=SKIP_FOLDERS):
     in the shape of sharepoint.list_check_files: {'id','name','path','size',
     'etag','modified','web_url','download_url'}. `path` is relative to the
     folder — 'Posted Checks/2026/07-2026/scan.pdf' — so it says where the
-    department filed the cheque."""
+    department filed the check."""
     host = f"{urlparse(site).scheme}://{urlparse(site).netloc}"
     out = []
     skipped = []

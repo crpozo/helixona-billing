@@ -65,7 +65,7 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
-        # One item per cheque number the reconciliation knows: the image we
+        # One item per check number the reconciliation knows: the image we
         # hold (SharePoint / S3 inbox), Blue Shield's status, eCW's payment,
         # and the verdict. Created on first use by src/checks/run.py too.
         "TableName": "helixona-checks",

@@ -1,28 +1,28 @@
-"""Remittance — which cheques are posted, which are not, and which we hold.
+"""Remittance — which checks are posted, which are not, and which we hold.
 
 The operator's procedure (2026-09-16):
 
     1. SharePoint, Shared Documents / Insurance Checks: every file is the
-       image of a cheque. Read its number and amount.
-    2. Blue Shield: the cheque's Check/EFT status — Check Cashed or not.
+       image of a check. Read its number and amount.
+    2. Blue Shield: the check's Check/EFT status — Check Cashed or not.
        With blue_shield:true this run walks the portal itself (src/eob/
        capture.py); otherwise it takes what earlier captures stored in
        helixona-eobs.
-    3. Every cheque we hold no copy of is flagged.
-    4. eCW, Billing → Payments, the cheque number: on file means posted
+    3. Every check we hold no copy of is flagged.
+    4. eCW, Billing → Payments, the check number: on file means posted
        (or entered and left unposted).
 
 Friday, Vignesh's team finishes entering the payments; the run after that
 is the one that says what is left.
 
-Two shapes of run. A full run reconciles every cheque known to the three
+Two shapes of run. A full run reconciles every check known to the three
 sources. A targeted run — limit_checks / check_eft, the "test of 1" — takes
-one (or a few) cheque(s) from Blue Shield and compares just those: the
+one (or a few) check(s) from Blue Shield and compares just those: the
 copies named after them are read first, eCW is asked for each by Check #,
 and only their rows are written. Either way the dashboard's tiles are
 recomputed over the whole table, so they agree with the rows under them.
 
-Every file read is stored under its cheque number in helixona-checks, so
+Every file read is stored under its check number in helixona-checks, so
 the next run only reads new files (by name + etag). The `_run` item is the
 live trace of the current run — step by step, for the dashboard — and
 `_summary` the counts. Nothing here writes to SharePoint, Blue Shield or
@@ -107,16 +107,16 @@ def _sources(aws_client, body, get_page=None):
 
 
 def _named_after(path, numbers):
-    """A file whose name carries one of the cheque numbers (a scan is often
+    """A file whose name carries one of the check numbers (a scan is often
     saved as 'Check 30912971.pdf')."""
     digits = re.sub(r'\D', '', os.path.basename(str(path)))
     return any(n and n in digits for n in numbers)
 
 
 def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
-    """Read every cheque image not yet on file. Returns (read, skipped, failed).
+    """Read every check image not yet on file. Returns (read, skipped, failed).
 
-    `prefer`: cheque numbers this run is about — files named after them are
+    `prefer`: check numbers this run is about — files named after them are
     read first, so a capped test run reaches them before anything else."""
     files, download, source = _sources(aws_client, body, get_page)
     limit = int(body.get('limit_files') or 0)
@@ -153,7 +153,7 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 'copy_payer': got.get('payer', ''),
                 'copy_file': f['path'],
                 # Where the department filed it — 'Posted Checks/2026/07-2026'
-                # — the team's own word on the cheque, shown on the dashboard.
+                # — the team's own word on the check, shown on the dashboard.
                 'copy_folder': f['path'].rsplit('/', 1)[0] if '/' in f['path'] else '',
                 'copy_status': ('posted' if f['path'].lower().startswith('posted')
                                 else 'unposted' if f['path'].lower().startswith('unposted') else ''),
@@ -172,7 +172,7 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 ExpressionAttributeValues={f':{k}': v for k, v in item.items() if k != 'check_number'})
             if item['has_copy']:
                 read += 1
-                logger.info(f"  🖼 {f['path']}: cheque {key} ${item['copy_amount'] or '?'} ({item['copy_read_by']})")
+                logger.info(f"  🖼 {f['path']}: check {key} ${item['copy_amount'] or '?'} ({item['copy_read_by']})")
             else:
                 failed += 1
                 logger.warning(f"  ⚠️ {f['path']}: {item['copy_problem']}")
@@ -182,10 +182,10 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
 
 # ------------------------------------------------------------ blue shield
 def collect_blue_shield(page, aws_client, body, since, limit_checks, only):
-    """Walk the portal for this run's cheques (src/eob/capture.py, cheque
-    data only). Returns the cheque numbers captured. A named cheque is
+    """Walk the portal for this run's checks (src/eob/capture.py, check
+    data only). Returns the check numbers captured. A named check is
     re-opened even when it is on file — the point is its status today; an
-    unnamed test of 1 takes the next cheque not yet on file, so each test
+    unnamed test of 1 takes the next check not yet on file, so each test
     tries a different one."""
     from src.eob.capture import run_eob_capture
     got = run_eob_capture(page, aws_client, {
@@ -203,7 +203,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
 
     body: since · copies · ecw · limit_files · source · blue_shield ·
     limit_checks · check_eft · force. blue_shield:true with limit_checks:1
-    is the test of 1: one cheque from the portal, compared with the copies
+    is the test of 1: one check from the portal, compared with the copies
     and with eCW, its row on the dashboard.
     """
     since = str(body.get('since') or DEFAULT_SINCE)
@@ -212,7 +212,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
     blue_shield = bool(body.get('blue_shield'))
     limit_checks = int(body.get('limit_checks') or 0)
     only = norm_check(body.get('check_eft'))
-    logger.info(f"Remittance — cheque reconciliation: since={since} blue_shield={blue_shield} "
+    logger.info(f"Remittance — check reconciliation: since={since} blue_shield={blue_shield} "
                 f"limit_checks={limit_checks or 'none'} check_eft={only or 'any'} copies={do_copies} ecw={do_ecw}")
     table = ensure_table(aws_client)
 
@@ -229,7 +229,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
         except Exception as e:
             logger.warning(f"  (run trace not written: {e})")
 
-    # 1. Blue Shield — this run's cheques.
+    # 1. Blue Shield — this run's checks.
     targets = set()
     if blue_shield:
         progress('blue_shield', 'walking the portal…')
@@ -241,10 +241,10 @@ def run_check_reconcile(aws_client, body, login, get_page):
         if limit_checks or only:
             targets = set(caught) or ({only} if only else set())
             if not caught and not only:
-                progress('blue_shield', 'no cheque captured — nothing to compare')
+                progress('blue_shield', 'no check captured — nothing to compare')
                 progress('done', 'stopped')
-                return {'ok': False, 'reason': 'no cheque captured'}
-        progress('blue_shield', f"{len(caught)} cheque(s) collected"
+                return {'ok': False, 'reason': 'no check captured'}
+        progress('blue_shield', f"{len(caught)} check(s) collected"
                  + (f": {', '.join(caught)}" if caught and len(caught) <= 6 else ''))
     elif only:
         targets = {only}
@@ -255,23 +255,23 @@ def run_check_reconcile(aws_client, body, login, get_page):
 
     # 2. The copies.
     if do_copies:
-        progress('copies', 'reading the cheque images…')
+        progress('copies', 'reading the check images…')
         try:
             read, skipped, failed = read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)
             progress('copies', f"{read} read · {skipped} on file · {failed} unreadable")
         except Exception as e:
-            logger.error(f"❌ cheque images could not be read: {e}")
+            logger.error(f"❌ check images could not be read: {e}")
             progress('copies', f"not read: {str(e)[:120]}")
     else:
         progress('copies', 'skipped (copies:false)')
 
-    cheques = scan_all(aws_client.dynamodb.Table(EOB_TABLE),
+    checks = scan_all(aws_client.dynamodb.Table(EOB_TABLE),
                        ProjectionExpression='check_eft, check_amount, check_status, check_date, cashed_date')
     if targets:
-        cheques = [q for q in cheques if norm_check(q.get('check_eft')) in targets]
-    logger.info(f"🧾 Blue Shield: {len(cheques)} cheque(s)" + ('' if blue_shield else ' on file from earlier captures'))
+        checks = [q for q in checks if norm_check(q.get('check_eft')) in targets]
+    logger.info(f"🧾 Blue Shield: {len(checks)} check(s)" + ('' if blue_shield else ' on file from earlier captures'))
     if not blue_shield:
-        progress('blue_shield', f"{len(cheques)} cheque(s) on file from earlier captures")
+        progress('blue_shield', f"{len(checks)} check(s) on file from earlier captures")
 
     # 3. eCW.
     payments, ecw_checked = [], False
@@ -323,7 +323,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
     rows, _ = reconcile(
         [{'check_number': c['check_number'], 'amount': c.get('copy_amount', ''), 'file': c.get('copy_file', ''),
           'url': c.get('copy_url', ''), 'check_date': c.get('copy_date', '')} for c in copies],
-        cheques, payments, ecw_checked=ecw_checked)
+        checks, payments, ecw_checked=ecw_checked)
     if targets:
         rows = [r for r in rows if r['check_number'] in targets]
 
@@ -353,7 +353,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
     table.put_item(Item={'check_number': SUMMARY_KEY, **summary, 'ecw_checked': ecw_checked,
                          'since': since, 'reconciled_at': now, 'run_rows': len(rows)})
     progress('verdict', ' · '.join(f"{r['check_number']}: {r['verdict']}" + (f" ({', '.join(r['flags'])})" if r['flags'] else '')
-                                   for r in rows[:6]) if targets else f"{len(rows)} cheque(s) reconciled")
+                                   for r in rows[:6]) if targets else f"{len(rows)} check(s) reconciled")
     progress('done', now)
     logger.info(f"═══ Reconciliation ({run['mode']}): {len(rows)} row(s) this run · table {summary} ═══")
     return {'ok': True, **summary, 'ecw_checked': ecw_checked, 'run_rows': len(rows), 'targets': run['targets']}

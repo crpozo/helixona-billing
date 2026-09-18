@@ -1,9 +1,9 @@
-"""Remittance — the cheque reconciliation: copies · Blue Shield · eCW.
+"""Remittance — the check reconciliation: copies · Blue Shield · eCW.
 
-The operator's procedure (2026-09-16): read every cheque image in the
+The operator's procedure (2026-09-16): read every check image in the
 SharePoint folder, see whether Blue Shield cashed it, flag the cashed
-cheques we hold no copy of, and see whether eCW has a payment under that
-number. Posted / unposted / not in eCW, per cheque.
+checks we hold no copy of, and see whether eCW has a payment under that
+number. Posted / unposted / not in eCW, per check.
 """
 import os
 import unittest
@@ -21,7 +21,7 @@ def _read(rel):
         return fh.read()
 
 
-class ChequeNumbersAreComparable(unittest.TestCase):
+class CheckNumbersAreComparable(unittest.TestCase):
     def test_leading_zeros_and_labels_fall_away(self):
         self.assertEqual(norm_check('0031401901'), '31401901')
         self.assertEqual(norm_check('31401901 Check/EFT information'), '31401901')
@@ -29,7 +29,7 @@ class ChequeNumbersAreComparable(unittest.TestCase):
         self.assertEqual(norm_check('0000'), '0')
 
 
-class TheVerdictPerCheque(unittest.TestCase):
+class TheVerdictPerCheck(unittest.TestCase):
     COPIES = [{'check_number': '0030912971', 'amount': '275.09', 'file': 'a.pdf'},
               {'check_number': '4061950', 'amount': '265.75', 'file': 'b.jpg'},
               {'check_number': '99999999', 'amount': '10.00', 'file': 'c.png'}]
@@ -54,15 +54,15 @@ class TheVerdictPerCheque(unittest.TestCase):
         self.assertEqual((summary['posted'], summary['unposted'], summary['not_in_ecw'], summary['not_cashed'], summary['copy_only']),
                          (1, 1, 1, 1, 1))
 
-    def test_a_cashed_cheque_without_an_image_is_flagged(self):
+    def test_a_cashed_check_without_an_image_is_flagged(self):
         by, summary = self._rows()
-        self.assertIn('no copy of the cheque', by['31406730']['flags'])
-        self.assertNotIn('no copy of the cheque', by['30912971']['flags'])
+        self.assertIn('no copy of the check', by['31406730']['flags'])
+        self.assertNotIn('no copy of the check', by['30912971']['flags'])
         # Not cashed yet: nothing to hold a copy of, no flag.
-        self.assertNotIn('no copy of the cheque', by['31401901']['flags'])
+        self.assertNotIn('no copy of the check', by['31401901']['flags'])
         self.assertEqual(summary['no_copy'], 1)
 
-    def test_the_copy_pins_the_cheque_despite_leading_zeros(self):
+    def test_the_copy_pins_the_check_despite_leading_zeros(self):
         by, _ = self._rows()
         self.assertTrue(by['30912971']['has_copy'])
         self.assertEqual(by['30912971']['copy_amount'], '275.09')
@@ -79,7 +79,7 @@ class TheVerdictPerCheque(unittest.TestCase):
 
     def test_the_tiles_count_over_whatever_rows_they_are_given(self):
         # The dashboard counts over the whole table, not over the last run,
-        # so a test of 1 does not make the tiles say "1 cheque".
+        # so a test of 1 does not make the tiles say "1 check".
         rows, _ = reconcile(self.COPIES, self.CHEQUES, self.PAYMENTS)
         table_rows = rows + [{'check_number': '7', 'verdict': 'posted', 'flags': ['amounts differ: copy 1.00, bs 2.00']}]
         sm = summarize(table_rows)
@@ -89,7 +89,7 @@ class TheVerdictPerCheque(unittest.TestCase):
 
 
 class TheImageReaderIsShapeChecked(unittest.TestCase):
-    def test_the_models_json_is_taken_only_when_it_is_a_cheque_number(self):
+    def test_the_models_json_is_taken_only_when_it_is_a_check_number(self):
         got = parse_model_json('Here you go: {"check_number": "0031401901", "amount": "$38.81", "check_date": "09/11/2026", '
                                '"payer": "Blue Shield of California", "payee": "Helixona Inc", "confidence": "high"}')
         self.assertEqual(got['check_number'], '0031401901')
@@ -104,7 +104,7 @@ class TheImageReaderIsShapeChecked(unittest.TestCase):
         self.assertEqual(got['check_date'], '09/11/2026')
         self.assertEqual(got['payer'], 'Blue Shield of California')
 
-    def test_a_bare_number_is_not_a_cheque_number(self):
+    def test_a_bare_number_is_not_a_check_number(self):
         self.assertEqual(parse_check_text('Patient account 31401901 statement')['check_number'], '')
 
 
@@ -215,7 +215,7 @@ class _Aws:
 
 
 class TheTestOfOne(unittest.TestCase):
-    """One cheque from Blue Shield, compared with the copies and eCW, its
+    """One check from Blue Shield, compared with the copies and eCW, its
     row alone written — while the tiles keep counting the whole table."""
     CHEQUE = {'check_eft': '30925163', 'check_amount': '227.20', 'check_status': 'Check Cashed',
               'check_date': '04/17/2026', 'cashed_date': '07/27/2026'}
@@ -223,7 +223,7 @@ class TheTestOfOne(unittest.TestCase):
     def _run(self, body, find=lambda page, ck, since, navigate=True: [], capture=None, copies=None):
         checks = _Table('helixona-checks', [
             {'check_number': '11111111', 'verdict': 'posted', 'flags': [], 'has_copy': True, 'reconciled_at': 'before'},
-            {'check_number': '22222222', 'verdict': 'not in eCW', 'flags': ['no copy of the cheque'], 'reconciled_at': 'before'}])
+            {'check_number': '22222222', 'verdict': 'not in eCW', 'flags': ['no copy of the check'], 'reconciled_at': 'before'}])
         eobs = _Table('helixona-eobs', [self.CHEQUE, {'check_eft': '11111111', 'check_amount': '1.00',
                                                       'check_status': 'Check Cashed', 'check_date': '01/01/2026',
                                                       'cashed_date': '01/02/2026'}])
@@ -248,11 +248,11 @@ class TheTestOfOne(unittest.TestCase):
                                                  get_page=lambda: object())
         return result, checks
 
-    def test_one_cheque_end_to_end(self):
+    def test_one_check_end_to_end(self):
         result, checks = self._run({'blue_shield': True, 'limit_checks': 1})
         self.assertEqual(result['targets'], ['30925163'])
         self.assertEqual(self.capture_body['limit_checks'], 1)
-        self.assertFalse(self.capture_body['force'], 'an unnamed test takes the next cheque not yet on file')
+        self.assertFalse(self.capture_body['force'], 'an unnamed test takes the next check not yet on file')
         self.assertFalse(self.capture_body['download_eob'])
         self.assertEqual(self.prefer, {'30925163'})
         row = checks.items['30925163']
@@ -279,12 +279,12 @@ class TheTestOfOne(unittest.TestCase):
         self.assertEqual((row['verdict'], row['ecw_payment_id'], row['flags']), ('posted', '5050', []))
         self.assertIn('30925163 on file', checks.items['_run']['steps']['ecw'])
 
-    def test_a_named_cheque_is_reopened_for_its_status_today(self):
+    def test_a_named_check_is_reopened_for_its_status_today(self):
         self._run({'blue_shield': True, 'check_eft': '30925163'})
         self.assertTrue(self.capture_body['force'])
         self.assertEqual(self.capture_body['check_eft'], '30925163')
 
-    def test_a_named_cheque_needs_no_portal_walk(self):
+    def test_a_named_check_needs_no_portal_walk(self):
         result, checks = self._run({'blue_shield': False, 'check_eft': '30925163'})
         self.assertFalse(hasattr(self, 'capture_body'))
         self.assertEqual(checks.items['30925163']['verdict'], 'not in eCW')
@@ -292,7 +292,7 @@ class TheTestOfOne(unittest.TestCase):
 
     def test_nothing_captured_means_nothing_compared(self):
         result, checks = self._run({'blue_shield': True, 'limit_checks': 1}, capture={'ok': False, 'reason': 'login'})
-        self.assertEqual(result, {'ok': False, 'reason': 'no cheque captured'})
+        self.assertEqual(result, {'ok': False, 'reason': 'no check captured'})
         self.assertNotIn('30925163', checks.items)
         self.assertEqual(checks.items['_run']['steps']['done'], 'stopped')
 
@@ -416,7 +416,7 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)", r)
         self.assertIn("DEFAULT_SHARE_LINK = ('https://helixona.sharepoint.com/:f:/s/BillingDepartment/'", _read('src/checks/sharepoint_browser.py'))
 
-    def test_an_unreadable_file_is_tried_again_and_is_not_a_cheque(self):
+    def test_an_unreadable_file_is_tried_again_and_is_not_a_check(self):
         r = _read('src/checks/run.py')
         self.assertIn("if it.get('copy_file') and it.get('has_copy'):", r)
         self.assertIn("startswith(('_', 'unreadable:'))", r)
@@ -484,7 +484,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn('open it on the live screen (noVNC)', p)
         self.assertIn('that route belongs in PAYMENT_HASHES', p)
 
-    def test_a_cheque_captured_without_a_pdf_is_on_file(self):
+    def test_a_check_captured_without_a_pdf_is_on_file(self):
         c = _read('src/eob/capture.py')
         self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'", c)
         # ...and the optional SharePoint app secret is looked for without an error line.
@@ -501,12 +501,12 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn('page.mouse.wheel(0, 20000)', c)
         self.assertIn('def _js_next_number():', c)
 
-    def test_the_capture_hands_back_the_cheques_it_opened(self):
+    def test_the_capture_hands_back_the_checks_it_opened(self):
         c = _read('src/eob/capture.py')
         self.assertIn("'captured_checks': captured_checks, 'failed_checks': failed_checks", c)
-        # One cheque asked for: looked at, then stop — no paging through the rest.
-        self.assertIn("            if only:\n                # The one cheque asked for has been looked at", c)
-        self.assertIn("'cheque data only'", c)
+        # One check asked for: looked at, then stop — no paging through the rest.
+        self.assertIn("            if only:\n                # The one check asked for has been looked at", c)
+        self.assertIn("'check data only'", c)
         self.assertNotIn("· PDF {'ok' if s3_path else 'MISSING'}", c)
 
     def test_the_team_has_its_own_page(self):
@@ -515,8 +515,8 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn("'dashboard_checks.html'", d)
         self.assertIn('href="/checks" target="_blank"', d)
         h = _read('dashboard_checks.html')
-        for want in ("fetch('/api/checks')", 'cheques need attention', 'What to do', 'Cashed, not in eCW',
-                     'Entered, unposted', 'No copy of cheque', 'How to read this', 'prefers-color-scheme: dark',
+        for want in ("fetch('/api/checks')", 'checks need attention', 'What to do', 'Cashed, not in eCW',
+                     'Entered, unposted', 'No copy of check', 'How to read this', 'prefers-color-scheme: dark',
                      'data-theme="dark"', 'href="/api/checks.csv"'):
             self.assertIn(want, h, want)
         self.assertIn('src="/static/helixona-logo.png"', h)
@@ -551,7 +551,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn("S3_INBOX_PREFIX = 'checks/inbox/'", s)
         self.assertIn("reading the S3 inbox instead", _read('src/checks/run.py'))
 
-    def test_the_dashboard_has_the_cheques_table_and_csv(self):
+    def test_the_dashboard_has_the_checks_table_and_csv(self):
         d = _read('dashboard.py')
         self.assertIn('<option value="check_reconcile" data-bot="eob">', d)
         self.assertIn('id="checks-section"', d)

@@ -1,4 +1,4 @@
-"""What a cheque image says: its number, its amount, its date, who paid.
+"""What a check image says: its number, its amount, its date, who paid.
 
 Two readers, cheapest first:
 
@@ -6,7 +6,7 @@ Two readers, cheapest first:
   prints "Check No." and the amount in plain text;
 * otherwise Claude (the Anthropic API) looks at the image and answers in JSON.
 
-Either way the answer is checked for shape before it is believed: a cheque
+Either way the answer is checked for shape before it is believed: a check
 number is 5 to 11 digits, an amount has cents. Anything else is recorded as
 unreadable, for a person, never guessed.
 """
@@ -38,7 +38,7 @@ IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
                '.gif': 'image/gif', '.webp': 'image/webp'}
 CHECK_NO_RE = re.compile(r'\b\d{5,11}\b')
 
-PROMPT = """This is a scan of a paper check (cheque) or its remittance stub, mailed by a health insurer to a medical clinic.
+PROMPT = """This is a scan of a paper check (check) or its remittance stub, mailed by a health insurer to a medical clinic.
 Read it and answer with ONE JSON object and nothing else:
 {"check_number": "<digits only, the check number printed on the check — usually top right, and again in the MICR line at the bottom between the ⑈ symbols>",
  "amount": "<the amount paid, as digits with cents, e.g. 1234.56>",
@@ -90,7 +90,7 @@ def parse_check_text(text):
     on the page ("Check No", "Amount"): a bare number could be anything."""
     t = norm_text(text)
     out = {'check_number': '', 'amount': '', 'check_date': '', 'payer': '', 'payee': ''}
-    m = re.search(r'(?:check|cheque|chk|eft)\s*(?:no\.?|number|#|num\.?)?\s*:?\s*(\d{5,11})\b', t, re.I)
+    m = re.search(r'(?:check|check|chk|eft)\s*(?:no\.?|number|#|num\.?)?\s*:?\s*(\d{5,11})\b', t, re.I)
     if m:
         out['check_number'] = m.group(1)
     m = re.search(r'(?:amount|pay|total|net)[^$\d]{0,30}\$?\s*([\d,]+\.\d{2})', t, re.I)

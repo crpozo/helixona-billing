@@ -38,7 +38,7 @@ class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_remittance_hides_the_claims_table(self):
         self.assertIn("claimsSec.hidden = (bot === 'eob')", _fn('setActiveBot'))
 
-    def test_the_other_tabs_hide_the_cheques_table(self):
+    def test_the_other_tabs_hide_the_checks_table(self):
         self.assertIn("chkSec.hidden = (bot !== 'eob')", _fn('setActiveBot'))
 
     def test_the_panels_are_pinned_to_their_columns(self):
@@ -76,10 +76,10 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
         self.assertIn("'do not match' : 'remaining'", fn)
 
 
-class TheChequesTableIsTheRemittancePanel(unittest.TestCase):
+class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
     """The old per-claim EOB table and its posting plan are gone (2026-09-17):
-    the bot compares cheques, it does not enter payments."""
-    def test_one_row_per_cheque_with_the_three_sources(self):
+    the bot compares checks, it does not enter payments."""
+    def test_one_row_per_check_with_the_three_sources(self):
         fn = _fn('renderChecks')
         for col in ('copy_amount', 'bs_amount', 'bs_status', 'ecw_posted', 'ecw_unposted', 'verdict'):
             self.assertIn(col, fn)
@@ -90,12 +90,12 @@ class TheChequesTableIsTheRemittancePanel(unittest.TestCase):
                      'eob_capture', 'eob_post', 'with an EOB captured', 'Explanations of Benefits'):
             self.assertNotIn(gone, src, gone)
 
-    def test_the_cheques_stay_live_on_their_tab(self):
+    def test_the_checks_stay_live_on_their_tab(self):
         self.assertIn("if (window.activeBot === 'eob') loadChecks();", _src())
 
     def test_the_empty_state_says_what_to_do(self):
         src = _src()
-        self.assertIn('Reconcile cheques</strong> from the task panel', src)
+        self.assertIn('Reconcile checks</strong> from the task panel', src)
         self.assertIn('MFA code</strong> box', src)
 
 
