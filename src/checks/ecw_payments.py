@@ -281,7 +281,30 @@ def _grid_signature(page):
         return (0, ())
 
 
-def find_payments(page, check_no, since, navigate=True, shot=True):
+def spellings_of(*forms):
+    """The ways one check number is written across the three systems, in
+    the order to try them in eCW: as printed on the check (0231282015 —
+    which is how the team types it into eCW), then with one and two leading
+    zeros, then bare. A number no source writes with a leading zero has one
+    spelling: itself."""
+    raw = [re.sub(r'\D', '', str(f or '')) for f in forms]
+    raw = [r for r in raw if r]
+    if not raw:
+        return []
+    bare = raw[0].lstrip('0') or '0'
+    out = []
+    if any(r.startswith('0') for r in raw):
+        out = [r for r in raw if r.startswith('0')] + ['0' + bare, '00' + bare]
+    out.append(bare)
+    seen, uniq = set(), []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq[:4]
+
+
+def find_payments(page, check_no, since, navigate=True, shot=True, spellings=None):
     """The payments eCW holds under one check number — the operator's own
     step (2026-09-18: "put the check number in Check #, dates from 07/01/25
     to today, look the check up"): Billing → Payments, Rcvd Pmt Dts from
@@ -289,16 +312,39 @@ def find_payments(page, check_no, since, navigate=True, shot=True):
     back empty (not in eCW), None when the screen could not be worked (a
     screenshot says what was on it).
 
+    eCW matches Check # exactly, and the team types the number as printed
+    on the check, leading zeros included (0231282015); Blue Shield prints
+    it bare. `spellings` are the forms to try, in order (spellings_of);
+    the first that answers with a payment wins, and the payment carries
+    the spelling eCW knows it by.
+
     `navigate` True opens the screen and sets the dates; False means the
     screen is up from the last call — only Check # changes, and the lookup
     waits for the grid to answer instead of a fixed three seconds, so a run
     over hundreds of checks costs a second or two each."""
     check_no = str(check_no).strip()
-    want = check_no.lstrip('0')
     if navigate:
         if not open_payments(page):
             return None
         _set_dates(page, since)
+    tried = []
+    for spelling in (spellings or spellings_of(check_no)):
+        got = _lookup_once(page, spelling, since, shot)
+        tried.append(spelling)
+        if got is None:
+            return None
+        if got:
+            if spelling != check_no:
+                logger.info(f"  (eCW knows {check_no} as {spelling})")
+            return got
+    if len(tried) > 1:
+        logger.info(f"  not in eCW under any spelling: {', '.join(tried)}")
+    return []
+
+
+def _lookup_once(page, check_no, since, shot):
+    """One Check # lookup on the open screen. [] empty, None unread."""
+    want = check_no.lstrip('0')
     before = _grid_signature(page)
     logger.info(f"🔎 Payments lookup: Check # {check_no} (Rcvd Pmt Dts {since} → today)")
     if not _set_field(page, CHECK_RX, check_no, what='Check #'):

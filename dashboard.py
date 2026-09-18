@@ -1314,7 +1314,7 @@ window.scrollToEl = function(sel){
             const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
             body.innerHTML = rows.map(r => `
                 <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
-                  <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
+                  <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_full || r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
                   <td>${r.has_copy ? '<span style="color:var(--success);font-weight:600">✓ yes</span>' : '<span style="color:var(--bad);font-weight:600">✗ no</span>'}</td>
                   <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`) + (r.copy_file ? `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file).split('/').pop())}</div>` : '') : '<span style="color:var(--text-muted)">—</span>'}</td>
                   <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
@@ -2276,6 +2276,9 @@ def _checks_rows():
     unreadable = [it for it in items if str(it.get('check_number', '')).startswith('unreadable:')]
     for r in rows:
         r['flags'] = list(r.get('flags') or [])
+        # The number as printed on the check (zeros kept) when a copy was read; else the bare key.
+        raw = str(r.get('copy_check_raw') or '')
+        r['check_full'] = raw if raw.endswith(str(r['check_number'])) else str(r['check_number'])
     rows.sort(key=lambda r: (str(r.get('bs_date') or r.get('copy_date') or ''), str(r.get('check_number'))), reverse=True)
     summary = {**summarize(rows), 'unreadable': len(unreadable),
                'unreadable_files': [{'file': str(u.get('copy_file', '')), 'problem': str(u.get('copy_problem', ''))} for u in unreadable[:50]],
@@ -2311,7 +2314,7 @@ def api_checks_csv():
     import csv
     import io
     from flask import Response
-    cols = ['check_number', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
+    cols = ['check_number', 'check_full', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
             'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
             'ecw_posted', 'ecw_unposted', 'reconciled_at']
     try:

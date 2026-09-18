@@ -230,7 +230,7 @@ class TheTestOfOne(unittest.TestCase):
     CHEQUE = {'check_eft': '30925163', 'check_amount': '227.20', 'check_status': 'Check Cashed',
               'check_date': '04/17/2026', 'cashed_date': '07/27/2026'}
 
-    def _run(self, body, find=lambda page, ck, since, navigate=True, shot=True: [], capture=None, copies=None):
+    def _run(self, body, find=lambda page, ck, since, navigate=True, shot=True, **kw: [], capture=None, copies=None):
         checks = _Table('helixona-checks', [
             {'check_number': '11111111', 'verdict': 'posted', 'flags': [], 'has_copy': True, 'reconciled_at': 'before'},
             {'check_number': '22222222', 'verdict': 'not in eCW', 'flags': ['no copy of the check'], 'reconciled_at': 'before'}])
@@ -283,7 +283,7 @@ class TheTestOfOne(unittest.TestCase):
     def test_the_payment_on_file_makes_it_posted(self):
         result, checks = self._run(
             {'blue_shield': True, 'limit_checks': 1},
-            find=lambda page, ck, since, navigate=True, shot=True: [{'check_no': ck, 'amount': '227.20', 'posted': '227.20',
+            find=lambda page, ck, since, navigate=True, shot=True, **kw: [{'check_no': ck, 'amount': '227.20', 'posted': '227.20',
                                                                      'unposted': '0.00', 'payment_id': '5050'}])
         row = checks.items['30925163']
         self.assertEqual((row['verdict'], row['ecw_payment_id'], row['flags']), ('posted', '5050', []))
@@ -293,12 +293,12 @@ class TheTestOfOne(unittest.TestCase):
         # 2026-09-18, the operator: put the number in Check #, dates from
         # 07/01/25 to today, look the check up — never the whole list.
         r = _read('src/checks/run.py')
-        self.assertIn("got = find_payments(page, ck, since, navigate=first, shot=bool(targets))", r)
+        self.assertIn("got = find_payments(page, ck, since, navigate=first, shot=bool(targets), spellings=spellings.get(ck))", r)
         self.assertIn("known = {norm_check(it.get('check_number')): it for it in scan_all(table)", r)
         self.assertIn("settled = {ck: it for ck, it in known.items() if it.get('in_ecw') and it.get('verdict') == 'posted'}", r)
         self.assertIn("if not targets:   # a targeted run asks again; a full run trusts the settled answer", r)
         e = _read('src/checks/ecw_payments.py')
-        self.assertIn('def find_payments(page, check_no, since, navigate=True, shot=True):', e)
+        self.assertIn('def find_payments(page, check_no, since, navigate=True, shot=True, spellings=None):', e)
         self.assertIn('deadline = time.time() + (8 if before[0] else 3)', e)
         # eCW checked per check number: the ones not looked up stay 'eCW not checked'.
         rows, _ = reconcile([], [{'check_eft': '1', 'check_status': 'Check Cashed', 'cashed_date': '01/01/2026'},
@@ -324,7 +324,7 @@ class TheTestOfOne(unittest.TestCase):
         aws = _Aws([checks, _Table('helixona-eobs', [])])
         asked = []
 
-        def failing(page, ck, since, navigate=True, shot=True):
+        def failing(page, ck, since, navigate=True, shot=True, **kw):
             asked.append(ck)
             return None
 
@@ -343,6 +343,38 @@ class TheTestOfOne(unittest.TestCase):
         # 766832993 was settled (never asked); the other two earlier answers were kept when the screen failed.
         self.assertIn('2 kept from earlier runs', checks.items['_run']['steps']['ecw'])
         self.assertEqual(checks.items['_summary']['posted'], 1)
+
+    def test_the_number_is_kept_as_printed_and_ecw_is_asked_that_way(self):
+        # 2026-09-18, Cigna check 0231282015: the bot stored 231282015 and
+        # eCW, which matches Check # exactly, found nothing. The full number
+        # is kept and tried first; the bare one is the key the sources meet on.
+        from src.checks.ecw_payments import spellings_of
+        self.assertEqual(spellings_of('0231282015', '231282015'), ['0231282015', '00231282015', '231282015'])
+        self.assertEqual(spellings_of('00231282015'), ['00231282015', '0231282015', '231282015'])
+        self.assertEqual(spellings_of('30925163', '30925163'), ['30925163'])
+        from src.checks.run import _zeros_in_name
+        self.assertEqual(_zeros_in_name('Posted Checks/2026/01-2026/Check 0231282015.pdf', '231282015'), '0231282015')
+        self.assertEqual(_zeros_in_name('Posted Checks/2026/01-2026/IMG_4021.jpg', '231282015'), '')
+        asked = []
+
+        def fake_copies(aws_client, table, body, prefer=(), **kw):
+            table.update_item(Key={'check_number': '231282015'},
+                              UpdateExpression='SET has_copy = :a, copy_amount = :b, copy_file = :c, copy_check_raw = :d',
+                              ExpressionAttributeValues={':a': True, ':b': '4226.70', ':c': 'Posted Checks/2026/01-2026/scan.pdf', ':d': '0231282015'})
+            return (1, 0, 0)
+
+        def find(page, ck, since, navigate=True, shot=True, spellings=None):
+            asked.append((ck, spellings))
+            return [{'check_no': '0231282015', 'amount': '4226.70', 'posted': '4226.70', 'unposted': '0.00', 'payment_id': '1111'}]
+
+        _, checks = self._run({'blue_shield': False, 'check_eft': '231282015'}, find=find, copies=fake_copies)
+        self.assertEqual(asked, [('231282015', ['0231282015', '00231282015', '231282015'])])
+        row = checks.items['231282015']
+        self.assertEqual((row['verdict'], row['ecw_payment_id'], row['copy_check_raw']), ('posted', '1111', '0231282015'))
+        d = _read('dashboard.py')
+        self.assertIn("r['check_full'] = raw if raw.endswith(str(r['check_number'])) else str(r['check_number'])", d)
+        self.assertIn("${esc(r.check_full || r.check_number)}", d)
+        self.assertIn("${esc(r.check_full || r.check_number)}", _read('dashboard_checks.html'))
 
     def test_a_named_check_is_reopened_for_its_status_today(self):
         self._run({'blue_shield': True, 'check_eft': '30925163'})

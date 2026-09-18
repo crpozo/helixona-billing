@@ -34,7 +34,7 @@ import tempfile
 from datetime import datetime
 
 from src.aws.clients import scan_all
-from src.checks.ecw_payments import find_payments, list_payments
+from src.checks.ecw_payments import find_payments, list_payments, spellings_of
 from src.checks.read_check import read_check
 from src.checks.reconcile import norm_check, reconcile, summarize
 from src.checks import sharepoint as sp
@@ -113,6 +113,16 @@ def _named_after(path, numbers):
     return any(n and n in digits for n in numbers)
 
 
+def _zeros_in_name(path, key):
+    """The number as the file name spells it, when it is the key with
+    leading zeros ('Check 0231282015.pdf' for key 231282015) — the files
+    read before copy_check_raw was kept still tell how the check is printed."""
+    digits = re.sub(r'\D', '', os.path.basename(str(path or '')))
+    if key and digits.endswith(key) and set(digits[:-len(key)]) <= {'0'} and len(digits) > len(key):
+        return digits
+    return ''
+
+
 MAX_READ_ATTEMPTS = 2   # a file that gave no check twice is a letter or an EOB page, not a check
 
 
@@ -176,6 +186,10 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
             item = {
                 'check_number': key,
                 'has_copy': bool(norm_check(got.get('check_number'))),
+                # As printed on the check, leading zeros included — the way
+                # the team types it into eCW (0231282015). The key is the
+                # bare number so the three systems meet on it.
+                'copy_check_raw': re.sub(r'\D', '', str(got.get('check_number') or '')),
                 'copy_amount': got.get('amount', ''),
                 'copy_date': got.get('check_date', ''),
                 'copy_payer': got.get('payer', ''),
@@ -339,6 +353,16 @@ def run_check_reconcile(aws_client, body, login, get_page):
         if not targets:   # a targeted run asks again; a full run trusts the settled answer
             keep_earlier(ck)
     ask = sorted(to_check - checked)
+    # Every way the number is written across the sources — the copy as
+    # printed (zeros kept), the file name, Blue Shield — so eCW, which
+    # matches Check # exactly, is asked the way the team typed it.
+    forms = {}
+    for c in copies:
+        ck = norm_check(c.get('check_number'))
+        forms.setdefault(ck, []).extend([c.get('copy_check_raw') or '', _zeros_in_name(c.get('copy_file'), ck)])
+    for q in checks:
+        forms.setdefault(norm_check(q.get('check_eft')), []).append(str(q.get('check_eft') or ''))
+    spellings = {ck: spellings_of(*[f for f in fs if f], ck) for ck, fs in forms.items() if ck}
     if do_ecw and ask:
         progress('ecw', f"looking up {len(ask)} check(s)" + (f" ({len(checked)} already posted, kept)" if checked else '') + '…')
         page = get_page()
@@ -346,7 +370,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
         if login(page, creds, aws_client):
             failures, first = 0, True
             for i, ck in enumerate(ask, 1):
-                got = find_payments(page, ck, since, navigate=first, shot=bool(targets))
+                got = find_payments(page, ck, since, navigate=first, shot=bool(targets), spellings=spellings.get(ck))
                 first = False
                 if got is None:
                     failures += 1

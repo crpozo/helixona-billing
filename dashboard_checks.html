@@ -302,7 +302,7 @@ function render() {
   if (folder === 'posted') rows = rows.filter(r => /^posted/i.test(r.copy_folder || r.copy_file || ''));
   if (folder === 'unposted') rows = rows.filter(r => /^unposted/i.test(r.copy_folder || r.copy_file || ''));
   if (folder === 'none') rows = rows.filter(r => !r.has_copy);
-  if (q) rows = rows.filter(r => [r.check_number, r.copy_amount, r.bs_amount, r.ecw_amount, r.copy_folder, r.copy_file, r.bs_status, r.verdict]
+  if (q) rows = rows.filter(r => [r.check_number, r.check_full, r.copy_amount, r.bs_amount, r.ecw_amount, r.copy_folder, r.copy_file, r.bs_status, r.verdict]
                                   .some(v => String(v ?? '').toLowerCase().includes(q)));
   const num = v => Number(String(v ?? '').replace(/[^0-9.-]/g, '')) || 0;
   rows.sort((a, b) => sort === 'amount' ? Math.max(num(b.bs_amount), num(b.copy_amount)) - Math.max(num(a.bs_amount), num(a.copy_amount))
@@ -334,7 +334,7 @@ function render() {
       ? `on file${r.ecw_payment_id ? ` · #${esc(r.ecw_payment_id)}` : ''}${amounts.length ? `<div class="small">${amounts.join(' · ')}</div>` : ''}`
       : r.verdict === 'eCW not checked' ? `<span class="pill info">not checked</span>` : `<span class="muted">not found</span>`;
     return `<tr>
-      <td class="mono">${esc(r.check_number)}</td>
+      <td class="mono">${esc(r.check_full || r.check_number)}</td>
       <td>${sp}</td>
       <td>${copy}</td>
       <td class="num">${money(r.copy_amount)}</td>
