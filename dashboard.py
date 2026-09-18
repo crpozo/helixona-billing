@@ -2298,7 +2298,9 @@ def api_checks():
     """The check reconciliation: one row per check number, and the summary."""
     try:
         rows, summary = _checks_rows()
-        return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+        resp = jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+        resp.headers['Cache-Control'] = 'no-store'   # the team page polls this; never a stale copy
+        return resp
     except Exception as e:
         return jsonify({'error': str(e), 'rows': [], 'summary': {}})
 

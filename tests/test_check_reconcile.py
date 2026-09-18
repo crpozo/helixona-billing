@@ -567,8 +567,13 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn('href="/checks" target="_blank"', d)
         h = _read('dashboard_checks.html')
         self.assertIn('<th>Check #</th><th>SharePoint</th><th>Folder · file</th>', h)
+        self.assertIn("fetch('/api/checks', {cache: 'no-store'})", h)
+        self.assertIn('setInterval(load, 15000);', h)
+        self.assertIn('Run in progress', h)
+        self.assertIn("resp.headers['Cache-Control'] = 'no-store'", d)
         self.assertIn('<th>Check #</th><th>SharePoint</th><th>Folder · file</th>', d)
-        for want in ("fetch('/api/checks')", 'checks need attention', 'What to do', 'Cashed, not in eCW',
+        for want in ("fetch('/api/checks', {cache: 'no-store'})", "const issues = r => flags(r).filter(f => String(f) !== 'other payer');",
+                     'checks need attention', 'What to do', 'Cashed, not in eCW',
                      'Entered, unposted', 'No copy of check', 'How to read this', 'prefers-color-scheme: dark',
                      "'other payer'", 'eCW is the source of truth', "r.verdict === 'eCW not checked' ? `<span class=\"pill info\">not checked</span>`",
                      'data-theme="dark"', 'href="/api/checks.csv"'):

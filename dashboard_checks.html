@@ -128,6 +128,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
         <div class="title-rule"></div>
         <h1>Insurance checks · reconciliation</h1>
         <div class="sub" id="sub">Loading…</div>
+        <div class="sub" id="run" style="margin-top:2px"></div>
       </div>
       <div class="spacer"></div>
       <a class="btn primary" href="/api/checks.csv">Download CSV</a>
@@ -201,6 +202,9 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '')).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const flags = r => r.flags || [];
 const hasFlag = (r, p) => flags(r).some(f => String(f).startsWith(p));
+// 'other payer' only says Blue Shield does not list the check; it is not a
+// problem with the check. The issues are the flags a person must act on.
+const issues = r => flags(r).filter(f => String(f) !== 'other payer');
 
 // Verdict → the reserved status class, an icon word, and what to do about it.
 function classify(r) {
@@ -212,9 +216,9 @@ function classify(r) {
        todo: `Enter this payment in eCW${r.cashed_date ? ' (cashed ' + esc(r.cashed_date) + ')' : ''}.`};
   if (v === 'unposted') return {cls: 'warning', label: 'Entered, unposted', key: 'unposted',
     todo: `Finish posting in eCW: ${money(r.ecw_unposted)} still unposted${r.ecw_payment_id ? ' (payment #' + esc(r.ecw_payment_id) + ')' : ''}.`};
-  if (v === 'posted') return flags(r).length
+  if (v === 'posted') return issues(r).length
     ? {cls: 'warning', label: 'Posted, but…', key: 'posted', todo: 'Posted in eCW, yet:'}
-    : {cls: 'good', label: 'Posted', key: 'posted', todo: 'Nothing — the three sources agree.'};
+    : {cls: 'good', label: 'Posted', key: 'posted', todo: hasFlag(r, 'other payer') ? 'Nothing — in eCW, fully applied, copy on file.' : 'Nothing — the three sources agree.'};
   if (v === 'not cashed') return {cls: 'neutral', label: 'Not cashed yet', key: 'not cashed', todo: 'Wait: Blue Shield has not cashed it.'};
   if (v === 'eCW not checked') return {cls: 'info', label: 'eCW not checked', key: 'eCW not checked', todo: 'eCW could not be read on the last run — nothing can be said yet.'};
   return {cls: 'info', label: v || 'pending', key: v, todo: 'Awaiting the next run.'};
@@ -237,7 +241,7 @@ const TILES = [
   ['unposted', 'Entered, unposted', 'warning', 'Finish posting in eCW', d => d.rows.filter(r => r.verdict === 'unposted').length],
   ['no copy', 'No copy of check', 'serious', 'Cashed, no scan in SharePoint', d => d.rows.filter(r => hasFlag(r, 'no copy')).length],
   ['amounts', 'Amounts differ', 'warning', 'Copy, Blue Shield and eCW disagree', d => d.rows.filter(r => hasFlag(r, 'amounts differ')).length],
-  ['posted', 'Posted & matching', 'good', 'Nothing to do', d => d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length],
+  ['posted', 'Posted & matching', 'good', 'Nothing to do', d => d.rows.filter(r => r.verdict === 'posted' && !issues(r).length).length],
   ['not cashed', 'Not cashed yet', 'neutral', 'Issued, waiting on the bank', d => d.rows.filter(r => r.verdict === 'not cashed').length],
   ['other payer', 'Other payer', 'neutral', 'Not a Blue Shield check — eCW alone decides', d => d.rows.filter(r => hasFlag(r, 'other payer')).length],
   ['eCW not checked', 'eCW not checked', 'info', 'eCW could not be read last run', d => d.rows.filter(r => r.verdict === 'eCW not checked').length],
@@ -252,7 +256,7 @@ function matches(r, f) {
     case 'no copy': return hasFlag(r, 'no copy');
     case 'other payer': return hasFlag(r, 'other payer');
     case 'amounts': return hasFlag(r, 'amounts differ');
-    case 'posted': return r.verdict === 'posted' && !flags(r).length;
+    case 'posted': return r.verdict === 'posted' && !issues(r).length;
     default: return r.verdict === f;
   }
 }
@@ -265,9 +269,20 @@ function render() {
   const n = d.rows.filter(attention).length;
   document.getElementById('hero-n').textContent = n.toLocaleString('en-US');
   document.getElementById('hero-s').textContent = d.rows.length
-    ? `${d.rows.length.toLocaleString('en-US')} checks compared · ${d.rows.filter(r => r.verdict === 'posted' && !flags(r).length).length.toLocaleString('en-US')} fully matching`
+    ? `${d.rows.length.toLocaleString('en-US')} checks compared · ${d.rows.filter(r => r.verdict === 'posted' && !issues(r).length).length.toLocaleString('en-US')} fully matching`
       + (sm.unreadable ? ` · ${sm.unreadable} scans could not be read yet` : '') : '';
-  document.getElementById('sub').textContent = sm.reconciled_at ? `Last reconciled ${sm.reconciled_at}` + (sm.ecw_checked === false ? ' · eCW was not read on this run' : '') : 'No reconciliation yet';
+  document.getElementById('sub').textContent = (sm.reconciled_at ? `Last reconciled ${sm.reconciled_at}` + (sm.ecw_checked === false ? ' · eCW was not read on this run' : '') : 'No reconciliation yet')
+    + (window._loadedAt ? ` · updated ${window._loadedAt}` : '');
+  // A run in progress, step by step, so the page never looks frozen.
+  const lr = sm.last_run || {};
+  const steps = lr.steps || {};
+  const running = lr.started_at && !steps.done;
+  const order = ['blue_shield', 'copies', 'ecw', 'verdict'];
+  const names = {blue_shield: 'Blue Shield', copies: 'SharePoint', ecw: 'eCW', verdict: 'Verdict'};
+  document.getElementById('run').innerHTML = running
+    ? `⏳ <strong>Run in progress</strong> · ${esc(lr.mode || '')}${(lr.targets || []).length ? ' · check ' + esc(lr.targets.join(', ')) : ''} · started ${esc(lr.started_at)} — `
+      + order.filter(k => steps[k]).map(k => `<strong>${names[k]}:</strong> ${esc(steps[k])}`).join(' · ')
+    : '';
 
   document.getElementById('tiles').innerHTML = TILES.filter(([k, , , , count]) => k !== 'eCW not checked' || count(d) > 0 || FILTER === k).map(([k, label, cls, meaning, count]) =>
     `<button class="tile${FILTER === k ? ' on' : ''}" onclick="setFilter('${k}')">
@@ -337,8 +352,9 @@ function render() {
 
 async function load() {
   try {
-    const res = await fetch('/api/checks');
+    const res = await fetch('/api/checks', {cache: 'no-store'});
     DATA = await res.json();
+    window._loadedAt = new Date().toLocaleTimeString('en-US', {hour12: false});
     if (!Array.isArray(DATA.rows)) DATA.rows = [];
     render();
   } catch (e) {
@@ -353,7 +369,7 @@ function toggleTheme() {
 }
 try { const t = localStorage.getItem('checks-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
 load();
-setInterval(load, 60000);
+setInterval(load, 15000);
 </script>
 </body>
 </html>
