@@ -115,6 +115,12 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .more{display:block;width:100%;padding:12px;background:var(--surface-2);border:none;border-top:1px solid var(--line);font:inherit;color:var(--ink-2);cursor:pointer}
 @media (max-width:900px){.hero{grid-template-columns:1fr}.hero-n{font-size:40px}.filters input{min-width:0;flex:1}.brand-sep{display:none}.logo{height:28px}}
 @media print{.filters,.btn,.more{display:none}.tbl{border:none}th{position:static}}
+  tr.dep { cursor: pointer; background: var(--accent-soft); }
+  tr.dep:hover { filter: brightness(.97); }
+  tr.dep td { border-top: 2px solid var(--accent); }
+  tr.dep .caret { display: inline-block; width: 1em; color: var(--accent); }
+  tr.in-dep td { background: var(--surface-2); }
+  tr.in-dep .indent { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -189,7 +195,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
       <dt><span class="pill neutral">● Other payer</span></dt><dd>Blue Shield does not list this check (another insurer, or outside the search window), so only eCW can vouch for it. Informational; the verdict comes from eCW.</dd>
       <dt><span class="pill info">● eCW not checked</span></dt><dd>eCW could not be read on the last run. Nothing can be said about these until the next run.</dd>
     </dl>
-    <p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks), Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. eCW is the source of truth: a check that is not in eCW is a check we do not have, whoever the payer. Each scan is read once and kept; the comparison is refreshed on every run.</p>
+    <p class="small" style="margin:6px 0"><strong>🏦 Deposit</strong> — one scan holding the bank deposit slip and the checks deposited with it. Click the row to open it: each check inside is compared with Blue Shield and looked up in eCW on its own, and the deposit total is the slip's. <em>(slip only)</em> marks a check written on the slip whose own page was not in the scan.</p>
+<p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks), Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. eCW is the source of truth: a check that is not in eCW is a check we do not have, whoever the payer. Each scan is read once and kept; the comparison is refreshed on every run.</p>
   </section>
 </div>
 
@@ -308,7 +315,8 @@ function render() {
   rows.sort((a, b) => sort === 'amount' ? Math.max(num(b.bs_amount), num(b.copy_amount)) - Math.max(num(a.bs_amount), num(a.copy_amount))
                     : sort === 'check' ? String(a.check_number).localeCompare(String(b.check_number))
                     : String(b.bs_date || b.copy_date || '').localeCompare(String(a.bs_date || a.copy_date || '')));
-  document.getElementById('count').textContent = `${rows.length.toLocaleString('en-US')} check${rows.length === 1 ? '' : 's'}`;
+  const nDep = new Set(rows.map(r => r.deposit_file).filter(Boolean)).size;
+  document.getElementById('count').textContent = `${rows.length.toLocaleString('en-US')} check${rows.length === 1 ? '' : 's'}` + (nDep ? ` · ${nDep} deposit${nDep === 1 ? '' : 's'}` : '');
 
   const body = document.getElementById('body');
   if (!rows.length) {
@@ -317,10 +325,57 @@ function render() {
     return;
   }
   const shown = rows.slice(0, LIMIT);
-  body.innerHTML = shown.map(r => {
+  // A deposit (one scan: the slip and its checks) is one accordion: its
+  // header carries the total and how its checks stand; each check is its
+  // own row under it, compared and looked up in eCW on its own.
+  const deposits = new Map((sm.deposits || []).map(d => [d.file, d]));
+  const groups = [];
+  const seen = new Map();
+  for (const r of shown) {
+    const key = r.deposit_file || '';
+    if (!key) { groups.push({rows: [r]}); continue; }
+    if (!seen.has(key)) { seen.set(key, {dep: deposits.get(key) || {file: key}, rows: []}); groups.push(seen.get(key)); }
+    seen.get(key).rows.push(r);
+  }
+  const depHeader = (g) => {
+    const d = g.dep, open = OPEN.has(d.file), name = String(d.file || '').split('/').pop();
+    const inside = g.rows.length, all = d.count || (d.checks || []).length || inside;
+    const att = g.rows.filter(attention).length, ok = g.rows.filter(r => r.verdict === 'posted' && !issues(r).length).length;
+    const link = d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.file)}">${esc(d.folder || '')}</a>` : `<span title="${esc(d.file)}">${esc(d.folder || '')}</span>`;
+    return `<tr class="dep${open ? ' open' : ''}" data-dep="${esc(d.file)}">
+      <td class="mono"><span class="caret">${open ? '▾' : '▸'}</span> 🏦 Deposit${d.date ? ' ' + esc(d.date) : ''}</td>
+      <td><span class="pill good">✓ Yes</span></td>
+      <td>${link}<div class="small muted">${esc(name)}</div></td>
+      <td class="num"><strong>${money(d.total)}</strong></td>
+      <td class="num muted">—</td>
+      <td class="small muted">${all} check${all === 1 ? '' : 's'} in this deposit${inside !== all ? ` · ${inside} under this filter` : ''}</td>
+      <td class="small">${ok ? `<span class="pill good">${ok} posted</span> ` : ''}${att ? `<span class="pill critical">${att} need attention</span>` : ''}${!ok && !att ? '<span class="muted">—</span>' : ''}</td>
+      <td class="small muted">each check is its own case</td>
+      <td class="todo small">${open ? 'Click to fold the deposit.' : 'Click to open the deposit and see each check.'}</td>
+    </tr>`;
+  };
+  body.innerHTML = groups.map(g => g.dep
+      ? depHeader(g) + (OPEN.has(g.dep.file) ? g.rows.map(r => rowHtml(r, true)).join('') : '')
+      : rowHtml(g.rows[0], false)).join('');
+  const more = document.getElementById('more');
+  more.hidden = rows.length <= shown.length;
+  more.textContent = `Show all ${rows.length.toLocaleString('en-US')} rows (${shown.length} shown)`;
+}
+
+const OPEN = new Set();
+document.getElementById('body').addEventListener('click', ev => {
+  const tr = ev.target.closest('tr.dep');
+  if (!tr || ev.target.closest('a')) return;
+  const file = tr.getAttribute('data-dep');
+  if (OPEN.has(file)) OPEN.delete(file); else OPEN.add(file);
+  render();
+});
+
+function rowHtml(r, inDeposit) {
+  {
     const c = classify(r);
     const sp = r.has_copy ? `<span class="pill good">✓ Yes</span>` : `<span class="pill critical">✗ No</span>`;
-    const fileName = r.copy_file ? String(r.copy_file).split('/').pop() : '';
+    const fileName = r.copy_file ? String(r.copy_file).split('/').pop() + (inDeposit && r.copy_page ? ` · p.${r.copy_page}` : '') : '';
     const copy = r.has_copy
       ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" rel="noopener" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`)
         + (fileName ? `<div class="small muted">${esc(fileName)}</div>` : '')
@@ -333,8 +388,8 @@ function render() {
     const ecw = r.in_ecw
       ? `on file${r.ecw_payment_id ? ` · #${esc(r.ecw_payment_id)}` : ''}${amounts.length ? `<div class="small">${amounts.join(' · ')}</div>` : ''}`
       : r.verdict === 'eCW not checked' ? `<span class="pill info">not checked</span>` : `<span class="muted">not found</span>`;
-    return `<tr>
-      <td class="mono">${esc(r.check_full || r.check_number)}</td>
+    return `<tr${inDeposit ? ' class="in-dep"' : ''}>
+      <td class="mono">${inDeposit ? '<span class="indent">↳</span> ' : ''}${esc(r.check_full || r.check_number)}${r.copy_from_slip ? ' <span class="small muted" title="only on the deposit slip — no page of its own in the scan">(slip only)</span>' : ''}</td>
       <td>${sp}</td>
       <td>${copy}</td>
       <td class="num">${money(r.copy_amount)}</td>
@@ -342,12 +397,9 @@ function render() {
       <td>${bs}</td>
       <td>${ecw}</td>
       <td><span class="pill ${c.cls}">● ${esc(c.label)}</span></td>
-      <td class="todo small">${todoFor(r)}</td>
+      <td class="todo small">${todoFor(r)}${inDeposit && r.copy_page ? `<div class="muted">page ${esc(String(r.copy_page))} of the deposit scan</div>` : ''}</td>
     </tr>`;
-  }).join('');
-  const more = document.getElementById('more');
-  more.hidden = rows.length <= shown.length;
-  more.textContent = `Show all ${rows.length.toLocaleString('en-US')} rows (${shown.length} shown)`;
+  }
 }
 
 async function load() {

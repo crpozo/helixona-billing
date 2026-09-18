@@ -1316,7 +1316,7 @@ window.scrollToEl = function(sel){
                 <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
                   <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_full || r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
                   <td>${r.has_copy ? '<span style="color:var(--success);font-weight:600">✓ yes</span>' : '<span style="color:var(--bad);font-weight:600">✗ no</span>'}</td>
-                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`) + (r.copy_file ? `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file).split('/').pop())}</div>` : '') : '<span style="color:var(--text-muted)">—</span>'}</td>
+                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`) + (r.copy_file ? `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file).split('/').pop())}${r.deposit_file ? ` · 🏦 deposit${r.deposit_date ? ' ' + esc(r.deposit_date) : ''} $${esc(r.deposit_total || '?')}${r.copy_page ? ' · p.' + esc(String(r.copy_page)) : ''}` : ''}</div>` : '') : '<span style="color:var(--text-muted)">—</span>'}</td>
                   <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
                   <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
                   <td>${esc(r.bs_status || (r.in_blue_shield ? '' : 'not in results'))}</td>
@@ -2228,6 +2228,17 @@ def _folder_tree(items):
             cur = cur['children']
         leaf = node_path[-1] if node_path else tree.setdefault('(root)', new())
         key = str(it.get('check_number', ''))
+        if key.startswith('deposit:'):
+            nums = [str(c) for c in (it.get('deposit_checks') or [])]
+            leaf['checks'].append({'check_number': f"🏦 deposit of {len(nums)} checks · ${it.get('deposit_total') or '?'}: " + ', '.join(nums),
+                                   'amount': str(it.get('deposit_total') or ''), 'file': name, 'url': it.get('copy_url', ''),
+                                   'read_by': 'deposit slip', 'payer': '', 'verdict': ''})
+            for n in node_path or [leaf]:
+                n['total_files'] += 1
+                n['total_checks'] += len(nums)
+            continue
+        if it.get('deposit_file'):
+            continue   # its check rows hang off the deposit's file
         if key.startswith('unreadable:') or not it.get('has_copy'):
             leaf['unreadable'].append({'file': name, 'url': it.get('copy_url', ''), 'problem': str(it.get('copy_problem') or '')})
             for n in node_path or [leaf]:
@@ -2272,7 +2283,8 @@ def _checks_rows():
     run = next((it for it in items if it.get('check_number') == '_run'), {})
     # Files the reader could not make a check out of live under
     # 'unreadable:<file>' and are not checks; they are counted separately.
-    rows = [it for it in items if not str(it.get('check_number', '')).startswith(('_', 'unreadable:'))]
+    rows = [it for it in items if not str(it.get('check_number', '')).startswith(('_', 'unreadable:', 'deposit:'))]
+    deposits = [it for it in items if str(it.get('check_number', '')).startswith('deposit:')]
     unreadable = [it for it in items if str(it.get('check_number', '')).startswith('unreadable:')]
     for r in rows:
         r['flags'] = list(r.get('flags') or [])
@@ -2280,7 +2292,21 @@ def _checks_rows():
         raw = str(r.get('copy_check_raw') or '')
         r['check_full'] = raw if raw.endswith(str(r['check_number'])) else str(r['check_number'])
     rows.sort(key=lambda r: (str(r.get('bs_date') or r.get('copy_date') or ''), str(r.get('check_number'))), reverse=True)
-    summary = {**summarize(rows), 'unreadable': len(unreadable),
+    # A deposit: the slip's total and the checks filed under it, each its own row.
+    by_dep = {}
+    for r in rows:
+        if r.get('deposit_file'):
+            by_dep.setdefault(str(r['deposit_file']), []).append(r)
+    dep_rows = []
+    for d in deposits:
+        members = by_dep.get(str(d.get('copy_file') or ''), [])
+        dep_rows.append({'file': str(d.get('copy_file') or ''), 'folder': str(d.get('copy_folder') or ''),
+                         'url': str(d.get('copy_url') or ''), 'date': str(d.get('deposit_date') or ''),
+                         'total': str(d.get('deposit_total') or ''), 'count': int(d.get('deposit_count') or len(members)),
+                         'checks': [str(r['check_number']) for r in members],
+                         'posted': sum(r.get('verdict') == 'posted' for r in members),
+                         'attention': sum(r.get('verdict') in ('not in eCW', 'unposted') or 'amounts differ' in r['flags'] for r in members)})
+    summary = {**summarize(rows), 'unreadable': len(unreadable), 'deposits': dep_rows,
                'unreadable_files': [{'file': str(u.get('copy_file', '')), 'problem': str(u.get('copy_problem', ''))} for u in unreadable[:50]],
                **{k: meta[k] for k in ('since', 'reconciled_at', 'ecw_checked', 'run_rows') if k in meta},
                'last_run': {k: v for k, v in run.items() if k != 'check_number'}}
@@ -2314,7 +2340,7 @@ def api_checks_csv():
     import csv
     import io
     from flask import Response
-    cols = ['check_number', 'check_full', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
+    cols = ['check_number', 'check_full', 'deposit_file', 'deposit_total', 'copy_page', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
             'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
             'ecw_posted', 'ecw_unposted', 'reconciled_at']
     try:

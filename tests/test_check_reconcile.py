@@ -198,6 +198,9 @@ class _Table:
             name, val = [x.strip() for x in clause.split('=')]
             it[names.get(name, name)] = ExpressionAttributeValues[val]
 
+    def delete_item(self, Key):
+        self.items.pop(Key[self.key], None)
+
     def wait_until_exists(self):
         pass
 
@@ -460,6 +463,94 @@ class _Page:
     got = []
 
 
+class ADepositIsManyChecks(unittest.TestCase):
+    """2026-09-18: 04222026_001.pdf is a bank deposit — the slip on page 1
+    (29 checks by hand, $11,099.18) and a check per page after it. There is
+    no check of $11k; each check is its own case inside the deposit."""
+    SLIP = {'kind': 'deposit_slip', 'check': {}, 'confidence': 'medium',
+            'deposit': {'date': '04/22/2026', 'total': '11099.18',
+                        'checks': [{'check_number': '30880301', 'amount': '71.36'}, {'check_number': '30880303', 'amount': '224.29'},
+                                   {'check_number': '7255595', 'amount': '139.73'}]}}
+    PAGES = {1: {'kind': 'check', 'check': {'check_number': '30880301', 'amount': '71.36', 'check_date': '04/10/2026', 'payer': 'Blue Shield of California', 'payee': 'Cassandra Gray'}},
+             2: {'kind': 'other', 'check': {}},
+             3: {'kind': 'check', 'check': {'check_number': '30880303', 'amount': '224.29', 'check_date': '04/10/2026', 'payer': 'Blue Shield of California', 'payee': ''}}}
+
+    def _read(self, path='x.pdf'):
+        from src.checks import read_check as rc
+        with mock.patch.object(rc, 'pdf_page_count', return_value=4), mock.patch.object(rc, 'pdf_text', return_value=''), \
+                mock.patch.object(rc, 'image_payload', return_value=('', 'image/png')), \
+                mock.patch.object(rc, 'read_page', side_effect=lambda aws, p, page_no, model_id=None: (self.SLIP if page_no == 0 else self.PAGES[page_no], '')):
+            return rc.read_check(None, path)
+
+    def test_the_slip_on_page_one_makes_the_file_a_deposit(self):
+        got = self._read()
+        self.assertEqual(got['kind'], 'deposit')
+        self.assertEqual((got['deposit_date'], got['deposit_total'], got['pages']), ('04/22/2026', '11099.18', 4))
+        by = {c['check_number']: c for c in got['checks']}
+        # The checks as printed win; the slip fills in the one with no page of its own.
+        self.assertEqual((by['30880301']['page'], by['30880301']['from_slip'], by['30880301']['payer']), (2, False, 'Blue Shield of California'))
+        self.assertEqual((by['30880303']['page'], by['30880303']['amount']), (4, '224.29'))
+        self.assertEqual((by['7255595']['from_slip'], by['7255595']['amount']), (True, '139.73'))
+        self.assertEqual(len(got['checks']), 3)
+
+    def test_a_page_reply_in_the_old_flat_shape_is_still_a_check(self):
+        from src.checks.read_check import parse_page_json, parse_model_json
+        flat = parse_page_json('{"check_number": "0231282015", "amount": "4,226.70", "confidence": "high"}')
+        self.assertEqual((flat['kind'], flat['check']['check_number'], flat['check']['amount']), ('check', '0231282015', '4226.70'))
+        self.assertEqual(parse_model_json('{"kind":"check","check":{"check_number":"30900703","amount":"200.93"}}')['check_number'], '30900703')
+        # A slip with nothing legible is not a deposit; a "check" with no number but a list is a slip.
+        self.assertEqual(parse_page_json('{"kind":"deposit_slip","deposit":{"checks":[]}}')['kind'], 'other')
+        self.assertEqual(parse_page_json('{"kind":"check","check":{},"deposit":{"total":"10.00","checks":[{"check_number":"12345","amount":"10.00"}]}}')['kind'], 'deposit_slip')
+        rc = _read('src/checks/read_check.py')
+        self.assertIn('(b) a bank DEPOSIT SLIP / deposit ticket', rc)
+        self.assertIn("if page.get('kind') == 'deposit_slip' and page_no == 0:", rc)
+
+    def test_the_run_stores_the_deposit_and_each_check_and_drops_the_false_one(self):
+        from src.checks import run as run_mod
+        table = _Table('helixona-checks', [
+            # The one-check reading of the deposit scan, before deposits were known.
+            {'check_number': '1100411', 'has_copy': True, 'copy_file': 'Posted Checks/2026/04-22-2026/04222026_001.pdf',
+             'copy_etag': '"7"', 'copy_amount': '11099.18', 'verdict': 'eCW not checked', 'flags': []},
+            {'check_number': '30925163', 'has_copy': True, 'copy_file': 'Posted Checks/2026/Check 30925163.pdf', 'copy_etag': '"1"', 'copy_pages': 1}])
+        files = [{'path': 'Posted Checks/2026/04-22-2026/04222026_001.pdf', 'etag': '"7"', 'web_url': 'https://sp/dep.pdf'},
+                 {'path': 'Posted Checks/2026/Check 30925163.pdf', 'etag': '"1"', 'web_url': 'https://sp/one.pdf'}]
+        deposit = {'kind': 'deposit', 'deposit_date': '04/22/2026', 'deposit_total': '11099.18', 'pages': 4, 'read_by': 'vision',
+                   'confidence': 'medium', 'problem': '',
+                   'checks': [{'check_number': '30880301', 'amount': '71.36', 'check_date': '04/10/2026', 'payer': 'Blue Shield of California', 'payee': '', 'page': 2, 'from_slip': False},
+                              {'check_number': '7255595', 'amount': '139.73', 'check_date': '', 'payer': '', 'payee': '', 'page': 1, 'from_slip': True}]}
+        with mock.patch.object(run_mod, '_sources', return_value=(files, lambda it, d: '/tmp/' + it['path'].split('/')[-1], 'sharepoint')), \
+                mock.patch('src.checks.read_check.pdf_page_count', return_value=4), \
+                mock.patch.object(run_mod, 'read_check', return_value=deposit) as reader:
+            read, skipped, failed = run_mod.read_new_copies(_Aws([table]), table, {})
+        # The one-page PDF was only counted (no model); the four-page one was read again, page by page.
+        self.assertEqual(reader.call_count, 1)
+        self.assertEqual((read, skipped, failed), (2, 1, 0))
+        self.assertNotIn('1100411', table.items, 'the false check of $11k is gone')
+        dep = table.items['deposit:Posted Checks/2026/04-22-2026/04222026_001.pdf']
+        self.assertEqual((dep['kind'], dep['deposit_total'], dep['deposit_count'], dep['deposit_checks'], dep['has_copy']),
+                         ('deposit', '11099.18', 2, ['30880301', '7255595'], False))
+        one = table.items['30880301']
+        self.assertEqual((one['has_copy'], one['copy_amount'], one['copy_page'], one['deposit_file'], one['deposit_total'], one['copy_from_slip']),
+                         (True, '71.36', 2, 'Posted Checks/2026/04-22-2026/04222026_001.pdf', '11099.18', False))
+        self.assertEqual((table.items['7255595']['copy_from_slip'], table.items['7255595']['copy_date']), (True, '04/22/2026'))
+        self.assertEqual(table.items['30925163']['copy_pages'], 1)
+        # A second run reads nothing again.
+        with mock.patch.object(run_mod, '_sources', return_value=(files, lambda it, d: '/tmp/x', 'sharepoint')), \
+                mock.patch.object(run_mod, 'read_check', side_effect=AssertionError('read twice')):
+            self.assertEqual(run_mod.read_new_copies(_Aws([table]), table, {}), (0, 2, 0))
+
+    def test_the_pages_show_the_deposit_as_one_accordion_with_its_checks(self):
+        d = _read('dashboard.py')
+        self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", d)
+        self.assertIn("'deposits': dep_rows,", d)
+        self.assertIn("🏦 deposit of {len(nums)} checks", d)
+        h = _read('dashboard_checks.html')
+        for pin in ('const deposits = new Map((sm.deposits || []).map(d => [d.file, d]));', 'data-dep="${esc(d.file)}"',
+                    "each check is its own case", "tr.dep { cursor: pointer;", "rowHtml(r, true)", '(slip only)'):
+            self.assertIn(pin, h)
+        self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", _read('src/checks/run.py'))
+
+
 class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
     """2026-09-17: the folder is shared inside Helixona only and no Entra
     admin is at hand, so the bot uses a person's session signed in once on
@@ -518,8 +609,8 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         # 2026-09-18: "Your credit balance is too low" — 700 files would have
         # been marked unreadable, twice, for the account's sake.
         rc = _read('src/checks/read_check.py')
-        self.assertIn("result['error_kind'] = 'api'", rc)
-        self.assertIn("result['error_kind'] = 'file'", rc)
+        self.assertIn("return {}, '', {'problem': problem, 'error_kind': 'api'}", rc)
+        self.assertIn("return {}, '', {'problem': problem, 'error_kind': 'file'}", rc)
         r = _read('src/checks/run.py')
         self.assertIn("if got.get('error_kind') == 'api':", r)
         self.assertIn('the Anthropic API refused three files in a row', r)
@@ -529,15 +620,16 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         r = _read('src/checks/run.py')
         self.assertIn('MAX_READ_ATTEMPTS = 2', r)
         self.assertIn("if prev and prev[0] == etag and (targeted or prev[1] >= MAX_READ_ATTEMPTS):", r)
-        self.assertIn("'copy_attempts': (prev[1] if prev and prev[0] == etag else 0) + 1,", r)
+        self.assertIn("prev_attempts = prev[1] if prev and prev[0] == etag else 0", r)
+        self.assertIn("'copy_attempts': prev_attempts + 1,", r)
         # A test of 1 whose check already has its copy does not walk the folder.
         self.assertIn("if do_copies and targets and set(on_file) >= targets:", r)
         # A multi-page PDF is read beyond its cover page.
         rc = _read('src/checks/read_check.py')
         self.assertIn('def pdf_page_count(path):', rc)
         self.assertIn('pages += [p for p in (1, n - 1) if p not in pages]', rc)
-        self.assertIn("startswith(('_', 'unreadable:'))", r)
-        self.assertIn("startswith(('_', 'unreadable:'))", _read('dashboard.py'))
+        self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", r)
+        self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", _read('dashboard.py'))
         self.assertIn("'copy_folder': f['path'].rsplit('/', 1)[0] if '/' in f['path'] else ''", r)
 
     def test_the_images_are_read_by_the_claude_api_not_bedrock(self):

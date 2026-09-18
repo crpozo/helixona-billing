@@ -32,6 +32,8 @@ the one whose "not in eCW" list is real.
 | `unposted` | in eCW, a balance still unposted |
 | `not in eCW` | eCW has no payment under the number — a cashed Blue Shield check, or a scanned check from any payer. eCW is the source of truth: not in eCW means we do not have it |
 | `not cashed` | a Blue Shield check the bank has not cashed — nothing to enter yet |
+**Deposits.** A scan may be a bank deposit: page 1 the deposit slip (the checks listed by hand with the total) and one check per page after it. The reader classifies every page; a slip on page 1 makes the file a deposit, stored as a `deposit:<file>` row (total, date, the check numbers) with one row per check carrying `deposit_file`, `copy_page` and `copy_from_slip` (a line of the slip with no page of its own). Each check is compared with Blue Shield and looked up in eCW on its own; the team page shows the deposit as one accordion with its checks under it. PDFs read before deposits were known are counted once (a download, no model) and read again page by page only when they have three pages or more; the one-check row they had produced is removed.
+
 Check numbers are keyed bare (231282015) so Blue Shield, the copies and eCW meet on one row, but the number is also kept as printed on the check (`copy_check_raw`, 0231282015) and shown that way. eCW matches Check # exactly and the team types it as printed, so the lookup tries the printed form first, then one and two leading zeros, then the bare number.
 
 | `eCW not checked` | eCW has never answered for this check; nothing can be said. An answer from an earlier run (posted, unposted, not in eCW) is kept when this run's lookup fails — a failed lookup is not a new answer |
