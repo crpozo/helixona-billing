@@ -113,30 +113,47 @@ def _named_after(path, numbers):
     return any(n and n in digits for n in numbers)
 
 
+MAX_READ_ATTEMPTS = 2   # a file that gave no check twice is a letter or an EOB page, not a check
+
+
 def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
     """Read every check image not yet on file. Returns (read, skipped, failed).
 
     `prefer`: check numbers this run is about — files named after them are
-    read first, so a capped test run reaches them before anything else."""
+    read first, so a capped test run reaches them before anything else.
+    A file that gave no check is tried again once (the model may have been
+    down), then left alone unless it changes; a targeted run never re-tries."""
     files, download, source = _sources(aws_client, body, get_page)
     limit = int(body.get('limit_files') or 0)
     want = {norm_check(p) for p in prefer if norm_check(p)}
+    targeted = bool(want)
     if want:
         files = sorted(files, key=lambda f: 0 if _named_after(f['path'], want) else 1)
-    # Files already read, by name + etag. A file that could not be read
-    # (no model, an image the model could not make out) is not "known": it
-    # is tried again every run until it reads.
-    known = {}
-    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag, has_copy'):
-        if it.get('copy_file') and it.get('has_copy'):
-            known[str(it['copy_file'])] = str(it.get('copy_etag') or '')
+    # Files already looked at, by name + etag: the ones that read (skip while
+    # unchanged) and the ones that did not (skip after MAX_READ_ATTEMPTS, or
+    # always on a targeted run).
+    known, tried = {}, {}
+    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag, has_copy, copy_attempts'):
+        path = str(it.get('copy_file') or '')
+        if not path:
+            continue
+        if it.get('has_copy'):
+            known[path] = str(it.get('copy_etag') or '')
+        else:
+            tried[path] = (str(it.get('copy_etag') or ''), int(it.get('copy_attempts') or 1))
     read = skipped = failed = 0
-    logger.info(f"📁 {len(files)} file(s) in {source}" + (f", {len(known)} already read" if known else ''))
+    logger.info(f"📁 {len(files)} file(s) in {source}" + (f", {len(known)} already read" if known else '')
+                + (f", {len(tried)} gave no check before" if tried else ''))
     with tempfile.TemporaryDirectory() as tmp:
         for f in files:
             if limit and read + failed >= limit:
                 break
-            if known.get(f['path']) == (f.get('etag') or '') and f['path'] in known:
+            etag = f.get('etag') or ''
+            if f['path'] in known and known[f['path']] == etag:
+                skipped += 1
+                continue
+            prev = tried.get(f['path'])
+            if prev and prev[0] == etag and (targeted or prev[1] >= MAX_READ_ATTEMPTS):
                 skipped += 1
                 continue
             try:
@@ -163,6 +180,7 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 'copy_read_by': got.get('read_by', ''),
                 'copy_confidence': got.get('confidence', ''),
                 'copy_problem': got.get('problem', ''),
+                'copy_attempts': (prev[1] if prev and prev[0] == etag else 0) + 1,
                 'copy_read_at': _now(),
             }
             table.update_item(
@@ -253,8 +271,18 @@ def run_check_reconcile(aws_client, body, login, get_page):
     if targets:
         logger.info(f"🎯 {run['mode']}: {', '.join(run['targets'])}")
 
-    # 2. The copies.
-    if do_copies:
+    # 2. The copies. A targeted run whose checks already have a copy on
+    # file has nothing to read: the folder is not walked again.
+    on_file = {}
+    if targets:
+        for it in scan_all(table, ProjectionExpression='check_number, has_copy, copy_file'):
+            if it.get('has_copy') and norm_check(it.get('check_number')) in targets:
+                on_file[norm_check(it.get('check_number'))] = str(it.get('copy_file') or '')
+    if do_copies and targets and set(on_file) >= targets:
+        for ck, path in on_file.items():
+            logger.info(f"📁 copy of {ck} already on file: {path}")
+        progress('copies', 'already on file: ' + ' · '.join(f"{ck} → {path.rsplit('/', 1)[0]}" for ck, path in on_file.items()))
+    elif do_copies:
         progress('copies', 'reading the check images…')
         try:
             read, skipped, failed = read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)

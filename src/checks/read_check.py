@@ -50,9 +50,21 @@ If a field cannot be read, leave it as an empty string. Do not invent digits."""
 
 
 # ------------------------------------------------------------ the image
-def image_payload(path):
-    """(base64, media_type) for the image the model will see. A PDF is rendered
-    from its first page."""
+def pdf_page_count(path):
+    if not path.lower().endswith('.pdf'):
+        return 1
+    try:
+        import pdfplumber
+        with pdfplumber.open(path) as pdf:
+            return len(pdf.pages)
+    except Exception:
+        return 1
+
+
+def image_payload(path, page_no=0):
+    """(base64, media_type) for the image the model will see. A PDF is
+    rendered from page `page_no` (0-based) — the check number of a
+    multi-page EOB is often not on the first page."""
     ext = os.path.splitext(path)[1].lower()
     if ext in IMAGE_TYPES:
         with open(path, 'rb') as fh:
@@ -60,7 +72,8 @@ def image_payload(path):
     if ext == '.pdf':
         import pdfplumber
         with pdfplumber.open(path) as pdf:
-            img = pdf.pages[0].to_image(resolution=170).original
+            page_no = max(0, min(page_no, len(pdf.pages) - 1))
+            img = pdf.pages[page_no].to_image(resolution=170).original
         buf = io.BytesIO()
         img.convert('RGB').save(buf, format='PNG')
         return base64.b64encode(buf.getvalue()).decode('ascii'), 'image/png'
@@ -183,9 +196,9 @@ def _client(aws_client):
     return _CLIENT['client']
 
 
-def read_with_vision(aws_client, path, model_id=VISION_MODEL_ID):
+def read_with_vision(aws_client, path, model_id=VISION_MODEL_ID, page_no=0):
     """Claude looks at the image and answers the JSON in PROMPT."""
-    b64, media = image_payload(path)
+    b64, media = image_payload(path, page_no)
     client = _client(aws_client)
     response = client.beta.messages.create(
         model=model_id,
@@ -215,19 +228,34 @@ def read_check(aws_client, path, model_id=VISION_MODEL_ID):
         if got['check_number'] and got['amount']:
             result.update(got, read_by='pdf_text', confidence='high')
             return result
-    try:
-        got, raw = read_with_vision(aws_client, path, model_id)
-    except Exception as e:
-        result['problem'] = f'the image could not be read by the model: {str(e)[:160]}'
-        logger.warning(f"  ⚠️ {os.path.basename(path)}: {result['problem']}")
-        return result
+    # Page 1, then page 2 and the last page of a longer PDF: a multi-page
+    # EOB carries the check on a later page (2026-09-18: forty Blue Shield
+    # EOBs gave "no check number" off their cover page).
+    pages = [0]
+    n = pdf_page_count(path)
+    if n > 1:
+        pages += [p for p in (1, n - 1) if p not in pages]
+    got, raw, tried = {}, '', []
+    for page_no in pages[:3]:
+        try:
+            got, raw = read_with_vision(aws_client, path, model_id, page_no=page_no)
+        except Exception as e:
+            result['problem'] = f'the image could not be read by the model: {str(e)[:160]}'
+            logger.warning(f"  ⚠️ {os.path.basename(path)}: {result['problem']}")
+            return result
+        tried.append(page_no + 1)
+        if got and got.get('check_number'):
+            if page_no:
+                logger.info(f"  (check number found on page {page_no + 1} of {n})")
+            break
     if not got:
         result['problem'] = f'the model did not answer in JSON: {raw[:120]!r}'
         return result
+    result['pages_tried'] = tried
     result.update({k: got.get(k, '') for k in ('check_number', 'amount', 'check_date', 'payer', 'payee', 'confidence')},
                   read_by='vision')
     if not result['check_number']:
-        result['problem'] = 'no check number could be read off the image'
+        result['problem'] = f"no check number could be read off the image (page{'s' if len(tried) > 1 else ''} {', '.join(map(str, tried))} of {n})"
     elif not result['amount']:
         result['problem'] = 'no amount could be read off the image'
     return result

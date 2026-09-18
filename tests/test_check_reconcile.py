@@ -424,9 +424,17 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)", r)
         self.assertIn("DEFAULT_SHARE_LINK = ('https://helixona.sharepoint.com/:f:/s/BillingDepartment/'", _read('src/checks/sharepoint_browser.py'))
 
-    def test_an_unreadable_file_is_tried_again_and_is_not_a_check(self):
+    def test_an_unreadable_file_is_tried_again_once_and_is_not_a_check(self):
         r = _read('src/checks/run.py')
-        self.assertIn("if it.get('copy_file') and it.get('has_copy'):", r)
+        self.assertIn('MAX_READ_ATTEMPTS = 2', r)
+        self.assertIn("if prev and prev[0] == etag and (targeted or prev[1] >= MAX_READ_ATTEMPTS):", r)
+        self.assertIn("'copy_attempts': (prev[1] if prev and prev[0] == etag else 0) + 1,", r)
+        # A test of 1 whose check already has its copy does not walk the folder.
+        self.assertIn("if do_copies and targets and set(on_file) >= targets:", r)
+        # A multi-page PDF is read beyond its cover page.
+        rc = _read('src/checks/read_check.py')
+        self.assertIn('def pdf_page_count(path):', rc)
+        self.assertIn('pages += [p for p in (1, n - 1) if p not in pages]', rc)
         self.assertIn("startswith(('_', 'unreadable:'))", r)
         self.assertIn("startswith(('_', 'unreadable:'))", _read('dashboard.py'))
         self.assertIn("'copy_folder': f['path'].rsplit('/', 1)[0] if '/' in f['path'] else ''", r)
