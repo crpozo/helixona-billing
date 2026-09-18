@@ -142,6 +142,7 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
         else:
             tried[path] = (str(it.get('copy_etag') or ''), int(it.get('copy_attempts') or 1))
     read = skipped = failed = 0
+    api_errors = 0
     logger.info(f"📁 {len(files)} file(s) in {source}" + (f", {len(known)} already read" if known else '')
                 + (f", {len(tried)} gave no check before" if tried else ''))
     with tempfile.TemporaryDirectory() as tmp:
@@ -161,6 +162,16 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 got = read_check(aws_client, path)
             except Exception as e:
                 got = {'check_number': '', 'amount': '', 'problem': f'download or read failed: {str(e)[:160]}'}
+            if got.get('error_kind') == 'api':
+                # Not the file's fault: nothing is written for it, so it is
+                # read on the next run as if never seen. Three in a row and
+                # the reading stops — the account needs a person, not retries.
+                api_errors += 1
+                if api_errors >= 3:
+                    raise RuntimeError(f"the Anthropic API refused three files in a row — stopping the image reading. "
+                                       f"{got.get('problem', '')}")
+                continue
+            api_errors = 0
             key = norm_check(got.get('check_number')) or f"unreadable:{f['path']}"
             item = {
                 'check_number': key,

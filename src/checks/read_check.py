@@ -238,9 +238,20 @@ def read_check(aws_client, path, model_id=VISION_MODEL_ID):
     got, raw, tried = {}, '', []
     for page_no in pages[:3]:
         try:
+            b64_check = image_payload(path, page_no)   # the file itself: a render failure is the file's
+        except Exception as e:
+            result['problem'] = f'the file could not be rendered: {str(e)[:160]}'
+            result['error_kind'] = 'file'
+            logger.warning(f"  ⚠️ {os.path.basename(path)}: {result['problem']}")
+            return result
+        try:
             got, raw = read_with_vision(aws_client, path, model_id, page_no=page_no)
         except Exception as e:
-            result['problem'] = f'the image could not be read by the model: {str(e)[:160]}'
+            # The API refused (no credit, bad key, rate limit, outage): the
+            # account's problem, not the file's — the caller must not count
+            # it against the file, and should stop rather than fail 700 times.
+            result['problem'] = f'the Anthropic API did not answer: {str(e)[:200]}'
+            result['error_kind'] = 'api'
             logger.warning(f"  ⚠️ {os.path.basename(path)}: {result['problem']}")
             return result
         tried.append(page_no + 1)

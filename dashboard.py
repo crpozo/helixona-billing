@@ -599,6 +599,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="logs-panel">
           <div class="logs-header">
             <h3>🔴 Live Agent Logs</h3>
+            <button class="btn" onclick="clearLogs('cleared by you')" title="Clear the panel; the journal on the server keeps everything">🗑 Clear</button>
             <button class="btn btn-refresh" onclick="loadLogs()">↻</button>
           </div>
           <div class="logs-body" id="logs-body">

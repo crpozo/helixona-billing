@@ -424,6 +424,17 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("read_new_copies(aws_client, table, body, prefer=targets, get_page=get_page)", r)
         self.assertIn("DEFAULT_SHARE_LINK = ('https://helixona.sharepoint.com/:f:/s/BillingDepartment/'", _read('src/checks/sharepoint_browser.py'))
 
+    def test_an_api_refusal_is_not_held_against_the_file(self):
+        # 2026-09-18: "Your credit balance is too low" — 700 files would have
+        # been marked unreadable, twice, for the account's sake.
+        rc = _read('src/checks/read_check.py')
+        self.assertIn("result['error_kind'] = 'api'", rc)
+        self.assertIn("result['error_kind'] = 'file'", rc)
+        r = _read('src/checks/run.py')
+        self.assertIn("if got.get('error_kind') == 'api':", r)
+        self.assertIn('the Anthropic API refused three files in a row', r)
+        self.assertIn('🗑 Clear', _read('dashboard.py'))
+
     def test_an_unreadable_file_is_tried_again_once_and_is_not_a_check(self):
         r = _read('src/checks/run.py')
         self.assertIn('MAX_READ_ATTEMPTS = 2', r)
