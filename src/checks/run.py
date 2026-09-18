@@ -315,21 +315,29 @@ def run_check_reconcile(aws_client, body, login, get_page):
     # 3. eCW — one lookup per check, the operator's own step (2026-09-18):
     # Check # = the number, Rcvd Pmt Dts from `since` to today, Lookup. The
     # full Payments list is thousands of card payments and pages; a lookup
-    # is one row. Checks already posted in full (unposted 0.00) are settled
-    # and not asked again; their stored answer is reused.
+    # is one row. Checks already posted are settled and not asked again;
+    # their stored answer is reused. Any other answer eCW gave on an earlier
+    # run (unposted, not in eCW) is kept when this run's lookup fails or
+    # never happens — a failed lookup is not a new answer.
     copies = [it for it in scan_all(table) if it.get('has_copy')
               and (not targets or norm_check(it.get('check_number')) in targets)]
-    settled = {norm_check(it.get('check_number')): it for it in scan_all(table)
-               if it.get('in_ecw') and it.get('verdict') == 'posted' and str(it.get('ecw_unposted') or '') in ('0.00', '0')}
+    known = {norm_check(it.get('check_number')): it for it in scan_all(table)
+             if it.get('verdict') in ('posted', 'unposted', 'not in eCW')}
+    settled = {ck: it for ck, it in known.items() if it.get('in_ecw') and it.get('verdict') == 'posted'}
     to_check = targets or ({norm_check(q.get('check_eft')) for q in checks} | {norm_check(c.get('check_number')) for c in copies})
     to_check = {k for k in to_check if k}
     payments, checked = [], set()
+
+    def keep_earlier(ck):
+        it = known[ck]
+        if it.get('in_ecw'):
+            payments.append({'check_no': ck, 'amount': it.get('ecw_amount', ''), 'posted': it.get('ecw_posted', ''),
+                             'unposted': it.get('ecw_unposted', ''), 'payment_id': it.get('ecw_payment_id', '')})
+        checked.add(ck)
+
     for ck in sorted(to_check & set(settled)):
         if not targets:   # a targeted run asks again; a full run trusts the settled answer
-            s = settled[ck]
-            payments.append({'check_no': ck, 'amount': s.get('ecw_amount', ''), 'posted': s.get('ecw_posted', ''),
-                             'unposted': s.get('ecw_unposted', ''), 'payment_id': s.get('ecw_payment_id', '')})
-            checked.add(ck)
+            keep_earlier(ck)
     ask = sorted(to_check - checked)
     if do_ecw and ask:
         progress('ecw', f"looking up {len(ask)} check(s)" + (f" ({len(checked)} already posted, kept)" if checked else '') + '…')
@@ -366,6 +374,13 @@ def run_check_reconcile(aws_client, body, login, get_page):
         progress('ecw', f"nothing to look up ({len(checked)} already posted, kept)")
     else:
         progress('ecw', 'skipped (ecw:false)')
+    # Whatever eCW said on an earlier run stands until eCW says otherwise.
+    kept = sorted((to_check - checked) & set(known))
+    for ck in kept:
+        keep_earlier(ck)
+    if kept:
+        logger.info(f"🗂️ eCW: {len(kept)} check(s) not looked up this run keep their earlier eCW answer")
+        progress('ecw', (run['steps'].get('ecw') or '') + f" · {len(kept)} kept from earlier runs")
     ecw_checked = checked
 
     # 4. The verdicts.

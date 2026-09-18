@@ -294,7 +294,8 @@ class TheTestOfOne(unittest.TestCase):
         # 07/01/25 to today, look the check up — never the whole list.
         r = _read('src/checks/run.py')
         self.assertIn("got = find_payments(page, ck, since, navigate=first, shot=bool(targets))", r)
-        self.assertIn("settled = {norm_check(it.get('check_number')): it for it in scan_all(table)", r)
+        self.assertIn("known = {norm_check(it.get('check_number')): it for it in scan_all(table)", r)
+        self.assertIn("settled = {ck: it for ck, it in known.items() if it.get('in_ecw') and it.get('verdict') == 'posted'}", r)
         self.assertIn("if not targets:   # a targeted run asks again; a full run trusts the settled answer", r)
         e = _read('src/checks/ecw_payments.py')
         self.assertIn('def find_payments(page, check_no, since, navigate=True, shot=True):', e)
@@ -307,6 +308,41 @@ class TheTestOfOne(unittest.TestCase):
         self.assertEqual((by['1'], by['2']), ('not in eCW', 'eCW not checked'))
         d = _read('dashboard.py')
         self.assertIn('eCW only — nothing is sent to Blue Shield.', d)
+
+    def test_a_failed_lookup_does_not_erase_what_ecw_said_before(self):
+        # 2026-09-18: a full run whose eCW lookups all failed rewrote every
+        # posted check as 'eCW not checked' — the team page went from 4
+        # posted to 1. An earlier answer stands until eCW says otherwise.
+        from src.checks import run as run_mod
+        checks = _Table('helixona-checks', [
+            {'check_number': '766832993', 'verdict': 'posted', 'in_ecw': True, 'ecw_amount': '227.20',
+             'ecw_posted': '227.20', 'ecw_unposted': '', 'ecw_payment_id': '934', 'flags': [], 'has_copy': True},
+            {'check_number': '766832992', 'verdict': 'unposted', 'in_ecw': True, 'ecw_amount': '50.00',
+             'ecw_posted': '0.00', 'ecw_unposted': '50.00', 'ecw_payment_id': '935', 'flags': [], 'has_copy': True},
+            {'check_number': '30610041', 'verdict': 'not in eCW', 'in_ecw': False, 'flags': [], 'has_copy': True},
+            {'check_number': '10248460', 'verdict': 'eCW not checked', 'in_ecw': False, 'flags': [], 'has_copy': True}])
+        aws = _Aws([checks, _Table('helixona-eobs', [])])
+        asked = []
+
+        def failing(page, ck, since, navigate=True, shot=True):
+            asked.append(ck)
+            return None
+
+        with mock.patch.object(run_mod, 'read_new_copies', return_value=(0, 4, 0)), \
+                mock.patch.object(run_mod, 'find_payments', side_effect=failing):
+            run_mod.run_check_reconcile(aws, {'blue_shield': False, 'copies': True, 'ecw': True},
+                                        login=lambda page, creds, aws_client: True, get_page=lambda: object())
+        # The posted one is settled and never asked; the rest were asked and the screen failed.
+        self.assertNotIn('766832993', asked)
+        self.assertEqual(sorted(asked), ['10248460', '30610041', '766832992'])
+        by = {k: (v['verdict'], v.get('ecw_payment_id')) for k, v in checks.items.items() if not k.startswith('_')}
+        self.assertEqual(by['766832993'], ('posted', '934'))
+        self.assertEqual(by['766832992'], ('unposted', '935'))
+        self.assertEqual(by['30610041'][0], 'not in eCW')
+        self.assertEqual(by['10248460'][0], 'eCW not checked')
+        # 766832993 was settled (never asked); the other two earlier answers were kept when the screen failed.
+        self.assertIn('2 kept from earlier runs', checks.items['_run']['steps']['ecw'])
+        self.assertEqual(checks.items['_summary']['posted'], 1)
 
     def test_a_named_check_is_reopened_for_its_status_today(self):
         self._run({'blue_shield': True, 'check_eft': '30925163'})

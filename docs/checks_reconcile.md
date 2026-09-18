@@ -32,7 +32,7 @@ the one whose "not in eCW" list is real.
 | `unposted` | in eCW, a balance still unposted |
 | `not in eCW` | eCW has no payment under the number — a cashed Blue Shield check, or a scanned check from any payer. eCW is the source of truth: not in eCW means we do not have it |
 | `not cashed` | a Blue Shield check the bank has not cashed — nothing to enter yet |
-| `eCW not checked` | eCW could not be read this run; nothing can be said |
+| `eCW not checked` | eCW has never answered for this check; nothing can be said. An answer from an earlier run (posted, unposted, not in eCW) is kept when this run's lookup fails — a failed lookup is not a new answer |
 
 Flags alongside: `no copy of the check`; `other payer` (Blue Shield does not
 list it — informational); `amounts differ: copy 275.09, bs 257.09`.
