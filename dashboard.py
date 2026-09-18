@@ -106,6 +106,7 @@ DASHBOARD_HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Helixona Billing Agent — Dashboard</title>
+<link rel="icon" type="image/png" href="/static/helixona-logo.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -435,7 +436,7 @@ tbody tr:last-child td{border-bottom:none}
   <!-- ═══════════════ SIDEBAR ═══════════════ -->
   <aside class="sb">
     <div class="brand">
-      <img src="https://helixona.com/wp-content/uploads/2025/08/Screenshot-2025-11-03-at-18.32.49-Photoroom.png" alt="Helixona">
+      <img src="/static/helixona-logo.png" alt="Helixona">
       <div>
         <div class="brand-t">Helixona<sup style="font-size:8px;color:var(--text-muted)">®</sup></div>
         <div class="brand-s">Billing Agent · v1</div>

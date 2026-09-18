@@ -519,6 +519,9 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
                      'Entered, unposted', 'No copy of cheque', 'How to read this', 'prefers-color-scheme: dark',
                      'data-theme="dark"', 'href="/api/checks.csv"'):
             self.assertIn(want, h, want)
+        self.assertIn('src="/static/helixona-logo.png"', h)
+        self.assertTrue(os.path.exists(os.path.join(REPO, 'static', 'helixona-logo.png')))
+        self.assertIn('href="/static/helixona-logo.png"', d)   # the favicon, on the main dashboard too
         # Status is never color alone: every pill carries a mark and a word.
         self.assertIn('<span class="pill ${c.cls}">● ${esc(c.label)}</span>', h)
 

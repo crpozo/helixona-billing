@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Insurance Cheques — Reconciliation</title>
+<link rel="icon" type="image/png" href="/static/helixona-logo.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* One page for the billing team: which cheques do not match, and what to do.
@@ -12,7 +13,7 @@
 :root{
   --surface:#fcfcfb;--surface-2:#f3f3f0;--card:#ffffff;--line:#e4e4df;
   --ink:#0b0b0b;--ink-2:#52514e;--ink-3:#8a8984;
-  --accent:#8b6f3b;
+  --accent:#8b6f3b;--brand-bg:#0b0b10;--brand-ink:#f1f5f9;--brand-muted:#94a3b8;--brand-gold:#CDB486;
   --good:#0ca30c;--warning:#b47a00;--serious:#c65a2e;--critical:#d03b3b;--info:#2a78d6;
   --good-bg:#eaf7ea;--warning-bg:#fff4dc;--serious-bg:#fdeee7;--critical-bg:#fbe9e9;--info-bg:#e9f1fb;--neutral-bg:#f0f0ec;
 }
@@ -35,10 +36,17 @@
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--surface);color:var(--ink);font-family:'Inter',system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
 a{color:var(--info)}
-.wrap{max-width:1400px;margin:0 auto;padding:24px 16px 48px}
-header{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 24px;margin-bottom:20px}
-h1{font-size:22px;font-weight:700;margin:0;letter-spacing:-.01em}
-.sub{color:var(--ink-2);font-size:13px;margin-top:4px}
+.wrap{max-width:1400px;margin:0 auto;padding:20px 16px 48px}
+/* The brand bar is Helixona's own: dark with the gold X, in both themes. */
+.brandbar{background:var(--brand-bg);color:var(--brand-ink);border-bottom:1px solid #1f1f2b}
+.brandbar .wrap{padding:16px 16px}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px}
+.logo{height:34px;display:block}
+.brand-sep{width:1px;height:34px;background:#2a2a38}
+h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em;color:var(--brand-ink)}
+.sub{color:var(--brand-muted);font-size:13px;margin-top:3px}
+.brandbar .btn{background:transparent;color:var(--brand-ink);border-color:#2a2a38}
+.brandbar .btn:hover{border-color:var(--brand-gold);color:var(--brand-gold)}
 .spacer{flex:1}
 .btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;text-decoration:none;font-weight:500}
 .btn:hover{border-color:var(--ink-3)}
@@ -88,22 +96,28 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .legend dt{white-space:nowrap}
 .legend dd{margin:0;color:var(--ink-2)}
 .more{display:block;width:100%;padding:12px;background:var(--surface-2);border:none;border-top:1px solid var(--line);font:inherit;color:var(--ink-2);cursor:pointer}
-@media (max-width:900px){.hero{grid-template-columns:1fr}.hero-n{font-size:40px}.filters input{min-width:0;flex:1}}
+@media (max-width:900px){.hero{grid-template-columns:1fr}.hero-n{font-size:40px}.filters input{min-width:0;flex:1}.brand-sep{display:none}.logo{height:28px}}
 @media print{.filters,.btn,.more{display:none}.tbl{border:none}th{position:static}}
 </style>
 </head>
 <body>
+<div class="brandbar">
+  <div class="wrap">
+    <header>
+      <img class="logo" src="/static/helixona-logo.png" alt="Helixona">
+      <div class="brand-sep"></div>
+      <div>
+        <h1>Insurance cheques · reconciliation</h1>
+        <div class="sub" id="sub">Loading…</div>
+      </div>
+      <div class="spacer"></div>
+      <a class="btn" href="/api/checks.csv">⬇ Download CSV</a>
+      <button class="btn" onclick="load()">↻ Refresh</button>
+      <button class="btn" onclick="toggleTheme()" title="Light / dark">◐</button>
+    </header>
+  </div>
+</div>
 <div class="wrap">
-  <header>
-    <div>
-      <h1>Insurance cheques · reconciliation</h1>
-      <div class="sub" id="sub">Loading…</div>
-    </div>
-    <div class="spacer"></div>
-    <a class="btn" href="/api/checks.csv">⬇ Download CSV</a>
-    <button class="btn" onclick="load()">↻ Refresh</button>
-    <button class="btn" onclick="toggleTheme()" title="Light / dark">◐</button>
-  </header>
 
   <section class="hero">
     <div class="hero-card">
