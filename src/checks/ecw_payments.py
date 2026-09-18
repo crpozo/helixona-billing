@@ -47,8 +47,11 @@ GRID_JS = r"""() => {
     // the same column count, else the nearest header table above it.
     const tables = Array.from(document.querySelectorAll('table')).filter(vis);
     const headersOf = tb => Array.from(tb.querySelectorAll('th, thead td')).map(txt).filter(h => h !== undefined);
+    // A filter form laid out as a table is not a grid: its "cells" are whole
+    // widgets (hundreds of characters). Grid cells are short.
     const rowsOf = tb => Array.from(tb.querySelectorAll('tbody tr, tr')).filter(tr => tr.querySelector('td') && !tr.querySelector('th'))
-        .map(tr => Array.from(tr.querySelectorAll('td')).map(txt)).filter(c => c.length >= 3 && c.some(x => x));
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(txt))
+        .filter(c => c.length >= 3 && c.some(x => x) && c.every(x => x.length <= 120));
     const headerTables = tables.map((tb, i) => ({ i, hdrs: headersOf(tb) })).filter(h => h.hdrs.filter(x => x).length >= 3);
     const looksRight = hdrs => hdrs.some(h => /amount|amt/i.test(h)) && hdrs.some(h => /check|chk|posted|payment|pmt/i.test(h));
     let best = null;
@@ -57,8 +60,9 @@ GRID_JS = r"""() => {
         let hdrs = headersOf(tb).filter(x => x !== '');
         if (!rows.length) {
             // No data rows: still an answer when the headers are the grid's
-            // (the filter simply matched nothing).
-            if (hdrs.length >= 3 && looksRight(hdrs) && !best) best = { hdrs, rows: [], score: 500, right: true };
+            // (the filter simply matched nothing) — and a better one than any
+            // table whose headers are not the grid's.
+            if (hdrs.length >= 3 && looksRight(hdrs) && (!best || !best.right)) best = { hdrs, rows: [], score: 500, right: true };
             return;
         }
         if (hdrs.length < 3) {
@@ -89,14 +93,14 @@ DOM_JS = r"""() => {
     for (const tb of Array.from(document.querySelectorAll('table')).filter(vis)) {
         const hdrs = Array.from(tb.querySelectorAll('th, thead td')).map(txt);
         const trs = Array.from(tb.querySelectorAll('tr')).filter(tr => tr.querySelector('td'));
-        const first = trs[0] ? Array.from(trs[0].querySelectorAll('td')).map(txt) : [];
+        const first = trs[0] ? Array.from(trs[0].querySelectorAll('td')).map(c => txt(c).slice(0, 60)) : [];
         if (!hdrs.length && trs.length < 2) continue;
-        out.tables.push({ id: tb.id || '', cls: (tb.className || '').toString().slice(0, 60), hdrs: hdrs.slice(0, 16), rows: trs.length, first: first.slice(0, 16) });
+        out.tables.push({ id: tb.id || '', cls: (tb.className || '').toString().slice(0, 60), hdrs: hdrs.map(h => h.slice(0, 40)).slice(0, 16), rows: trs.length, first: first.slice(0, 16) });
     }
     out.grids = document.querySelectorAll('[role="grid"], [role="row"]').length;
     const body = (document.body && document.body.innerText) || '';
-    const i = body.search(/check\s*#|check no|payment id|rcvd/i);
-    out.text = i >= 0 ? body.slice(Math.max(0, i - 200), i + 600).replace(/\s+/g, ' ') : body.slice(0, 400).replace(/\s+/g, ' ');
+    const i = body.search(/no records|no payments|no data|check no/i);
+    out.text = i >= 0 ? body.slice(Math.max(0, i - 80), i + 200).replace(/\s+/g, ' ') : '';
     return out;
 }"""
 
@@ -149,7 +153,7 @@ def _read_grid(page):
         if data.get('rows') and (not best or len(data['rows']) > len(best['rows'])):
             best = data
     if best:
-        logger.warning(f"  ⚠️ a grid was read but its headers are not the ones expected: {best['hdrs'][:12]} · first row {best['rows'][0][:10]}")
+        logger.warning(f"  ⚠️ a grid was read but its headers are not the ones expected: {[h[:30] for h in best['hdrs'][:12]]} · first row {[c[:40] for c in best['rows'][0][:8]]}")
         return best['hdrs'], best['rows'], False
     return [], [], False
 

@@ -254,11 +254,9 @@ def _set_field(page, label_rx, value, what='', prefer='first'):
             page.keyboard.press('Control+a')
             page.keyboard.press('Backspace')
             page.keyboard.type(str(value), delay=30)
-            # A date input (MM/DD/YYYY mask) commits on Enter; Tab alone left
-            # eCW's Rcvd Pmt Dts filter at today → today (2026-09-17).
-            if re.fullmatch(r'\d{2}/\d{2}/\d{4}', str(value)):
-                page.keyboard.press('Enter')
-                time.sleep(0.3)
+            # Tab commits the value (Enter would fire the screen's default
+            # action — on Payments that opened the Assistant's "no permission"
+            # tooltip); the read-back below catches a date that did not stick.
             page.keyboard.press('Tab')
             time.sleep(0.4)
             got = _read_value(frm)

@@ -158,8 +158,11 @@ class TheEcwPaymentsGridIsReadByName(unittest.TestCase):
         self.assertIn("the Payments grid was not read for check {check_no} — eCW stays unchecked", e)
         self.assertIn('def _set_dates(page, since):', e)
         p = _read('src/eob/post.py')
-        self.assertIn("page.keyboard.press('Enter')", p)
+        self.assertNotIn("page.keyboard.press('Enter')\n                time.sleep(0.3)", p)
         self.assertIn('def _read_value(frm):', p)
+        e2 = _read('src/checks/ecw_payments.py')
+        self.assertIn('c.every(x => x.length <= 120)', e2)
+        self.assertIn("(!best || !best.right)) best = { hdrs, rows: [], score: 500, right: true }", e2)
 
     def test_a_grid_filtered_by_check_number_need_not_show_the_column(self):
         hdrs = ['Payment ID', 'Rcvd Date', 'Amount', 'Posted', 'Unposted']
