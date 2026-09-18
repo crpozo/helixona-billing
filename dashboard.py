@@ -1207,8 +1207,8 @@ window.scrollToEl = function(sel){
         // eCW's payment, and the verdict. Filters are client-side.
         window._checksFilter = window._checksFilter || 'mismatch';
         const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Needs attention'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
-                               ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'],
-                               ['copy only', 'Copy only'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
+                               ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'], ['eCW not checked', 'eCW not checked'],
+                               ['other payer', 'Other payer'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
         // "Needs attention" — the same definition as the team view: what a
         // person must act on. Cashed but not in eCW, entered but unposted, a
         // cashed check with no copy, amounts that disagree. Copy-only checks
@@ -1258,9 +1258,10 @@ window.scrollToEl = function(sel){
                     tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)'),
                     tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)'),
                     tile('no copy of check', sm.no_copy, 'no copy', 'var(--bad)'),
-                    tile('copy only', sm.copy_only, 'copy only', 'var(--text-muted)'),
                     tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)'),
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)'),
+                    tile('other payer (not Blue Shield)', sm.other_payer, 'other payer', 'var(--text-muted)'),
+                    tile('eCW not checked', sm.ecw_unchecked, 'eCW not checked', 'var(--info)'),
                 ].join('') : '';
                 if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join(' | '))}" style="border-color:var(--bdr)"><div class="chk-tile-n" style="color:var(--warning)">${sm.unreadable}</div><div class="chk-tile-l">files not read (retried next run)</div></div>`;
             }
@@ -1272,6 +1273,7 @@ window.scrollToEl = function(sel){
                 : f === 'last run' ? inLastRun(r, sm)
                 : f === 'mismatch' ? checkMismatch(r)
                 : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy'))
+                : f === 'other payer' ? (r.flags || []).some(x => x === 'other payer')
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
                 : r.verdict === f);
             if (!rows.length) {
@@ -1287,7 +1289,7 @@ window.scrollToEl = function(sel){
                   <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
                   <td>${esc(r.bs_status || (r.in_blue_shield ? '' : 'not in results'))}</td>
                   <td>${esc(r.cashed_date || '')}</td>
-                  <td>${r.in_ecw ? `on file${r.ecw_payment_id ? ' · #' + esc(r.ecw_payment_id) : ''}` : '<span style="color:var(--text-muted)">—</span>'}</td>
+                  <td>${r.in_ecw ? `on file${r.ecw_payment_id ? ' · #' + esc(r.ecw_payment_id) : ''}` : r.verdict === 'eCW not checked' ? '<span style="color:var(--info)">not checked</span>' : '<span style="color:var(--text-muted)">not found</span>'}</td>
                   <td class="num">${r.ecw_posted ? '$' + esc(r.ecw_posted) : ''}</td>
                   <td class="num">${r.ecw_unposted ? '$' + esc(r.ecw_unposted) : ''}</td>
                   <td style="color:${color(r.verdict)};font-weight:600">${esc(r.verdict)}</td>

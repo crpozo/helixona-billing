@@ -50,9 +50,13 @@ class TheVerdictPerCheck(unittest.TestCase):
         self.assertEqual(by['4061950']['verdict'], 'unposted')
         self.assertEqual(by['31406730']['verdict'], 'not in eCW')
         self.assertEqual(by['31401901']['verdict'], 'not cashed')
-        self.assertEqual(by['99999999']['verdict'], 'copy only')
-        self.assertEqual((summary['posted'], summary['unposted'], summary['not_in_ecw'], summary['not_cashed'], summary['copy_only']),
-                         (1, 1, 1, 1, 1))
+        # A scanned check Blue Shield does not list is still a check we
+        # received: eCW decides. Not there → not in eCW, marked other payer.
+        self.assertEqual(by['99999999']['verdict'], 'not in eCW')
+        self.assertIn('other payer', by['99999999']['flags'])
+        self.assertNotIn('other payer', by['30912971']['flags'])
+        self.assertEqual((summary['posted'], summary['unposted'], summary['not_in_ecw'], summary['not_cashed'], summary['other_payer']),
+                         (1, 1, 2, 1, 1))
 
     def test_a_cashed_check_without_an_image_is_flagged(self):
         by, summary = self._rows()
@@ -74,8 +78,11 @@ class TheVerdictPerCheck(unittest.TestCase):
         self.assertEqual(summary['amount_mismatch'], 1)
 
     def test_when_ecw_was_not_consulted_nothing_is_called_missing(self):
-        by, _ = self._rows(ecw_checked=False)
+        by, summary = self._rows(ecw_checked=False)
         self.assertEqual(by['31406730']['verdict'], 'eCW not checked')
+        self.assertEqual(by['99999999']['verdict'], 'eCW not checked')   # not "copy only", not "not found"
+        self.assertEqual(by['31401901']['verdict'], 'eCW not checked')
+        self.assertEqual(summary['ecw_unchecked'], 3)
 
     def test_the_tiles_count_over_whatever_rows_they_are_given(self):
         # The dashboard counts over the whole table, not over the last run,
@@ -83,9 +90,9 @@ class TheVerdictPerCheck(unittest.TestCase):
         rows, _ = reconcile(self.COPIES, self.CHEQUES, self.PAYMENTS)
         table_rows = rows + [{'check_number': '7', 'verdict': 'posted', 'flags': ['amounts differ: copy 1.00, bs 2.00']}]
         sm = summarize(table_rows)
-        self.assertEqual((sm['checks'], sm['posted'], sm['amount_mismatch'], sm['no_copy']), (6, 2, 1, 1))
+        self.assertEqual((sm['checks'], sm['posted'], sm['amount_mismatch'], sm['no_copy'], sm['other_payer']), (6, 2, 1, 1, 1))
         self.assertEqual(summarize([]), {'checks': 0, 'posted': 0, 'unposted': 0, 'not_in_ecw': 0, 'not_cashed': 0,
-                                         'copy_only': 0, 'no_copy': 0, 'amount_mismatch': 0})
+                                         'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0})
 
 
 class TheImageReaderIsShapeChecked(unittest.TestCase):
@@ -517,6 +524,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         h = _read('dashboard_checks.html')
         for want in ("fetch('/api/checks')", 'checks need attention', 'What to do', 'Cashed, not in eCW',
                      'Entered, unposted', 'No copy of check', 'How to read this', 'prefers-color-scheme: dark',
+                     "'other payer'", 'eCW is the source of truth', "r.verdict === 'eCW not checked' ? `<span class=\"pill info\">not checked</span>`",
                      'data-theme="dark"', 'href="/api/checks.csv"'):
             self.assertIn(want, h, want)
         self.assertIn('src="/static/helixona-logo.png"', h)

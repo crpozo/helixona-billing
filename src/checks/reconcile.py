@@ -8,18 +8,23 @@
 * payments — what eCW has on file (Billing → Payments since a date):
              {'check_no', 'amount', 'posted', 'unposted', 'payment_id', ...}
 
-The verdict, per check:
+The verdict, per check — eCW is the source of truth (the operator,
+2026-09-18: "if it is not in eCW, we do not have the check"), whatever the
+payer:
 
-    posted        in eCW, nothing left unposted
-    unposted      in eCW, but a balance is still unposted — the payment was
-                  created and the lines never finished (see docs/ecw_posting.md)
-    not in eCW    Blue Shield shows it cashed, eCW has no payment for it
-    not cashed    Blue Shield has not cashed it yet — nothing to enter
-    copy only     we hold an image of a check Blue Shield's results do not
-                  list (a different payer, or outside the search window)
+    posted           in eCW, nothing left unposted
+    unposted         in eCW, but a balance is still unposted — the payment
+                     was created and the lines never finished
+    not cashed       a Blue Shield check the bank has not cashed yet —
+                     nothing to enter
+    not in eCW       eCW has no payment under the number: a cashed Blue
+                     Shield check, or a scanned check from any payer
+    eCW not checked  eCW was not read this run, so nothing can be said
 
-and, alongside, whether we hold a copy of the check and whether the
-amounts agree between the three sources. Pure: no browser, no AWS.
+Flags alongside: `no copy of the check` (Blue Shield cashed it, no scan),
+`other payer` (Blue Shield's results do not list it — Cigna, Aetna…, or
+outside the search window; informational), `amounts differ: …`. Pure: no
+browser, no AWS.
 """
 from decimal import Decimal, InvalidOperation
 
@@ -87,13 +92,15 @@ def reconcile(copies, checks, payments, ecw_checked=True):
         if r['in_ecw']:
             unposted = _d(r['ecw_unposted'])
             r['verdict'] = 'unposted' if (unposted is not None and unposted > 0) else 'posted'
-        elif not r['in_blue_shield']:
-            r['verdict'] = 'copy only'
-        elif not cashed:
+        elif not ecw_checked:
+            r['verdict'] = 'eCW not checked'
+        elif r['in_blue_shield'] and not cashed:
             r['verdict'] = 'not cashed'
         else:
-            r['verdict'] = 'not in eCW' if ecw_checked else 'eCW not checked'
+            r['verdict'] = 'not in eCW'
 
+        if not r['in_blue_shield']:
+            r['flags'].append('other payer')
         if r['in_blue_shield'] and cashed and not r['has_copy']:
             r['flags'].append('no copy of the check')
         amounts = {k: _d(r[k]) for k in ('copy_amount', 'bs_amount', 'ecw_amount') if _d(r[k]) is not None}
@@ -116,7 +123,8 @@ def summarize(rows):
         'unposted': sum(r.get('verdict') == 'unposted' for r in rows),
         'not_in_ecw': sum(r.get('verdict') == 'not in eCW' for r in rows),
         'not_cashed': sum(r.get('verdict') == 'not cashed' for r in rows),
-        'copy_only': sum(r.get('verdict') == 'copy only' for r in rows),
+        'ecw_unchecked': sum(r.get('verdict') == 'eCW not checked' for r in rows),
+        'other_payer': sum('other payer' in flags(r) for r in rows),
         'no_copy': sum('no copy of the check' in flags(r) for r in rows),
         'amount_mismatch': sum(any(f.startswith('amounts differ') for f in flags(r)) for r in rows),
     }

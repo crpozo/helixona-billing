@@ -30,11 +30,12 @@ the one whose "not in eCW" list is real.
 |---|---|
 | `posted` | in eCW, unposted balance 0.00 |
 | `unposted` | in eCW, a balance still unposted |
-| `not in eCW` | Blue Shield shows it cashed, eCW has no payment for it |
-| `not cashed` | Blue Shield has not cashed it — nothing to enter yet |
-| `copy only` | we hold an image of a check Blue Shield's results do not list |
+| `not in eCW` | eCW has no payment under the number — a cashed Blue Shield check, or a scanned check from any payer. eCW is the source of truth: not in eCW means we do not have it |
+| `not cashed` | a Blue Shield check the bank has not cashed — nothing to enter yet |
+| `eCW not checked` | eCW could not be read this run; nothing can be said |
 
-Flags alongside: `no copy of the check`; `amounts differ: copy 275.09, bs 257.09`.
+Flags alongside: `no copy of the check`; `other payer` (Blue Shield does not
+list it — informational); `amounts differ: copy 275.09, bs 257.09`.
 
 Everything lands in the **✅ Checks** table on the Remittance tab (filters
 per verdict, CSV export) and in the `helixona-checks` table, one item per
