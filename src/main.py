@@ -2623,6 +2623,96 @@ def _cpt_from_hcfa_pdf(pdf_path):
     return ', '.join(cpt_like + sorted(hcpcs)) or None
 
 
+def _facts_from_hcfa_words(pages_words):
+    """Patient name (box 2), first date of service (box 24A) and the total
+    charge (box 28, else the lines' sum) from a HCFA-1500's words — the same
+    word/fraction shape src/eob/hcfa_lines.py reads. Every value is checked
+    for shape and left empty when the layout does not match: these fill
+    gaps, they never overwrite what the eCW Claims page said.
+
+    2026-09-19: 24 claims run again by number were not on the Claims page,
+    so their rows had no patient, no DOS, no charges — and the IV Note and
+    Progress Note captures, which verify the patient's surname, dropped
+    every file ('no expected patient_name on record'). The HCFA eCW made
+    for each carries all three."""
+    import re as _re
+    from src.eob.hcfa_lines import parse_hcfa_lines, total_billed
+    out = {'patient_name': '', 'service_date': '', 'charges': ''}
+    if not pages_words:
+        return out
+    first = pages_words[0]
+    # Box 2: left column, the row under the form's header. Labels of the
+    # printed form ("PATIENT'S NAME (Last Name, First Name, Middle Initial)")
+    # carry punctuation a name never does.
+    LABEL = _re.compile(r"[()'’]|^(NAME|LAST|FIRST|MIDDLE|INITIAL|PATIENT|PATIENTS|INSURED|INSUREDS)[,.]?$", _re.I)
+    words = sorted([w for w in first if 0.0 <= w['x'] < 0.36 and 0.105 <= w['y'] < 0.15
+                    and w['text'].strip() and not LABEL.search(w['text']) and not _re.search(r'\d', w['text'])],
+                   key=lambda w: (round(w['y'], 2), w['x']))
+    name = ' '.join(w['text'] for w in words).strip(' ,')
+    if ',' in name and _re.fullmatch(r"[A-Za-z][A-Za-z .'\-]{0,40},\s*[A-Za-z][A-Za-z .'\-]{0,40}", name):
+        last, rest = [x.strip() for x in name.split(',', 1)]
+        out['patient_name'] = f"{last.title() if last.isupper() else last}, {rest.title() if rest.isupper() else rest}"
+    try:
+        lines = parse_hcfa_lines(pages_words)
+    except Exception:
+        lines = []
+    dated = [l['dos_from'] for l in lines if l.get('dos_from')]
+    if dated:
+        out['service_date'] = min(dated, key=lambda d: (d[6:], d[:2], d[3:5]))
+    # Box 28: TOTAL CHARGE, bottom right of the lines block.
+    tot = [w for w in first if 0.60 <= w['x'] < 0.74 and 0.87 <= w['y'] < 0.915 and _re.fullmatch(r'[\d,]+(\.\d\d)?', w['text'])]
+    if tot:
+        digits = ''.join(w['text'] for w in sorted(tot, key=lambda w: w['x'])).replace(',', '').replace('.', '')
+        if len(digits) >= 3:
+            out['charges'] = f"{int(digits[:-2])}.{digits[-2:]}"
+    if not out['charges'] and lines:
+        try:
+            billed = total_billed(lines)
+            if billed and billed != '0.00':
+                out['charges'] = billed
+        except Exception:
+            pass
+    return out
+
+
+def _claim_facts_from_hcfa_pdf(pdf_path):
+    """_facts_from_hcfa_words over the PDF's text layer; {} when unreadable."""
+    try:
+        import pdfplumber
+        pages = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for pg in pdf.pages:
+                W, H = float(pg.width), float(pg.height)
+                pages.append([{'text': w['text'], 'x': w['x0'] / W, 'y': w['top'] / H} for w in pg.extract_words()])
+        return _facts_from_hcfa_words(pages)
+    except Exception:
+        return {}
+
+
+def _fill_claim_facts(aws_client, claim_record, pdf_path, where=''):
+    """Fill patient_name / service_date / charges on the record and in
+    DynamoDB from the HCFA when they are missing. Returns what was filled."""
+    missing = [k for k in ('patient_name', 'service_date') if not claim_record.get(k)]
+    if not missing and claim_record.get('charges'):
+        return {}
+    facts = _claim_facts_from_hcfa_pdf(pdf_path)
+    filled = {k: v for k, v in facts.items() if v and not claim_record.get(k)}
+    if not filled:
+        return {}
+    claim_record.update(filled)
+    if 'service_date' in filled:
+        claim_record['dos'] = filled['service_date']
+    upd = dict(filled)
+    if 'service_date' in upd:
+        upd['dos'] = upd['service_date']
+    try:
+        aws_client.update_claim_status(claim_record['claim_id'], upd)
+    except Exception as e:
+        logger.warning(f"  facts from the HCFA not saved for {claim_record['claim_id']}: {e}")
+    logger.info(f"📋 Claim {claim_record['claim_id']}: {', '.join(f'{k} = {v}' for k, v in filled.items())} read off the HCFA{where}")
+    return filled
+
+
 def _subscriber_id_from_hcfa_pdf(pdf_path):
     """Extract the PRIMARY subscriber id from HCFA-1500 box 1a ("INSURED'S I.D.
     NUMBER") of the PDF that ECW generated for the claim.
@@ -5269,6 +5359,33 @@ def process_message(message: dict, aws_client: AWSClient):
                                     logger.warning(f"CPT backfill failed for {claim_id}: {_bf_e}")
                     except Exception:
                         pass
+
+                # ── A claim opened by number, not from the Claims page, has no
+                # patient / DOS / charges on record — and every capture below
+                # verifies the patient's surname. The stored HCFA has them.
+                if not claim_record.get('patient_name') or not claim_record.get('service_date'):
+                    try:
+                        _ddb_f = aws_client.dynamodb.Table('helixona-claims').get_item(Key={'claim_id': claim_id}).get('Item', {})
+                        for _k in ('patient_name', 'service_date', 'charges'):
+                            if not claim_record.get(_k) and _ddb_f.get(_k):
+                                claim_record[_k] = _ddb_f[_k]
+                        if (not claim_record.get('patient_name') or not claim_record.get('service_date')) and _ddb_f.get('hcfa_s3_path'):
+                            import re as _re_f
+                            _m_f = _re_f.match(r's3://([^/]+)/(.+)', _ddb_f['hcfa_s3_path'])
+                            if _m_f:
+                                _lp_f = f'/tmp/{claim_id}_facts.pdf'
+                                aws_client.s3.download_file(_m_f.group(1), _m_f.group(2), _lp_f)
+                                _fill_claim_facts(aws_client, claim_record, _lp_f, where=' on file')
+                                try:
+                                    os.remove(_lp_f)
+                                except Exception:
+                                    pass
+                        patient_name = claim_record.get('patient_name', '')
+                        if not claim_record.get('patient_name'):
+                            logger.warning(f"⚠️ Claim {claim_id}: no patient name anywhere — the IV Note and Progress Note "
+                                           f"captures verify the patient and will drop what they find")
+                    except Exception as _f_err:
+                        logger.warning(f"facts backfill failed for {claim_id}: {_f_err}")
 
                 # ── Pre-flight: verify any STORED IV note / encounter PDF still
                 # belongs to this patient. Without this check, an old wrong-patient
@@ -8451,6 +8568,10 @@ def process_message(message: dict, aws_client: AWSClient):
                         aws_client.update_claim_status(claim_id, update_data)
                         logger.info(f"✅ Claim {claim_id} updated to state 2 with HCFA PDF in S3")
                         hcfa_success_count += 1
+                        try:
+                            _fill_claim_facts(aws_client, claim_record, download_path, where=' just generated')
+                        except Exception as _f2:
+                            logger.warning(f"facts from the fresh HCFA failed for {claim_id}: {_f2}")
                     except Exception as e:
                         logger.error(f"S3 upload / DynamoDB update failed for {claim_id}: {e}")
                         hcfa_fail_count += 1

@@ -9,6 +9,7 @@ failure mode that would quietly return us to having no evidence.
 import ast
 import os
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN = os.path.join(REPO, 'src', 'main.py')
@@ -163,3 +164,47 @@ class NamedClaimsRunAgain(unittest.TestCase):
         self.assertIn("${missing.join(' + ')} missing", d)
         self.assertIn("${getStagePill(state, c)}", d)
         self.assertIn('placeholder="e.g. 239 or 239, 240, 241"', d)
+
+
+class TheHcfaFillsWhatTheClaimsPageDidNotSay(unittest.TestCase):
+    """2026-09-19: claims run again by number were not on the Claims page,
+    so nothing knew the patient — and the captures dropped every file."""
+
+    def _words(self):
+        w = lambda text, x, y: {'text': text, 'x': x, 'y': y}
+        return [[
+            w("PATIENT'S", 0.02, 0.112), w('NAME', 0.08, 0.112), w('(Last', 0.11, 0.112), w('Name,', 0.15, 0.112),
+            w('GRAY,', 0.03, 0.128), w('CASSANDRA', 0.09, 0.128),
+            w('SMITH,', 0.60, 0.128), w('JOHN', 0.66, 0.128),                  # box 4, the insured — not ours
+            w('04', 0.02, 0.70), w('10', 0.06, 0.70), w('26', 0.10, 0.70), w('11', 0.24, 0.70), w('96365', 0.31, 0.70), w('325', 0.63, 0.70), w('00', 0.68, 0.70), w('1', 0.71, 0.70),
+            w('04', 0.02, 0.72), w('10', 0.06, 0.72), w('26', 0.10, 0.72), w('11', 0.24, 0.72), w('J3490', 0.31, 0.72), w('2550', 0.63, 0.72), w('1', 0.71, 0.72),
+            w('350', 0.63, 0.89), w('50', 0.68, 0.89),                          # box 28 total charge
+        ]]
+
+    def test_patient_dos_and_charges_come_off_the_form(self):
+        from src.main import _facts_from_hcfa_words
+        got = _facts_from_hcfa_words(self._words())
+        self.assertEqual(got, {'patient_name': 'Gray, Cassandra', 'service_date': '04/10/2026', 'charges': '350.50'})
+
+    def test_nothing_is_guessed_when_the_layout_does_not_match(self):
+        from src.main import _facts_from_hcfa_words
+        self.assertEqual(_facts_from_hcfa_words([]), {'patient_name': '', 'service_date': '', 'charges': ''})
+        junk = [[{'text': 'HELIXONA', 'x': 0.05, 'y': 0.12}, {'text': 'INC', 'x': 0.12, 'y': 0.12}]]
+        self.assertEqual(_facts_from_hcfa_words(junk)['patient_name'], '')
+
+    def test_the_run_fills_the_record_and_dynamodb_but_never_overwrites(self):
+        from src import main as m
+        saved = {}
+        class _Aws:
+            def update_claim_status(self, cid, data): saved[cid] = data
+        rec = {'claim_id': '6455', 'patient_name': '', 'service_date': '', 'charges': ''}
+        with mock.patch.object(m, '_claim_facts_from_hcfa_pdf', return_value={'patient_name': 'Gray, Cassandra', 'service_date': '04/10/2026', 'charges': '350.50'}):
+            filled = m._fill_claim_facts(_Aws(), rec, '/tmp/x.pdf')
+        self.assertEqual(filled, {'patient_name': 'Gray, Cassandra', 'service_date': '04/10/2026', 'charges': '350.50'})
+        self.assertEqual((rec['patient_name'], rec['dos'], saved['6455']['dos']), ('Gray, Cassandra', '04/10/2026', '04/10/2026'))
+        rec2 = {'claim_id': '1', 'patient_name': 'Ybarra, Jennifer', 'service_date': '09/17/2026', 'charges': '1.00'}
+        with mock.patch.object(m, '_claim_facts_from_hcfa_pdf', side_effect=AssertionError('not even read')):
+            self.assertEqual(m._fill_claim_facts(_Aws(), rec2, '/tmp/x.pdf'), {})
+        src = open('src/main.py', encoding='utf-8').read()
+        self.assertIn("_fill_claim_facts(aws_client, claim_record, _lp_f, where=' on file')", src)
+        self.assertIn("_fill_claim_facts(aws_client, claim_record, download_path, where=' just generated')", src)
