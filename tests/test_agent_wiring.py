@@ -123,3 +123,42 @@ class SubmissionRuleIsStatedOnce(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NamedClaimsRunAgain(unittest.TestCase):
+    """2026-09-19: 24 IV claims read 'Documentation Completed' with nothing
+    behind them. A list of claims can be run again, everything collected."""
+
+    def test_the_list_comes_from_claim_ids_or_the_test_box(self):
+        from src.main import _claim_id_list
+        self.assertEqual(_claim_id_list({'claim_ids': [6234, '3865', 6234]}), ['6234', '3865'])
+        self.assertEqual(_claim_id_list({'claim_ids': '6234, 3865;6455 3897'}), ['6234', '3865', '6455', '3897'])
+        self.assertEqual(_claim_id_list({'test_claim_id': '239, 240'}), ['239', '240'])
+        self.assertEqual(_claim_id_list({'claim_ids': ['1'], 'test_claim_id': '2'}), ['1', '2'])
+        self.assertEqual(_claim_id_list({}), [])
+
+    def test_redo_collects_everything_again(self):
+        from src.main import _claim_needs
+        stored = {'hcfa_s3_path': 's3://b/h.pdf', 'prog_notes_s3_path': 's3://b/p.pdf', 'subscriber_id': 'X1',
+                  'encounter_date': '04/10/2026', 'encounter_file_s3_path': 's3://b/e.pdf', 'iv_note_rx_start_date': '04/10/2026',
+                  'patient_name': 'Pat', 'dos': '04/10/2026'}
+        kept = _claim_needs('6234', None, stored)
+        self.assertFalse(any(v for k, v in kept.items() if k.startswith('needs_')))
+        self.assertEqual((kept['patient_name'], kept['service_date']), ('Pat', '04/10/2026'))
+        again = _claim_needs('6234', {'patient': 'Pat P.', 'serviceDate': '04/11/2026', 'pageNum': 3}, stored, redo=True)
+        self.assertTrue(all(v for k, v in again.items() if k.startswith('needs_')))
+        self.assertEqual((again['patient_name'], again['service_date'], again['page_num']), ('Pat P.', '04/11/2026', 3))
+        # Nothing stored, nothing on the page: every step is needed anyway.
+        self.assertTrue(_claim_needs('3865', None, {})['needs_hcfa'])
+
+    def test_the_pipeline_forwards_the_list_and_the_page_says_when_nothing_is_behind_a_stage(self):
+        src = open('src/main.py', encoding='utf-8').read()
+        self.assertIn("step_body['claim_ids'] = body['claim_ids']", src)
+        self.assertIn("redo = bool(body.get('redo', bool(body.get('claim_ids'))))", src)
+        self.assertIn("claims_to_process = [by_cid[t] for t in target_ids if t in by_cid]", src)
+        self.assertIn("if testing_mode and not target_ids and hcfa_success_count + hcfa_fail_count >= 1:", src)
+        d = open('dashboard.py', encoding='utf-8').read()
+        self.assertIn("if (key === 'documentation' && c && !c.hcfa_s3_path && !c.prog_notes_s3_path) {", d)
+        self.assertIn('Documentation Pending', d)
+        self.assertIn("${getStagePill(state, c)}", d)
+        self.assertIn('placeholder="e.g. 239 or 239, 240, 241"', d)

@@ -2665,6 +2665,44 @@ def _subscriber_id_from_hcfa_pdf(pdf_path):
     return cands[0][2]
 
 
+def _claim_id_list(body):
+    """The claims a run is about: `claim_ids` (a list, or one string with
+    commas/spaces) plus `test_claim_id` (which the dashboard's test box
+    fills — it takes several numbers too, comma-separated). [] for all."""
+    import re as _re
+    raw = body.get('claim_ids') or []
+    if isinstance(raw, str):
+        raw = _re.split(r'[\s,;]+', raw)
+    raw = list(raw) + _re.split(r'[\s,;]+', str(body.get('test_claim_id') or ''))
+    out = []
+    for c in raw:
+        c = str(c).strip()
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
+def _claim_needs(cid, pc=None, item=None, redo=False, page_num=1):
+    """What is left to collect for one claim — from what is stored, or
+    everything when `redo` (the operator asked for the claim to be run
+    again: 2026-09-19, 24 IV claims shown as documented with nothing
+    behind them)."""
+    pc, item = pc or {}, item or {}
+    return {
+        'claim_id': str(cid),
+        'patient_name': pc.get('patient') or item.get('patient_name', ''),
+        'service_date': pc.get('serviceDate') or item.get('service_date', '') or item.get('dos', ''),
+        'needs_hcfa': redo or not bool(item.get('hcfa_s3_path')),
+        'needs_prog_notes': redo or (not bool(item.get('prog_notes_s3_path'))
+                                     or bool(item.get('iv_note_patient_mismatch'))
+                                     or (not bool(item.get('office_visit')) and not bool(item.get('iv_note_rx_start_date')))),
+        'needs_subscriber_id': redo or not bool(item.get('subscriber_id')),
+        'needs_encounter_date': redo or not bool(item.get('encounter_date')),
+        'needs_encounter_file': redo or not bool(item.get('encounter_file_s3_path')),
+        'page_num': int(pc.get('pageNum', page_num) or page_num),
+    }
+
+
 def _sync_ecw_claim_visibility(claims_table, present_ids):
     """Reconcile DynamoDB with what is currently visible in ECW WITHOUT deleting.
 
@@ -4368,10 +4406,14 @@ def process_message(message: dict, aws_client: AWSClient):
 
         # Testing mode: process only 1 claim for fast iteration
         testing_mode = body.get('testing_mode', False)
-        test_claim_id = body.get('test_claim_id', '').strip()
-        if test_claim_id:
+        # The claims this run is about (claim_ids / test_claim_id, several
+        # allowed); `redo` collects everything for them again whatever is
+        # stored — on by default when claim_ids is given.
+        target_ids = _claim_id_list(body)
+        redo = bool(body.get('redo', bool(body.get('claim_ids'))))
+        if target_ids:
             testing_mode = True
-            logger.info(f"🧪 TESTING MODE: Will process only claim {test_claim_id}")
+            logger.info(f"🎯 Will process only claim(s) {', '.join(target_ids)}" + (' — collecting everything again' if redo else ''))
         elif testing_mode:
             logger.info("🧪 TESTING MODE: Will process only 1 claim")
 
@@ -4941,70 +4983,41 @@ def process_message(message: dict, aws_client: AWSClient):
                 claims_table = aws_client.dynamodb.Table('helixona-claims')
                 claims_to_process = []  # Reset — use page-discovered claims
                 
-                # ── SHORTCUT: If test_claim_id is set, skip full sync ──
-                if test_claim_id:
-                    # Find the claim in the scraped list
-                    target_pc = None
-                    for pc in page_claims:
-                        if pc['claimId'] == str(test_claim_id):
-                            target_pc = pc
-                            break
-                    
-                    if target_pc:
-                        cid = target_pc['claimId']
-                        logger.info(f"🧪 Fast path: found claim {cid} in scraped list, skipping full sync")
-                        # Quick upsert just this one claim
-                        claims_table.update_item(
-                            Key={'claim_id': cid},
-                            UpdateExpression='SET #s = if_not_exists(#s, :state), patient_name = :name, service_date = :dos, dos = :dos, payer = :payer, charges = :charges, #src = :src',
-                            ExpressionAttributeNames={'#s': 'state', '#src': 'source'},
-                            ExpressionAttributeValues={
-                                ':state': 1, ':name': target_pc.get('patient', ''),
-                                ':dos': target_pc.get('serviceDate', ''), ':payer': target_pc.get('payer', ''),
-                                ':charges': target_pc.get('charges', ''), ':src': 'ECW'
-                            }
-                        )
-                        item = claims_table.get_item(Key={'claim_id': cid}).get('Item', {})
-                        claims_to_process.append({
-                            'claim_id': cid,
-                            'patient_name': target_pc.get('patient', ''),
-                            'service_date': target_pc.get('serviceDate', ''),
-                            'needs_hcfa': not bool(item.get('hcfa_s3_path')),
-                            'needs_prog_notes': (not bool(item.get('prog_notes_s3_path'))
-                                                 or bool(item.get('iv_note_patient_mismatch'))
-                                                 or (not bool(item.get('office_visit')) and not bool(item.get('iv_note_rx_start_date')))),
-                            'needs_subscriber_id': not bool(item.get('subscriber_id')),
-                            'needs_encounter_date': not bool(item.get('encounter_date')),
-                            'needs_encounter_file': not bool(item.get('encounter_file_s3_path')),
-                            'page_num': int(target_pc.get('pageNum', 1)),
-                        })
-                        logger.info(f"🧪 Claim {cid} needs: {[k for k,v in claims_to_process[0].items() if k.startswith('needs_') and v]}")
-                    else:
-                        logger.warning(f"🧪 Claim {test_claim_id} not found in {len(page_claims)} scraped claims!")
-                        # Fallback: load from DynamoDB and use direct claim lookup (filter returned no rows)
-                        try:
-                            db_item = claims_table.get_item(Key={'claim_id': str(test_claim_id)}).get('Item')
-                            if db_item:
-                                cid = str(test_claim_id)
-                                logger.info(f"🧪 DDB fallback: loaded claim {cid} from DynamoDB, using direct claim lookup")
-                                claims_to_process.append({
-                                    'claim_id': cid,
-                                    'patient_name': db_item.get('patient_name', ''),
-                                    'service_date': db_item.get('service_date', '') or db_item.get('dos', ''),
-                                    'needs_hcfa': not bool(db_item.get('hcfa_s3_path')),
-                                    'needs_prog_notes': (not bool(db_item.get('prog_notes_s3_path'))
-                                                     or bool(db_item.get('iv_note_patient_mismatch'))
-                                                     or (not bool(db_item.get('office_visit')) and not bool(db_item.get('iv_note_rx_start_date')))),
-                                    'needs_subscriber_id': not bool(db_item.get('subscriber_id')),
-                                    'needs_encounter_date': not bool(db_item.get('encounter_date')),
-                                    'needs_encounter_file': not bool(db_item.get('encounter_file_s3_path')),
-                                    'page_num': 1,
-                                })
-                                logger.info(f"🧪 Claim {cid} needs: {[k for k,v in claims_to_process[0].items() if k.startswith('needs_') and v]}")
-                            else:
-                                logger.warning(f"🧪 Claim {test_claim_id} not found in DynamoDB either")
-                        except Exception as _fb_err:
-                            logger.warning(f"🧪 DDB fallback failed: {_fb_err}")
+                # ── SHORTCUT: named claims only — skip the full sync ──
+                if target_ids:
+                    by_id = {pc['claimId']: pc for pc in page_claims}
+                    for tid in target_ids:
+                        target_pc = by_id.get(str(tid))
+                        if target_pc:
+                            cid = target_pc['claimId']
+                            logger.info(f"🎯 Claim {cid}: found in the scraped list")
+                            # Quick upsert just this one claim
+                            claims_table.update_item(
+                                Key={'claim_id': cid},
+                                UpdateExpression='SET #s = if_not_exists(#s, :state), patient_name = :name, service_date = :dos, dos = :dos, payer = :payer, charges = :charges, #src = :src',
+                                ExpressionAttributeNames={'#s': 'state', '#src': 'source'},
+                                ExpressionAttributeValues={
+                                    ':state': 1, ':name': target_pc.get('patient', ''),
+                                    ':dos': target_pc.get('serviceDate', ''), ':payer': target_pc.get('payer', ''),
+                                    ':charges': target_pc.get('charges', ''), ':src': 'ECW'
+                                }
+                            )
+                            item = claims_table.get_item(Key={'claim_id': cid}).get('Item', {})
+                            claims_to_process.append(_claim_needs(cid, target_pc, item, redo=redo))
+                        else:
+                            logger.warning(f"🎯 Claim {tid} not found in {len(page_claims)} scraped claims — trying DynamoDB")
+                            # Fallback: load from DynamoDB and use direct claim lookup (filter returned no rows)
+                            try:
+                                db_item = claims_table.get_item(Key={'claim_id': str(tid)}).get('Item')
+                                if db_item:
+                                    logger.info(f"🎯 Claim {tid}: loaded from DynamoDB, using direct claim lookup")
+                                    claims_to_process.append(_claim_needs(tid, None, db_item, redo=redo))
+                                else:
+                                    logger.warning(f"🎯 Claim {tid} not found in DynamoDB either — skipped")
+                            except Exception as _fb_err:
+                                logger.warning(f"🎯 DDB fallback failed for {tid}: {_fb_err}")
+                    for rec in claims_to_process:
+                        logger.info(f"🎯 Claim {rec['claim_id']} needs: {[k for k, v in rec.items() if k.startswith('needs_') and v]}")
                     # Skip normal processing below
                 else:
                     # ── Normal full sync ──
@@ -5138,49 +5151,35 @@ def process_message(message: dict, aws_client: AWSClient):
                         logger.warning(f"Claim sync failed: {e}")
             else:
                 logger.warning("No claims found on the ECW page after Lookup")
-                # Fallback: if test_claim_id is set, load from DDB and use direct claim lookup
-                if test_claim_id:
+                # Fallback: named claims are loaded from DDB and opened by direct claim lookup
+                for tid in target_ids:
                     try:
                         claims_table = aws_client.dynamodb.Table('helixona-claims')
-                        db_item = claims_table.get_item(Key={'claim_id': str(test_claim_id)}).get('Item')
+                        db_item = claims_table.get_item(Key={'claim_id': str(tid)}).get('Item')
                         if db_item:
-                            cid = str(test_claim_id)
-                            logger.info(f"🧪 DDB fallback (empty page): loaded claim {cid} from DynamoDB, using direct claim lookup")
-                            claims_to_process.append({
-                                'claim_id': cid,
-                                'patient_name': db_item.get('patient_name', ''),
-                                'service_date': db_item.get('service_date', '') or db_item.get('dos', ''),
-                                'needs_hcfa': not bool(db_item.get('hcfa_s3_path')),
-                                'needs_prog_notes': (not bool(db_item.get('prog_notes_s3_path'))
-                                                     or bool(db_item.get('iv_note_patient_mismatch'))
-                                                     or (not bool(db_item.get('office_visit')) and not bool(db_item.get('iv_note_rx_start_date')))),
-                                'needs_subscriber_id': not bool(db_item.get('subscriber_id')),
-                                'needs_encounter_date': not bool(db_item.get('encounter_date')),
-                                'needs_encounter_file': not bool(db_item.get('encounter_file_s3_path')),
-                                'page_num': 1,
-                            })
-                            logger.info(f"🧪 Claim {cid} needs: {[k for k,v in claims_to_process[0].items() if k.startswith('needs_') and v]}")
+                            logger.info(f"🎯 DDB fallback (empty page): claim {tid} loaded from DynamoDB, using direct claim lookup")
+                            claims_to_process.append(_claim_needs(tid, None, db_item, redo=redo))
                         else:
-                            logger.warning(f"🧪 Claim {test_claim_id} not found in DynamoDB either")
+                            logger.warning(f"🎯 Claim {tid} not found in DynamoDB either")
                     except Exception as _fb_err:
-                        logger.warning(f"🧪 DDB fallback failed: {_fb_err}")
+                        logger.warning(f"🎯 DDB fallback failed for {tid}: {_fb_err}")
 
             # ── 7. Process each claim: open detail popup → HCFA + Prog Notes ──
             hcfa_success_count = 0
             hcfa_fail_count = 0
 
-            # If a specific claim ID was requested, filter the list
-            if test_claim_id:
+            # If specific claims were requested, filter the list (in the order asked)
+            if target_ids:
                 original_count = len(claims_to_process)
-                claims_to_process = [c for c in claims_to_process if str(c.get('claim_id', '')) == str(test_claim_id)]
-                if claims_to_process:
-                    logger.info(f"🧪 Filtered to claim {test_claim_id} (from {original_count} total)")
-                else:
-                    logger.warning(f"🧪 Claim {test_claim_id} not found in {original_count} scraped claims!")
+                by_cid = {str(c.get('claim_id', '')): c for c in claims_to_process}
+                claims_to_process = [by_cid[t] for t in target_ids if t in by_cid]
+                missing = [t for t in target_ids if t not in by_cid]
+                logger.info(f"🎯 {len(claims_to_process)} of {len(target_ids)} named claim(s) to process (from {original_count} found)"
+                            + (f" · not found anywhere: {', '.join(missing)}" if missing else ''))
 
             for claim_record in claims_to_process:
                 # Testing mode: process only 1 claim (when no specific claim ID given)
-                if testing_mode and not test_claim_id and hcfa_success_count + hcfa_fail_count >= 1:
+                if testing_mode and not target_ids and hcfa_success_count + hcfa_fail_count >= 1:
                     logger.info("🧪 Testing Mode: stopping after 1 claim")
                     break
                 claim_id = claim_record['claim_id']
@@ -10446,10 +10445,16 @@ def process_message(message: dict, aws_client: AWSClient):
         # Forward testing_mode and test_claim_id flags if present
         if body.get('testing_mode'):
             step_body['testing_mode'] = True
+        if body.get('claim_ids'):
+            step_body['claim_ids'] = body['claim_ids']
+        if 'redo' in body:
+            step_body['redo'] = bool(body['redo'])
         if body.get('test_claim_id'):
             step_body['test_claim_id'] = body['test_claim_id']
             step_body['testing_mode'] = True
-            logger.info(f"🧪 Testing Mode ON — will process only claim {body['test_claim_id']}")
+            logger.info(f"🧪 Testing Mode ON — will process only claim(s) {body['test_claim_id']}")
+        elif body.get('claim_ids'):
+            logger.info(f"🎯 Will process only the {len(_claim_id_list(body))} claim(s) named")
         elif body.get('testing_mode'):
             logger.info("🧪 Testing Mode ON — will process only 1 claim")
         process_message({'Body': json.dumps(step_body)}, aws_client)

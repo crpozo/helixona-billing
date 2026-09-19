@@ -350,6 +350,7 @@ tbody tr:last-child td{border-bottom:none}
 .state-pill.documentation{background:rgba(205,180,134,.12);color:var(--accent)}
 .state-pill.ready{background:rgba(59,130,246,.12);color:var(--info)}
 .state-pill.revision{background:rgba(239,68,68,.12);color:var(--bad)}
+.state-pill.pending{background:rgba(245,158,11,.12);color:var(--warning)}
 .hcfa-link{cursor:pointer;color:var(--accent);font-size:11px;font-weight:500;padding:3px 7px;border-radius:6px;background:var(--accent-glow);display:inline-block;transition:all .15s}
 .hcfa-link:hover{background:rgba(205,180,134,.25);box-shadow:0 0 0 1px var(--accent)}
 .empty-state{text-align:center;padding:30px 20px;color:var(--text-muted);font-size:12px}
@@ -636,10 +637,10 @@ tbody tr:last-child td{border-bottom:none}
 
           <div style="margin:10px 0;padding:10px 12px;background:rgba(205,180,134,0.06);border:1px solid rgba(205,180,134,0.18);border-radius:8px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span style="color:var(--accent);font-weight:600;font-size:11px">🧪 Test Single Claim</span>
-              <span style="color:var(--text-muted);font-size:10px">(empty = all)</span>
+              <span style="color:var(--accent);font-weight:600;font-size:11px">🧪 Only these claims</span>
+              <span style="color:var(--text-muted);font-size:10px">(empty = all · several: 239, 240, 241)</span>
             </div>
-            <input type="text" id="test-claim-id" placeholder="e.g. 239" style="margin-bottom:0">
+            <input type="text" id="test-claim-id" placeholder="e.g. 239 or 239, 240, 241" style="margin-bottom:0">
           </div>
 
           <label>Task Payload (JSON)</label>
@@ -844,7 +845,9 @@ window.scrollToEl = function(sel){
 
         const TASK_TEMPLATES = {
             bs_missing_docs: JSON.stringify({
-                note: "Runs full pipeline: ECW claims extraction, HCFA generation, Progress Notes capture, and BlueShield submission for Missing Documentation cases"
+                claim_ids: [],
+                redo: false,
+                note: "eCW only: discovers the claims, generates the HCFA forms and captures the IV Notes / encounter files. claim_ids (or the 'Only these claims' box, comma-separated) limits the run to those claims, found on the eCW Claims page or opened by direct lookup; with claim_ids, redo defaults to true — everything is collected again for them even when a file is already stored."
             }, null, 2),
             blueshield_submissions: JSON.stringify({
                 note: "Uploads claim documentation (HCFA, Prog Notes, Encounter File) to Blue Shield via SympliSend."
@@ -883,7 +886,7 @@ window.scrollToEl = function(sel){
             bs_missing_docs: {
                 title: 'ECW obtain claims documentation',
                 desc: 'eCW only — nothing is sent to Blue Shield. Discovers the claims in eCW, generates the HCFA forms and captures the Progress Notes, and stores them. Uploading to Blue Shield is the separate task "Blueshield Submissions".',
-                steps: ['eCW → Billing → Claims: discover the claims and store them', 'Generate the HCFA form for each claim', 'Capture the Progress Notes', 'Nothing is uploaded — run Blueshield Submissions for that']
+                steps: ['eCW → Billing → Claims: discover the claims and store them', 'Generate the HCFA form for each claim', 'Capture the Progress Notes', 'Nothing is uploaded — run Blueshield Submissions for that', 'To redo specific claims: list them in claim_ids (or the box above) — their documents are collected again']
             },
             blueshield_submissions: {
                 title: 'Blueshield Submissions',
@@ -1064,9 +1067,16 @@ window.scrollToEl = function(sel){
             return 'documentation';
         }
 
-        function getStagePill(state) {
+        function getStagePill(state, c) {
             const key = getStageKey(state);
-            const label = PIPELINE_STAGES[key]?.label || 'Unknown';
+            let label = PIPELINE_STAGES[key]?.label || 'Unknown';
+            // A claim in the documentation stage with nothing stored — no
+            // HCFA, no IV Note — is not documented yet, whatever its state
+            // number says (2026-09-19: 24 IV claims read "Documentation
+            // Completed" with every column empty).
+            if (key === 'documentation' && c && !c.hcfa_s3_path && !c.prog_notes_s3_path) {
+                return `<span class="state-pill pending" title="State ${state}: no HCFA and no IV Note stored yet — run ECW Obtain Claims Documentation with this claim's number">Documentation Pending</span>`;
+            }
             return `<span class="state-pill ${key}">${label}</span>`;
         }
 
@@ -1816,7 +1826,7 @@ window.scrollToEl = function(sel){
                     <td style="font-size:11px;color:var(--text-muted);">${formatProgNoteDate(c)}</td>
                     <td>${encFileCell}</td>
                     <td>${subCell}</td>
-                    <td>${getStagePill(state)}</td>
+                    <td>${getStagePill(state, c)}</td>
                 </tr>`;
             }).join('');
 
