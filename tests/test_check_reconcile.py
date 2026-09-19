@@ -764,7 +764,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn('setInterval(load, 15000);', h)
         self.assertIn('Run in progress', h)
         self.assertIn("resp.headers['Cache-Control'] = 'no-store'", d)
-        self.assertIn('<th>Check #</th><th>SharePoint</th><th>Folder · file</th>', d)
+        self.assertIn('<th>Check #</th><th>Copy in SharePoint</th><th class="num">Amount</th><th>Blue Shield</th><th>eCW</th><th>Verdict</th><th>What to do</th>', d)
         for want in ("fetch('/api/checks', {cache: 'no-store'})", "const issues = r => flags(r).filter(f => String(f) !== 'other payer');",
                      'checks need attention', 'What to do', 'Cashed, not in eCW',
                      'Entered, unposted', 'No copy of check', 'How to read this', 'prefers-color-scheme: dark',

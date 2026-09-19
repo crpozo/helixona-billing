@@ -95,8 +95,33 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
 
     def test_the_empty_state_says_what_to_do(self):
         src = _src()
-        self.assertIn('Reconcile checks</strong> from the task panel', src)
-        self.assertIn('MFA code</strong> box', src)
+        # 2026-09-19: the page tells the operator where to click, in words, not which JSON to send.
+        self.assertIn('Use <strong>▶ Run → Reconcile all checks</strong> (or <strong>Test one check</strong>) on the right.', src)
+        self.assertIn('Blue Shield code</strong> box', src)
+        self.assertIn('Use <strong>▶ Run → Get documentation from eCW</strong> on the right.', src)
+
+    def test_the_run_panel_speaks_plainly_and_the_raw_task_is_under_advanced(self):
+        src = _src()
+        i = src.index('<h3>▶ Run</h3>')
+        adv = src.index('<details class="advanced" id="advanced">')
+        self.assertLess(i, adv)
+        self.assertIn('<div id="actions"></div>', src[i:adv])
+        self.assertIn('id="task-payload"', src[adv:])
+        self.assertIn('Delete All Claims', src[adv:])
+        for want in ("title: 'Get documentation from eCW', task: 'bs_missing_docs'", "input: {key: 'claim_ids', list: true",
+                     "title: 'Upload to Blue Shield', task: 'blueshield_submissions'", "title: 'Mark sent claims in eCW', task: 'ecw_status_update'",
+                     "title: 'Reconcile all checks', task: 'check_reconcile'", "title: 'Test one check', task: 'check_reconcile'",
+                     "input: {key: 'check_eft'", 'ACTIONS.resubmissions = ACTIONS.submissions;', 'async function postTask(payload, what)',
+                     "renderActions(bot);"):
+            self.assertIn(want, src)
+        # The checks tab: the headline is what needs attention, the tiles are the only filter, seven columns.
+        self.assertIn("if (window.activeBot === 'eob') return;   // renderChecks writes that headline", src)
+        self.assertIn("set('hero-pct-label', 'posted & matching');", src)
+        self.assertNotIn('id="checks-filters"', src)
+        self.assertIn("tile('need attention', mism, 'mismatch', 'var(--bad)', 'a person must act')", src)
+        self.assertIn('<td class="todo">${todo(r)}</td>', src)
+        self.assertIn('<th>Documents</th><th>Submission</th><th>Stage</th>', src)
+        self.assertIn('<div id="folders-body" hidden>', src)
 
 
 class BigResponsesAreCompressed(unittest.TestCase):

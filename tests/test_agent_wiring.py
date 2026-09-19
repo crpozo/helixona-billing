@@ -160,5 +160,6 @@ class NamedClaimsRunAgain(unittest.TestCase):
         d = open('dashboard.py', encoding='utf-8').read()
         self.assertIn("if (key === 'documentation' && c && !c.hcfa_s3_path && !c.prog_notes_s3_path) {", d)
         self.assertIn('Documentation Pending', d)
+        self.assertIn("${missing.join(' + ')} missing", d)
         self.assertIn("${getStagePill(state, c)}", d)
         self.assertIn('placeholder="e.g. 239 or 239, 240, 241"', d)

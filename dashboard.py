@@ -322,6 +322,24 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .chk-tile{min-width:118px;padding:10px 12px;border:1px solid var(--bdr);border-radius:10px;background:var(--card);cursor:pointer}
 .chk-tile-n{font-size:22px;font-weight:700;line-height:1.1}
 .chk-tile-l{font-size:11px;color:var(--text-muted);margin-top:2px}
+.chk-tile.on{background:var(--card2)}
+.chk-tile-m{font-size:10px;color:var(--text-dim);margin-top:3px}
+.verdict-pill{display:inline-block;padding:3px 9px;border-radius:30px;font-size:10.5px;font-weight:600;white-space:nowrap;background:var(--card2)}
+.todo{font-size:11px;line-height:1.5;color:var(--text-secondary);max-width:280px}
+.todo strong{color:var(--text-primary)}
+.docs{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.action{background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.action-t{font-size:12.5px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}
+.action-d{font-size:11px;color:var(--text-secondary);line-height:1.5;margin:5px 0 8px}
+.action-row{display:flex;gap:8px;align-items:center}
+.action-row input{margin:0 !important;flex:1}
+.action .btn-run{background:var(--accent);color:#111;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.action .btn-run:hover{background:var(--accent2)}
+.advanced{margin-top:12px;border-top:1px solid var(--bdr);padding-top:10px}
+.advanced summary{font-size:11px;color:var(--text-muted);cursor:pointer;list-style:none}
+.advanced summary::before{content:'▸ ';color:var(--text-dim)}
+.advanced[open] summary::before{content:'▾ '}
+.advanced[open] summary{margin-bottom:10px}
 .main > .task-panel{grid-column:2;grid-row:1}
 .eob-plan{padding:10px 12px 14px;border-top:1px solid var(--bdr)}
 .eob-plan .btn-plan{font-size:12px;padding:5px 10px;border:1px solid var(--bdr);border-radius:6px;background:transparent;color:inherit;cursor:pointer}
@@ -496,7 +514,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="hero-kpi-top">
         <div class="hero-kpi-headline">
           <span class="hero-num" id="hero-submitted">—</span>
-          <span class="hero-denom"> of <span id="hero-total">—</span> <span id="hero-denom-label">claims submitted</span></span>
+          <span class="hero-denom"><span id="hero-num-label" hidden></span> of <span id="hero-total">—</span> <span id="hero-denom-label">claims submitted</span></span>
         </div>
         <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> <span id="hero-pct-label">complete</span> · <span id="hero-remaining">—</span> <span id="hero-remaining-label">remaining</span></div>
       </div>
@@ -532,39 +550,42 @@ tbody tr:last-child td{border-bottom:none}
       <!-- CHEQUES (Remittance) — posted / unposted / not in eCW / no copy -->
       <div class="claims-section" id="checks-section" hidden>
         <div class="section-title">
-          ✅ Checks · SharePoint copies vs Blue Shield vs eCW
-          <span id="checks-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
-          <span id="checks-filters" style="margin-left:14px;display:inline-flex;gap:6px;flex-wrap:wrap"></span>
-          <a class="btn" href="/checks" target="_blank" style="margin-left:auto" title="One page for the billing team: what does not match and what to do">↗ Team view</a>
+          ✅ Checks
+          <span id="checks-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <a class="btn" href="/checks" target="_blank" style="margin-left:auto" title="The same checks on one page for the billing team">↗ Team page</a>
           <a class="btn" href="/api/checks.csv">⬇ CSV</a>
           <button class="btn btn-refresh" onclick="loadChecks()">↻ Refresh</button>
         </div>
-        <div id="checks-run" style="font-size:12px;color:var(--text-muted);margin:6px 0 4px;line-height:1.7"></div>
+        <div id="checks-run" style="font-size:12px;color:var(--text-muted);margin:8px 14px 0;line-height:1.7"></div>
         <div class="chk-tiles" id="checks-tiles"></div>
         <div class="claims-table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Check #</th><th>SharePoint</th><th>Folder · file</th><th class="num">Copy $</th><th class="num">Blue Shield $</th><th>BS status</th>
-                <th>Cashed</th><th>eCW</th><th class="num">Posted</th><th class="num">Unposted</th><th>Verdict</th><th>Flags</th>
+                <th>Check #</th><th>Copy in SharePoint</th><th class="num">Amount</th><th>Blue Shield</th><th>eCW</th><th>Verdict</th><th>What to do</th>
               </tr>
             </thead>
-            <tbody id="checks-body"><tr><td colspan="12" class="empty-state">No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.</td></tr></tbody>
+            <tbody id="checks-body"><tr><td colspan="7" class="empty-state">No reconciliation yet. Use <strong>▶ Run → Reconcile all checks</strong> (or <strong>Test one check</strong>) on the right. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>Blue Shield code</strong> box.</td></tr></tbody>
           </table>
         </div>
       </div>
 
       <!-- SHAREPOINT FOLDERS (Remittance) — what was collected from each folder, to check the reading -->
       <div class="claims-section" id="folders-section" hidden>
-        <div class="section-title">
-          📁 SharePoint · Insurance Checks, folder by folder
-          <span id="folders-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
-          <input id="folders-search" class="claims-search" autocomplete="off" placeholder="Find a check # or file…" style="margin-left:14px;max-width:260px" oninput="renderFolders()">
-          <button class="btn" style="margin-left:auto" onclick="foldersOpenAll(true)">Expand all</button>
-          <button class="btn" onclick="foldersOpenAll(false)">Collapse</button>
-          <button class="btn btn-refresh" onclick="loadFolders()">↻ Refresh</button>
+        <div class="section-title" style="cursor:pointer" onclick="toggleFolders()" title="What the bot read in each SharePoint folder — to check it is reading the right files">
+          📁 SharePoint folders, as the bot read them
+          <span id="folders-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <button class="btn" id="folders-toggle" style="margin-left:auto" onclick="event.stopPropagation();toggleFolders()">Show</button>
         </div>
-        <div class="ftree" id="folders-tree" style="padding:8px 14px 14px"><div class="empty-state">No folder has been read yet.</div></div>
+        <div id="folders-body" hidden>
+          <div style="display:flex;gap:8px;align-items:center;padding:10px 14px 0">
+            <input id="folders-search" class="claims-search" autocomplete="off" placeholder="Find a check # or file…" style="max-width:260px" oninput="renderFolders()">
+            <button class="btn" onclick="foldersOpenAll(true)">Expand all</button>
+            <button class="btn" onclick="foldersOpenAll(false)">Collapse</button>
+            <button class="btn btn-refresh" onclick="loadFolders()">↻ Refresh</button>
+          </div>
+          <div class="ftree" id="folders-tree" style="padding:8px 14px 14px"><div class="empty-state">No folder has been read yet.</div></div>
+        </div>
       </div>
 
       <!-- CLAIMS TABLE -->
@@ -584,10 +605,10 @@ tbody tr:last-child td{border-bottom:none}
             <thead>
               <tr>
                 <th>Claim #</th><th>Patient</th><th>DOS</th><th class="col-payer">Payer</th><th>Charges</th><th>Type</th>
-                <th>HCFA</th><th>IV Note</th><th>Progress Note Date</th><th>Progress Note</th><th>Submission</th><th>Stage</th>
+                <th>Documents</th><th>Submission</th><th>Stage</th>
               </tr>
             </thead>
-            <tbody id="claims-body"><tr><td colspan="12" class="empty-state">No claims yet. Send a task to begin.</td></tr></tbody>
+            <tbody id="claims-body"><tr><td colspan="9" class="empty-state">No claims yet. Use <strong>▶ Run → Get documentation from eCW</strong> on the right.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -595,6 +616,51 @@ tbody tr:last-child td{border-bottom:none}
 
       <!-- RIGHT RAIL -->
       <div class="task-panel">
+
+        <!-- RUN: one card per thing the bot can do, in plain words -->
+        <div class="task-card" id="send-task-card">
+          <h3>▶ Run</h3>
+          <div id="actions"></div>
+          <div class="mfa-box" id="mfa-box">
+            <label for="mfa-code">🔐 Blue Shield code <span style="font-weight:400;color:var(--text-muted)">— only when the log says the bot is waiting at Blue Shield's 2-step</span></label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="mfa-code" inputmode="numeric" maxlength="8" placeholder="6 digits" autocomplete="one-time-code"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault();sendMfaCode();}">
+              <button class="btn" type="button" onclick="sendMfaCode()">Send code</button>
+              <span id="mfa-status" style="font-size:11px;color:var(--text-muted)"></span>
+            </div>
+          </div>
+          <details class="advanced" id="advanced">
+            <summary>Advanced · raw task, delete data</summary>
+            <label>Task Type</label>
+            <select id="task-type" onchange="updateTaskTemplate()">
+              <optgroup label="🛡️ Blue Shield Claims Bot" data-bot="submissions resubmissions">
+                <option value="bs_missing_docs" data-bot="submissions resubmissions">📋 ECW Obtain Claims Documentation</option>
+                <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
+                <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
+              </optgroup>
+              <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
+                <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
+                <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield check vs SharePoint vs eCW</option>
+              </optgroup>
+            </select>
+
+            <div id="task-steps" class="task-steps"></div>
+
+            <div style="margin:10px 0;padding:10px 12px;background:rgba(205,180,134,0.06);border:1px solid rgba(205,180,134,0.18);border-radius:8px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="color:var(--accent);font-weight:600;font-size:11px">🧪 Only these claims</span>
+                <span style="color:var(--text-muted);font-size:10px">(empty = all · several: 239, 240, 241)</span>
+              </div>
+              <input type="text" id="test-claim-id" placeholder="e.g. 239 or 239, 240, 241" style="margin-bottom:0">
+            </div>
+
+            <label>Task Payload (JSON)</label>
+            <textarea id="task-payload"></textarea>
+            <button class="btn btn-primary" onclick="sendTask()">🚀 Send to SQS</button>
+            <button class="btn" style="background:rgba(239,68,68,.1);color:var(--bad);border:1px solid rgba(239,68,68,.3);margin-top:8px;width:100%;padding:10px;border-radius:8px;font-weight:600;font-size:11.5px;cursor:pointer" onclick="deleteAllClaims()">🗑️ Delete All Claims &amp; Start Over</button>
+          </details>
+        </div>
 
         <!-- LIVE LOGS -->
         <div class="logs-panel">
@@ -607,48 +673,6 @@ tbody tr:last-child td{border-bottom:none}
             <div class="log-line info">Loading logs...</div>
           </div>
         </div>
-
-        <!-- SEND TASK -->
-        <div class="task-card" id="send-task-card">
-          <h3>⚡ Send Task to Agent</h3>
-          <div class="mfa-box" id="mfa-box">
-            <label for="mfa-code">🔐 MFA code <span style="font-weight:400;color:var(--text-muted)">— when a bot's log says it is waiting at Blue Shield's 2-step</span></label>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="mfa-code" inputmode="numeric" maxlength="8" placeholder="6 digits" autocomplete="one-time-code"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault();sendMfaCode();}">
-              <button class="btn" type="button" onclick="sendMfaCode()">Send code</button>
-              <span id="mfa-status" style="font-size:11px;color:var(--text-muted)"></span>
-            </div>
-          </div>
-          <label>Task Type</label>
-          <select id="task-type" onchange="updateTaskTemplate()">
-            <optgroup label="🛡️ Blue Shield Claims Bot" data-bot="submissions resubmissions">
-              <option value="bs_missing_docs" data-bot="submissions resubmissions">📋 ECW Obtain Claims Documentation</option>
-              <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
-              <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
-            </optgroup>
-            <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
-              <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
-              <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield check vs SharePoint vs eCW</option>
-            </optgroup>
-          </select>
-
-          <div id="task-steps" class="task-steps"></div>
-
-          <div style="margin:10px 0;padding:10px 12px;background:rgba(205,180,134,0.06);border:1px solid rgba(205,180,134,0.18);border-radius:8px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span style="color:var(--accent);font-weight:600;font-size:11px">🧪 Only these claims</span>
-              <span style="color:var(--text-muted);font-size:10px">(empty = all · several: 239, 240, 241)</span>
-            </div>
-            <input type="text" id="test-claim-id" placeholder="e.g. 239 or 239, 240, 241" style="margin-bottom:0">
-          </div>
-
-          <label>Task Payload (JSON)</label>
-          <textarea id="task-payload"></textarea>
-          <button class="btn btn-primary" onclick="sendTask()">🚀 Send to SQS</button>
-          <button class="btn" style="background:rgba(239,68,68,.1);color:var(--bad);border:1px solid rgba(239,68,68,.3);margin-top:8px;width:100%;padding:10px;border-radius:8px;font-weight:600;font-size:11.5px;cursor:pointer" onclick="deleteAllClaims()">🗑️ Delete All Claims &amp; Start Over</button>
-        </div>
-
 
         <!-- OPEN TASKS -->
         <div class="task-card" id="tasks-card">
@@ -911,6 +935,83 @@ window.scrollToEl = function(sel){
         };
 
 
+        // ── Run: what each bot can do, in plain words. Each action is a
+        // task the raw panel (Advanced) can also send; the words are the
+        // only thing added.
+        const ACTIONS = {
+            submissions: [
+                {icon: '📋', title: 'Get documentation from eCW', task: 'bs_missing_docs',
+                 desc: 'Finds the claims in eCW, generates each HCFA and captures the IV Note and Progress Note. Nothing is sent to Blue Shield.',
+                 input: {key: 'claim_ids', list: true, placeholder: 'Only these claims, e.g. 6234, 3865 (empty = all)', extra: {redo: true}}},
+                {icon: '📤', title: 'Upload to Blue Shield', task: 'blueshield_submissions',
+                 desc: 'Sends every complete packet (HCFA, IV Note, Progress Note) through SympliSend.',
+                 input: {key: 'test_claim_id', placeholder: 'Only this claim, e.g. 6234 (empty = all ready)', extra: {testing_mode: true}}},
+                {icon: '📝', title: 'Mark sent claims in eCW', task: 'ecw_status_update',
+                 desc: "Sets each submitted claim to 'Claim sent via Symplisend' in eCW."},
+            ],
+            eob: [
+                {icon: '✅', title: 'Reconcile all checks', task: 'check_reconcile',
+                 desc: 'Walks Blue Shield for new checks, reads new check images in SharePoint, looks each check up in eCW and refreshes every verdict. Reads only.',
+                 payload: {since: '07/01/2025', blue_shield: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true}},
+                {icon: '🧪', title: 'Test one check', task: 'check_reconcile',
+                 desc: 'One check end to end: Blue Shield today, its copy in SharePoint, eCW. Its row lands under the Last run tile.',
+                 payload: {since: '07/01/2025', blue_shield: true, limit_checks: 1, check_eft: '', copies: true, limit_files: 10, ecw: true},
+                 input: {key: 'check_eft', placeholder: 'Check #, e.g. 766832992 (empty = the next new check)'}},
+            ],
+        };
+        ACTIONS.resubmissions = ACTIONS.submissions;
+
+        function renderActions(bot) {
+            const el = document.getElementById('actions');
+            if (!el) return;
+            const list = ACTIONS[bot] || [];
+            el.innerHTML = list.map((a, i) => `
+                <div class="action">
+                  <div class="action-t">${a.icon} ${a.title}</div>
+                  <div class="action-d">${a.desc}</div>
+                  <div class="action-row">
+                    ${a.input ? `<input type="text" id="action-in-${i}" placeholder="${a.input.placeholder}">` : '<span style="flex:1"></span>'}
+                    <button class="btn-run" onclick="runAction('${bot}', ${i})">Run</button>
+                  </div>
+                </div>`).join('');
+        }
+
+        async function runAction(bot, i) {
+            const a = (ACTIONS[bot] || [])[i];
+            if (!a) return;
+            let payload = {};
+            if (a.payload) payload = {...a.payload};
+            else { try { payload = JSON.parse(TASK_TEMPLATES[a.task] || '{}'); } catch (e) { payload = {}; } }
+            delete payload.note;
+            const box = document.getElementById(`action-in-${i}`);
+            const raw = box ? box.value.trim() : '';
+            if (a.input && raw) {
+                payload[a.input.key] = a.input.list ? raw.split(/[\s,;]+/).filter(Boolean) : raw;
+                Object.assign(payload, a.input.extra || {});
+            }
+            payload.task_type = a.task;
+            await postTask(payload, a.title);
+        }
+
+        async function postTask(payload, what) {
+            payload.bot = window.activeBot;
+            const res = await fetch('/api/send-task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`${what || payload.task_type} started ✓`, 'success');
+                // New run starting — wipe the panel so this run's logs are not
+                // visually mixed with the previous run's output.
+                clearLogs('new ' + (payload.task_type || 'task') + ' run');
+                setTimeout(loadLogs, 3000);
+            } else {
+                showToast('Failed: ' + data.error, 'error');
+            }
+        }
+
         function updateTaskTemplate() {
             const type = document.getElementById('task-type').value;
             document.getElementById('task-payload').value = TASK_TEMPLATES[type] || '{}';
@@ -936,6 +1037,7 @@ window.scrollToEl = function(sel){
 
         const BOT_NOVNC = {{ bot_novnc | tojson }};
         const BOT_NAMES = {{ bot_names | tojson }};
+        renderActions(window.activeBot);
 
         function setActiveBot(bot) {
             if (!(bot in BOT_NOVNC)) bot = 'submissions';
@@ -961,6 +1063,11 @@ window.scrollToEl = function(sel){
             const sel = document.getElementById('task-type');
             const firstVisible = Array.from(sel.options).find(o => !o.hidden);
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
+            renderActions(bot);
+            const df = document.getElementById('date-filter');
+            if (df) df.hidden = (bot === 'eob');
+            const numLabel = document.getElementById('hero-num-label');
+            if (numLabel) { numLabel.hidden = bot !== 'eob'; numLabel.textContent = bot === 'eob' ? ' need attention,' : ''; }
             // The headline counts something different per bot: what each has
             // sent, or — for Remittance — how many checks the three sources
             // agree on (a copy on file, cashed, posted in eCW, amounts equal).
@@ -1024,23 +1131,7 @@ window.scrollToEl = function(sel){
                 payload.test_claim_id = testClaimId;
                 payload.testing_mode = true;
             }
-            payload.bot = window.activeBot;
-
-            const res = await fetch('/api/send-task', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-            if (data.success) {
-                showToast('Task sent to SQS ✓', 'success');
-                // New run starting — wipe the panel so this run's logs are not
-                // visually mixed with the previous run's output.
-                clearLogs('new ' + (payload.task_type || 'task') + ' run');
-                setTimeout(loadLogs, 3000);
-            } else {
-                showToast('Failed: ' + data.error, 'error');
-            }
+            await postTask(payload, payload.task_type);
         }
 
         async function deleteAllClaims() {
@@ -1075,7 +1166,14 @@ window.scrollToEl = function(sel){
             // number says (2026-09-19: 24 IV claims read "Documentation
             // Completed" with every column empty).
             if (key === 'documentation' && c && !c.hcfa_s3_path && !c.prog_notes_s3_path) {
-                return `<span class="state-pill pending" title="State ${state}: no HCFA and no IV Note stored yet — run ECW Obtain Claims Documentation with this claim's number">Documentation Pending</span>`;
+                return `<span class="state-pill pending" title="State ${state}: no HCFA and no IV Note stored yet — run Get documentation from eCW with this claim's number">Documentation Pending</span>`;
+            }
+            // Something is still missing from the packet: say which, not "completed".
+            if (key === 'documentation' && c) {
+                const isOffice = !!c.office_visit || /\b(9920[1-5]|9921[1-5])\b/.test(String(c.cpt || ''));
+                const missing = [!c.hcfa_s3_path ? 'HCFA' : '', !c.prog_notes_s3_path ? 'IV Note' : '',
+                                 (!isOffice && !c.encounter_file_s3_path && !c.progress_note_not_required) ? 'Progress Note' : ''].filter(Boolean);
+                if (missing.length) return `<span class="state-pill pending" title="State ${state}">${missing.join(' + ')} missing</span>`;
             }
             return `<span class="state-pill ${key}">${label}</span>`;
         }
@@ -1278,65 +1376,106 @@ window.scrollToEl = function(sel){
             // operator's own choice of filter sticks for the session.
             if (!window._checksFilterChosen) window._checksFilter = (lr.targets || []).length ? 'last run' : 'mismatch';
             const mism = data.rows.filter(checkMismatch).length;
+            const matching = data.rows.filter(r => r.verdict === 'posted' && !(r.flags || []).some(f => f !== 'other payer')).length;
+            const nf = n => Number(n || 0).toLocaleString('en-US');
             if (meta) meta.textContent = data.rows.length
-                ? `${sm.checks} checks · ${data.rows.filter(r => r.verdict === 'posted' && !(r.flags || []).length).length} posted & matching · ${mism} need attention` + (sm.ecw_checked === false ? ' · eCW not checked' : '') + (sm.reconciled_at ? ` · ${sm.reconciled_at}` : '')
-                : '';
+                ? `${nf(sm.checks)} checks · ${sm.reconciled_at ? 'last reconciled ' + sm.reconciled_at : 'no reconciliation yet'}` : '';
+            // The headline: what a person must act on, out of everything compared.
+            if (window.activeBot === 'eob') {
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+                const total = data.rows.length;
+                set('hero-submitted', nf(mism));
+                set('hero-total', nf(total));
+                set('hero-pct', (total ? Math.round(matching / total * 100) : 0) + '%');
+                set('hero-pct-label', 'posted & matching');
+                set('hero-remaining', nf(sm.ecw_unchecked));
+                set('hero-remaining-label', 'eCW not checked yet');
+                const fill = document.getElementById('hero-progress-fill');
+                if (fill) fill.style.width = (total ? Math.round(matching / total * 100) : 0) + '%';
+            }
             const runEl = document.getElementById('checks-run');
             if (runEl) {
                 const running = lr.started_at && !(lr.steps || {}).done;
                 const chip = (label, text) => `<span style="display:inline-block;margin-right:10px"><strong>${esc(label)}:</strong> ${esc(text)}</span>`;
                 runEl.innerHTML = lr.started_at ? [
-                    `<span style="display:inline-block;margin-right:10px">${running ? '⏳' : '🧪'} <strong>${esc(lr.mode || 'run')}</strong>${(lr.targets || []).length ? ' · check ' + esc(lr.targets.join(', ')) : ''} · ${esc(lr.started_at)}${running ? ' · running…' : ''}</span>`,
+                    `<span style="display:inline-block;margin-right:10px">${running ? '⏳ <strong>Run in progress</strong>' : '✔ <strong>Last run</strong>'} · ${esc(lr.mode || 'run')}${(lr.targets || []).length ? ' · check ' + esc(lr.targets.join(', ')) : ''} · ${esc(lr.started_at)}</span>`,
                     ...RUN_STEPS.filter(([k]) => (lr.steps || {})[k] && k !== 'done').map(([k, label]) => chip(label, lr.steps[k])),
                 ].join('') : '';
             }
+            // The tiles are the filter: one click, one question.
             const tiles = document.getElementById('checks-tiles');
             if (tiles) {
-                const tile = (label, n, f, color) => `<div class="chk-tile" onclick="setChecksFilter('${f}')" style="border-color:${window._checksFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${n ?? 0}</div><div class="chk-tile-l">${label}</div></div>`;
+                const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._checksFilter === f ? ' on' : ''}" onclick="setChecksFilter('${f}')" style="border-color:${window._checksFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
                 tiles.innerHTML = data.rows.length ? [
-                    tile('needs attention', mism, 'mismatch', 'var(--bad)'),
-                    tile('posted in eCW', sm.posted, 'posted', 'var(--success)'),
-                    tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)'),
-                    tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)'),
-                    tile('no copy of check', sm.no_copy, 'no copy', 'var(--bad)'),
-                    tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)'),
-                    tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)'),
-                    tile('other payer (not Blue Shield)', sm.other_payer, 'other payer', 'var(--text-muted)'),
-                    tile('eCW not checked', sm.ecw_unchecked, 'eCW not checked', 'var(--info)'),
+                    tile('need attention', mism, 'mismatch', 'var(--bad)', 'a person must act'),
+                    tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)', 'enter the payment'),
+                    tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)', 'finish posting'),
+                    tile('no copy of the check', sm.no_copy, 'no copy', 'var(--bad)', 'scan it into SharePoint'),
+                    tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)', 'check which is right'),
+                    tile('posted & matching', matching, 'posted', 'var(--success)', 'nothing to do'),
+                    tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)', 'wait for the bank'),
+                    tile('other payer', sm.other_payer, 'other payer', 'var(--text-muted)', 'not a Blue Shield check'),
+                    tile('eCW not checked', sm.ecw_unchecked, 'eCW not checked', 'var(--info)', 'run again'),
+                    ...((lr.targets || []).length ? [tile('last run', data.rows.filter(r => inLastRun(r, sm)).length, 'last run', 'var(--vio2)', 'the test just run')] : []),
+                    tile('all checks', data.rows.length, 'all', 'var(--text-secondary)', ''),
                 ].join('') : '';
-                if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join(' | '))}" style="border-color:var(--bdr)"><div class="chk-tile-n" style="color:var(--warning)">${sm.unreadable}</div><div class="chk-tile-l">files not read (retried next run)</div></div>`;
+                if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join(' | '))}" style="border-color:var(--bdr);cursor:default"><div class="chk-tile-n" style="color:var(--warning)">${nf(sm.unreadable)}</div><div class="chk-tile-l">scans not read</div><div class="chk-tile-m">tried again next run</div></div>`;
             }
-            if (filt) filt.innerHTML = CHECK_FILTERS.map(([k, label]) =>
-                `<button class="chk-filter${window._checksFilter === k ? ' on' : ''}" onclick="setChecksFilter('${k}')">${label}</button>`).join('');
             if (!body) return;
             const f = window._checksFilter;
             const rows = data.rows.filter(r => f === 'all' ? true
                 : f === 'last run' ? inLastRun(r, sm)
                 : f === 'mismatch' ? checkMismatch(r)
+                : f === 'posted' ? (r.verdict === 'posted' && !(r.flags || []).some(x => x !== 'other payer'))
                 : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy'))
                 : f === 'other payer' ? (r.flags || []).some(x => x === 'other payer')
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
                 : r.verdict === f);
             if (!rows.length) {
-                body.innerHTML = `<tr><td colspan="12" class="empty-state">${data.rows.length ? 'Nothing under this filter.' : 'No reconciliation yet. Send <strong>🧪 Test of 1</strong> or <strong>✅ Reconcile checks</strong> from the task panel. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>🔐 MFA code</strong> box.'}</td></tr>`;
+                body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'No reconciliation yet. Use <strong>▶ Run → Reconcile all checks</strong> (or <strong>Test one check</strong>) on the right. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>Blue Shield code</strong> box.'}</td></tr>`;
                 return;
             }
-            const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : 'var(--text-muted)';
-            body.innerHTML = rows.map(r => `
+            const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : v === 'eCW not checked' ? 'var(--info)' : 'var(--text-muted)';
+            const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '')).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const todo = r => {
+                const out = [];
+                const flags = r.flags || [];
+                if (r.verdict === 'not in eCW') out.push(`<strong>Enter the payment in eCW</strong>${r.has_copy ? ` — the scan is in ${esc(r.copy_folder || 'SharePoint')}` : ''}.`);
+                if (r.verdict === 'unposted') out.push(`<strong>Finish posting</strong>${r.ecw_unposted ? ' ' + money(r.ecw_unposted) : ''} in eCW.`);
+                if (flags.some(x => x.startsWith('no copy'))) out.push('<strong>Scan the check</strong> into SharePoint › Insurance Checks.');
+                if (flags.some(x => x.startsWith('amounts differ'))) out.push('<strong>Check which amount is right</strong>: copy, Blue Shield and eCW disagree.');
+                if (r.verdict === 'eCW not checked') out.push('eCW was not read for this check yet — <strong>run again</strong>.');
+                if (r.verdict === 'not cashed') out.push('Issued, not cashed — wait for the bank.');
+                if (!out.length) out.push('Nothing — the sources agree.');
+                return out.join('<br>');
+            };
+            body.innerHTML = rows.map(r => {
+                const amounts = [['copy', r.copy_amount], ['Blue Shield', r.bs_amount], ['eCW', r.ecw_amount]].filter(([, v]) => v);
+                const differ = (r.flags || []).some(x => x.startsWith('amounts differ'));
+                const amountCell = !amounts.length ? '<span style="color:var(--text-muted)">—</span>'
+                    : differ ? amounts.map(([k, v]) => `<div style="font-size:11px">${money(v)} <span style="color:var(--text-muted)">${k}</span></div>`).join('')
+                    : `<strong>${money(amounts[0][1])}</strong>`;
+                const copyCell = r.has_copy
+                    ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`)
+                      + `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file || '').split('/').pop())}${r.deposit_file ? ` · 🏦 deposit${r.deposit_date ? ' ' + esc(r.deposit_date) : ''} ${money(r.deposit_total)}${r.copy_page ? ' · p.' + esc(String(r.copy_page)) : ''}` : ''}</div>`
+                    : '<span style="color:var(--bad);font-weight:600">✗ no copy</span>';
+                const bsCell = r.in_blue_shield
+                    ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div style="font-size:11px;color:var(--text-muted)">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div style="font-size:11px;color:var(--text-muted)">issued ${esc(r.bs_date)}</div>` : ''}`
+                    : '<span style="color:var(--text-muted)">other payer</span>';
+                const ecwCell = r.in_ecw
+                    ? `on file${r.ecw_payment_id ? ' · #' + esc(r.ecw_payment_id) : ''}<div style="font-size:11px;color:var(--text-muted)">${r.ecw_posted ? 'posted ' + money(r.ecw_posted) : ''}${r.ecw_unposted && Number(r.ecw_unposted) > 0 ? ` · <span style="color:var(--warning)">unposted ${money(r.ecw_unposted)}</span>` : ''}</div>`
+                    : r.verdict === 'eCW not checked' ? '<span style="color:var(--info)">not checked</span>' : '<span style="color:var(--text-muted)">not found</span>';
+                return `
                 <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
                   <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_full || r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
-                  <td>${r.has_copy ? '<span style="color:var(--success);font-weight:600">✓ yes</span>' : '<span style="color:var(--bad);font-weight:600">✗ no</span>'}</td>
-                  <td>${r.has_copy ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`) + (r.copy_file ? `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file).split('/').pop())}${r.deposit_file ? ` · 🏦 deposit${r.deposit_date ? ' ' + esc(r.deposit_date) : ''} $${esc(r.deposit_total || '?')}${r.copy_page ? ' · p.' + esc(String(r.copy_page)) : ''}` : ''}</div>` : '') : '<span style="color:var(--text-muted)">—</span>'}</td>
-                  <td class="num">${r.copy_amount ? '$' + esc(r.copy_amount) : '—'}</td>
-                  <td class="num">${r.bs_amount ? '$' + esc(r.bs_amount) : '—'}</td>
-                  <td>${esc(r.bs_status || (r.in_blue_shield ? '' : 'not in results'))}</td>
-                  <td>${esc(r.cashed_date || '')}</td>
-                  <td>${r.in_ecw ? `on file${r.ecw_payment_id ? ' · #' + esc(r.ecw_payment_id) : ''}` : r.verdict === 'eCW not checked' ? '<span style="color:var(--info)">not checked</span>' : '<span style="color:var(--text-muted)">not found</span>'}</td>
-                  <td class="num">${r.ecw_posted ? '$' + esc(r.ecw_posted) : ''}</td>
-                  <td class="num">${r.ecw_unposted ? '$' + esc(r.ecw_unposted) : ''}</td>
-                  <td style="color:${color(r.verdict)};font-weight:600">${esc(r.verdict)}</td>
-                  <td style="font-size:11px;color:var(--warning)">${esc((r.flags || []).join(' · '))}</td>
-                </tr>`).join('');
+                  <td>${copyCell}</td>
+                  <td class="num">${amountCell}</td>
+                  <td>${bsCell}</td>
+                  <td>${ecwCell}</td>
+                  <td><span class="verdict-pill" style="color:${color(r.verdict)}">● ${esc(r.verdict)}</span></td>
+                  <td class="todo">${todo(r)}</td>
+                </tr>`;
+            }).join('');
         }
         async function loadChecks() {
             try {
@@ -1406,6 +1545,7 @@ window.scrollToEl = function(sel){
         }
 
         async function loadCounts() {
+            if (window.activeBot === 'eob') return;   // renderChecks writes that headline
             // With a date filter on, the headline is computed from the cached
             // claims with the SAME state definition the server uses
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
@@ -1618,8 +1758,8 @@ window.scrollToEl = function(sel){
             const searching = claims.length !== beforeSearch;
             if (!claims.length) {
                 body.innerHTML = searching
-                    ? '<tr><td colspan="12" class="empty-state">No claims match the search.</td></tr>'
-                    : '<tr><td colspan="12" class="empty-state">No claims yet. Send a task to begin.</td></tr>';
+                    ? '<tr><td colspan="9" class="empty-state">No claims match the search.</td></tr>'
+                    : '<tr><td colspan="9" class="empty-state">No claims yet. Use <strong>▶ Run → Get documentation from eCW</strong> on the right.</td></tr>';
                 if (meta) meta.textContent = searching ? `0 of ${beforeSearch} claims match` : '';
                 return;
             }
@@ -1683,7 +1823,7 @@ window.scrollToEl = function(sel){
             const _payerTitle = document.getElementById('claims-payer-title');
             const _hidePayer = _uniquePayers.length === 1;
             if (_payerTitle) _payerTitle.textContent = _hidePayer ? `· ${_uniquePayers[0]}` : '';
-            const _tableWrap = document.querySelector('.claims-table-wrap');
+            const _tableWrap = document.querySelector('#claims-section-submissions .claims-table-wrap');
             if (_tableWrap) _tableWrap.classList.toggle('hide-payer', _hidePayer);
 
             // Type counts — Office Visit vs IV Therapy, plus IVs missing their
@@ -1821,10 +1961,7 @@ window.scrollToEl = function(sel){
                     <td class="col-payer">${c.payer || '—'}</td>
                     <td>${c.charges || '—'}</td>
                     <td>${officeVisitCell}</td>
-                    <td>${hcfaCell}</td>
-                    <td>${progNotesCell}</td>
-                    <td style="font-size:11px;color:var(--text-muted);">${formatProgNoteDate(c)}</td>
-                    <td>${encFileCell}</td>
+                    <td class="docs-cell"><div class="docs">${hcfaCell}${progNotesCell}${encFileCell}</div>${(c.encounter_date || c.prog_note_date || c.iv_note_rx_start_date) && !isOffice ? `<div style="font-size:10.5px;color:var(--text-muted);margin-top:3px">Progress note date ${formatProgNoteDate(c)}</div>` : ''}</td>
                     <td>${subCell}</td>
                     <td>${getStagePill(state, c)}</td>
                 </tr>`;
@@ -2089,6 +2226,13 @@ window.scrollToEl = function(sel){
         // The folder tree exactly as the bot walked it, with the check
         // numbers it read in each folder — so a person can open
         // Posted Checks → 2026 → 01'2026 → 01-06-2026 and compare with SharePoint.
+        function toggleFolders() {
+            const b = document.getElementById('folders-body'), t = document.getElementById('folders-toggle');
+            if (!b) return;
+            b.hidden = !b.hidden;
+            if (t) t.textContent = b.hidden ? 'Show' : 'Hide';
+            if (!b.hidden && typeof loadFolders === 'function') loadFolders();
+        }
         function foldersOpenAll(open) { document.querySelectorAll('#folders-tree details').forEach(d => d.open = open); }
         async function loadFolders() {
             try {
