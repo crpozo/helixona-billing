@@ -1667,15 +1667,10 @@ window.scrollToEl = function(sel){
             const getState = c => parseInt(c.state || c.current_state || 0);
             const submittedStates = PIPELINE_STAGES.submitted.states;
 
+            if (window.activeBot === 'eob') return;   // renderChecks writes that headline
             const total = claims.length;
             const submittedCount = claims.filter(c => submittedStates.includes(getState(c))).length;
-            const pct = total > 0 ? Math.round((submittedCount / total) * 100) : 0;
-
-            document.getElementById('hero-submitted').textContent = submittedCount;
-            document.getElementById('hero-total').textContent = total;
-            document.getElementById('hero-pct').textContent = `${pct}%`;
-            document.getElementById('hero-remaining').textContent = total - submittedCount;
-            document.getElementById('hero-progress-fill').style.width = `${pct}%`;
+            paintClaimsHero(submittedCount, total);
         }
 
         function renderPipeline(claims) {

@@ -79,6 +79,7 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
         self.assertIn("set('hero-submitted', nf(total - done));", src)
         self.assertIn("lbl.textContent = ' still to send,'", src)
         self.assertIn("paintClaimsHero(c.submitted, c.total);", src)
+        self.assertIn("paintClaimsHero(submittedCount, total);", src)   # renderStats, the third writer, paints the same words
 
 
 class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
