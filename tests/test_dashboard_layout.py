@@ -81,6 +81,10 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
         self.assertIn("paintClaimsHero(c.pending ?? (c.total - c.submitted), c.ready ?? 0);", src)
         self.assertIn("paintClaimsHero(pending.length, pending.filter(c => !needsWork(c)).length);", src)
         self.assertIn('id="hero-of"', src)
+        # 2026-09-20: HCFA + IV Note + subscriber ID is ready; the Progress Note never blocks.
+        self.assertIn('const needsWork = c => missingFor(c).length > 0;', src)
+        self.assertIn("return bool(evaluate_claim(c).get('blockers'))", src)
+        self.assertNotIn('encounter_file_s3_path && (isOffice', src)
 
 
 class TheChecksTableIsTheRemittancePanel(unittest.TestCase):

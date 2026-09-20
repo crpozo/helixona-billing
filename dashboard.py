@@ -11,6 +11,7 @@ from flask import Flask, render_template_string, jsonify, request, send_file, re
 import boto3
 import os
 from src.aws.clients import scan_all
+from src.rules.submission_gate import evaluate_claim
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -368,6 +369,7 @@ tbody tr:last-child td{border-bottom:none}
 .state-pill.ready{background:rgba(59,130,246,.12);color:var(--info)}
 .state-pill.revision{background:rgba(239,68,68,.12);color:var(--bad)}
 .state-pill.pending{background:rgba(245,158,11,.12);color:var(--warning)}
+.state-pill.ready{background:rgba(16,185,129,.12);color:var(--success)}
 .hcfa-link{cursor:pointer;color:var(--accent);font-size:11px;font-weight:500;padding:3px 7px;border-radius:6px;background:var(--accent-glow);display:inline-block;transition:all .15s}
 .hcfa-link:hover{background:rgba(205,180,134,.25);box-shadow:0 0 0 1px var(--accent)}
 .empty-state{text-align:center;padding:30px 20px;color:var(--text-muted);font-size:12px}
@@ -1156,12 +1158,11 @@ window.scrollToEl = function(sel){
             if (key === 'documentation' && c && !c.hcfa_s3_path && !c.prog_notes_s3_path) {
                 return `<span class="state-pill pending" title="State ${state}: no HCFA and no IV Note stored yet — run Get documentation from eCW with this claim's number">Documentation Pending</span>`;
             }
-            // Something is still missing from the packet: say which, not "completed".
-            if (key === 'documentation' && c) {
-                const isOffice = !!c.office_visit || /\b(9920[1-5]|9921[1-5])\b/.test(String(c.cpt || ''));
-                const missing = [!c.hcfa_s3_path ? 'HCFA' : '', !c.prog_notes_s3_path ? 'IV Note' : '',
-                                 (!isOffice && !c.encounter_file_s3_path && !c.progress_note_not_required) ? 'Progress Note' : ''].filter(Boolean);
-                if (missing.length) return `<span class="state-pill pending" title="State ${state}">${missing.join(' + ')} missing</span>`;
+            // Say what actually holds the packet back — and when nothing does.
+            if (key !== 'submitted' && c) {
+                const missing = missingFor(c);
+                if (missing.length) return `<span class="state-pill pending" title="State ${state}: SympliSend needs these">${missing.join(' + ')} missing</span>`;
+                return `<span class="state-pill ready" title="State ${state}: HCFA + IV Note + subscriber ID on file"${c.encounter_file_s3_path ? '' : ' data-np="1"'}>Ready to upload${c.encounter_file_s3_path ? '' : ' · no Progress Note'}</span>`;
             }
             return `<span class="state-pill ${key}">${label}</span>`;
         }
@@ -1542,11 +1543,17 @@ window.scrollToEl = function(sel){
         // or flagged as sent through SympliSend. Sent claims are the audit
         // log's business; this page is about what is still to send.
         const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;
-        // Is anything missing from the packet: HCFA, IV Note, or (IV claim) Progress Note?
-        const needsWork = c => {
-            const isOffice = !!c.office_visit || /\b(9920[1-5]|9921[1-5])\b/.test(String(c.cpt || ''));
-            return !(c.hcfa_s3_path && c.prog_notes_s3_path && (isOffice || c.encounter_file_s3_path || c.progress_note_not_required));
-        };
+        // What SympliSend needs — the submission gate's own rule: the HCFA,
+        // the IV Note (of the right patient) and a verified subscriber ID.
+        // The Progress Note rides along when we hold it; it never holds the
+        // packet back.
+        const missingFor = c => [
+            !c.hcfa_s3_path ? 'HCFA' : '',
+            !c.prog_notes_s3_path ? 'IV Note' : '',
+            (c.prog_notes_s3_path && c.iv_note_patient_mismatch) ? 'IV Note is another patient' : '',
+            !c.subscriber_id ? 'Subscriber ID' : c.subscriber_id_unverified ? 'Subscriber ID unverified' : '',
+        ].filter(Boolean);
+        const needsWork = c => missingFor(c).length > 0;
 
         // The claims headline (2026-09-20): how many claims are still to
         // send, and how many of those have a complete packet — exactly the
@@ -1803,15 +1810,7 @@ window.scrollToEl = function(sel){
             //   2. Ready to submit — all docs captured, not yet sent
             //   3. Submitted — done, sinks to the bottom (out of attention)
             // Within each group, newer service dates first.
-            const _sortOfficeRe = /\b(9920[1-5]|9921[1-5])\b/;
-            const _claimNeedsWork = (c) => {
-                if (c.symplisend_submitted) return false;
-                const isOffice = !!c.office_visit || _sortOfficeRe.test(String(c.cpt || ''));
-                const hcfaOk = !!c.hcfa_s3_path;
-                const ivOk = !!c.prog_notes_s3_path;
-                const encOk = isOffice || !!c.encounter_file_s3_path;
-                return !(hcfaOk && ivOk && encOk);
-            };
+            const _claimNeedsWork = (c) => !c.symplisend_submitted && needsWork(c);
             const _readinessRank = (c) => {
                 if (_liveProcessingClaimId !== null && c.claim_id === _liveProcessingClaimId) return 0;
                 if (c.symplisend_submitted) return 3;
@@ -1852,7 +1851,7 @@ window.scrollToEl = function(sel){
             if (_typeCounts) {
                 const missingPart = _ivNoProgCount > 0
                     ? ` <span style="color:var(--text-muted);margin:0 4px;">·</span>` +
-                      `<span style="color:#ef4444;font-weight:600;" title="IV Therapy claims with no progress note captured yet">🚫 ${_ivNoProgCount} IV${_ivNoProgCount === 1 ? '' : 's'} without progress note</span>`
+                      `<span style="color:var(--text-muted);" title="No Progress Note captured — it is attached when we hold one, but it never holds the packet back">📄 ${_ivNoProgCount} without progress note</span>`
                     : '';
                 _typeCounts.innerHTML = `<span style="color:#3b82f6;">🏥 ${_ovCount} Office Visit${_ovCount === 1 ? '' : 's'}</span>` +
                                         ` <span style="color:var(--text-muted);margin:0 4px;">·</span>` +
@@ -2519,13 +2518,12 @@ def api_checks_csv():
 
 
 def _claim_needs_work(c):
-    """Is anything still missing from the claim's packet: the HCFA, the IV
-    Note, or (for an IV claim) the Progress Note? One definition, mirrored
-    in the page's needsWork()."""
-    import re as _re
-    office = bool(c.get('office_visit')) or bool(_re.search(r'\b(9920[1-5]|9921[1-5])\b', str(c.get('cpt') or '')))
-    return not (c.get('hcfa_s3_path') and c.get('prog_notes_s3_path')
-                and (office or c.get('encounter_file_s3_path') or c.get('progress_note_not_required')))
+    """Is the claim still short of what SympliSend needs? The submission
+    gate decides — HCFA, IV Note and a verified subscriber ID; the Progress
+    Note is attached when we hold it but never holds the packet back
+    (2026-09-20, the operator: "si tienen el IV Note + HCFA ya estan listos").
+    The page's needsWork() mirrors this."""
+    return bool(evaluate_claim(c).get('blockers'))
 
 
 @app.route('/api/claim-counts')
@@ -2542,7 +2540,7 @@ def api_claim_counts():
         table = dynamodb.Table('helixona-claims')
         items, kwargs = [], {
             'ProjectionExpression': '#st, submission_type, symplisend_submitted, eob_check_eft, hcfa_s3_path, '
-                                    'prog_notes_s3_path, encounter_file_s3_path, office_visit, progress_note_not_required, cpt',
+                                    'prog_notes_s3_path, subscriber_id, subscriber_id_unverified, iv_note_patient_mismatch, cpt',
             'ExpressionAttributeNames': {'#st': 'state'},
         }
         while True:

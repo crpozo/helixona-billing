@@ -249,3 +249,31 @@ class TheLookupRowNamesThePatient(unittest.TestCase):
                 w('04', 0.02, 0.70), w('10', 0.06, 0.70), w('26', 0.10, 0.70), w('11', 0.24, 0.70), w('96365', 0.31, 0.70), w('325', 0.63, 0.70), w('00', 0.68, 0.70), w('1', 0.71, 0.70),
                 w('1', 0.63, 0.89), w('14', 0.68, 0.89)]   # the printed constant that read as "1.14"
         self.assertEqual(_facts_from_hcfa_words([page])['charges'], '325.00')
+
+
+class ReadyMeansWhatSympliSendNeeds(unittest.TestCase):
+    """2026-09-20, the operator: "si tienen el IV Note + HCFA ya estan listos
+    para hacer submission". The gate already said so; the dashboard did not."""
+
+    READY = {'claim_id': '2535', 'hcfa_s3_path': 's3://b/h.pdf', 'prog_notes_s3_path': 's3://b/iv.pdf',
+             'subscriber_id': 'XEM911575499', 'cpt': '96365'}
+
+    def test_a_claim_with_hcfa_and_iv_note_needs_no_more_work(self):
+        import dashboard
+        self.assertFalse(dashboard._claim_needs_work(self.READY))
+        # ...even with no Progress Note anywhere on the record.
+        self.assertNotIn('encounter_file_s3_path', str(self.READY))
+
+    def test_what_is_actually_missing_still_counts(self):
+        import dashboard
+        self.assertTrue(dashboard._claim_needs_work({**self.READY, 'prog_notes_s3_path': ''}))
+        self.assertTrue(dashboard._claim_needs_work({**self.READY, 'hcfa_s3_path': ''}))
+        self.assertTrue(dashboard._claim_needs_work({**self.READY, 'subscriber_id': ''}))
+        self.assertTrue(dashboard._claim_needs_work({**self.READY, 'subscriber_id_unverified': True}))
+        self.assertTrue(dashboard._claim_needs_work({**self.READY, 'iv_note_patient_mismatch': True}))
+
+    def test_the_gate_and_the_dashboard_are_one_rule(self):
+        import dashboard
+        from src.rules.submission_gate import evaluate_claim
+        for claim in (self.READY, {**self.READY, 'hcfa_s3_path': ''}, {**self.READY, 'subscriber_id': ''}):
+            self.assertEqual(dashboard._claim_needs_work(claim), bool(evaluate_claim(claim)['blockers']))
