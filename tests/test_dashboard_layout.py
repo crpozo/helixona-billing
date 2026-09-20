@@ -79,7 +79,7 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
         self.assertIn("set('hero-submitted', nf(total - done));", src)
         self.assertIn("lbl.textContent = ' still to send,'", src)
         self.assertIn("paintClaimsHero(c.submitted, c.total);", src)
-        self.assertIn("paintClaimsHero(submittedCount, total);", src)   # renderStats, the third writer, paints the same words
+        self.assertIn("paintClaimsHero(claims.filter(isSent).length, claims.length);", src)   # renderStats, the third writer, paints the same words
 
 
 class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
@@ -129,7 +129,9 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
         self.assertIn('<th>Documents</th><th>Submission</th><th>Stage</th>', src)
         # 2026-09-20: room to breathe, and the finished claims out of the way.
         for want in ('td.nowrap,th.nowrap{white-space:nowrap}', '.docs .doc{white-space:nowrap;', 'id="submitted-toggle"',
-                     "if (!window._showSubmitted) claims = claims.filter(c => !c.symplisend_submitted);", 'function toggleSubmitted()'):
+                     "if (!window._showSubmitted) claims = claims.filter(c => !isSent(c));", 'function toggleSubmitted()',
+                     "const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;",
+                     "paintClaimsHero(claims.filter(isSent).length, claims.length);"):
             self.assertIn(want, src)
         self.assertIn('<div id="folders-body" hidden>', src)
 

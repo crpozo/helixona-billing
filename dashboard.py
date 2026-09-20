@@ -1061,7 +1061,7 @@ window.scrollToEl = function(sel){
             // agree on (a copy on file, cashed, posted in eCW, amounts equal).
             const denom = document.getElementById('hero-denom-label');
             if (denom) denom.textContent = bot === 'eob'
-                ? 'checks compared: copy · Blue Shield · eCW' : 'claims in eCW';
+                ? 'checks compared: copy · Blue Shield · eCW' : 'claims tracked · the sent ones sit behind Show submitted';
             const pctLabel = document.getElementById('hero-pct-label');
             if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'posted & matching' : 'sent to SympliSend';
             const remLabel = document.getElementById('hero-remaining-label');
@@ -1535,13 +1535,18 @@ window.scrollToEl = function(sel){
         // The claims headline (2026-09-20): what is still to send, out of the
         // claims in eCW — the table below shows exactly those; the sent ones
         // are the bar and the small print.
+        // "Sent" — one definition for the headline, the tally and the table:
+        // a claim in a submitted state (FLN# captured, paid, closed, final)
+        // or flagged as sent through SympliSend.
+        const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;
+
         function paintClaimsHero(done, total) {
             const nf = n => Number(n || 0).toLocaleString('en-US');
             const pct = total ? Math.round((done / total) * 100) : 0;
             const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
             set('hero-submitted', nf(total - done));
             set('hero-total', nf(total));
-            set('hero-denom-label', 'claims in eCW');
+            set('hero-denom-label', 'claims tracked · the sent ones sit behind Show submitted');
             set('hero-pct', pct + '%');
             set('hero-pct-label', 'sent to SympliSend');
             set('hero-remaining', nf(done));
@@ -1559,9 +1564,7 @@ window.scrollToEl = function(sel){
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
             if (dateFilterActive() && window._allClaims) {
                 const rows = applyDateFilter(claimsForActiveBot(window._allClaims));
-                const sub = PIPELINE_STAGES.submitted.states;
-                const done = rows.filter(c => sub.includes(parseInt(c.state || 0))).length;
-                paintClaimsHero(done, rows.length);
+                paintClaimsHero(rows.filter(isSent).length, rows.length);
                 const hint = document.getElementById('df-hint');
                 if (hint) hint.textContent = 'filtered';
                 return;
@@ -1664,13 +1667,8 @@ window.scrollToEl = function(sel){
         }
 
         function renderStats(claims) {
-            const getState = c => parseInt(c.state || c.current_state || 0);
-            const submittedStates = PIPELINE_STAGES.submitted.states;
-
             if (window.activeBot === 'eob') return;   // renderChecks writes that headline
-            const total = claims.length;
-            const submittedCount = claims.filter(c => submittedStates.includes(getState(c))).length;
-            paintClaimsHero(submittedCount, total);
+            paintClaimsHero(claims.filter(isSent).length, claims.length);
         }
 
         function renderPipeline(claims) {
@@ -1754,10 +1752,10 @@ window.scrollToEl = function(sel){
             const meta = document.getElementById('claims-meta');
             // Claims already sent to SympliSend are done: out of the table
             // unless asked for (2026-09-20), so what is left is what needs work.
-            const submittedN = claims.filter(c => c.symplisend_submitted).length;
+            const submittedN = claims.filter(isSent).length;
             const tog = document.getElementById('submitted-toggle');
             if (tog) { tog.textContent = (window._showSubmitted ? 'Hide' : 'Show') + ` submitted (${submittedN})`; tog.classList.toggle('on', !!window._showSubmitted); }
-            if (!window._showSubmitted) claims = claims.filter(c => !c.symplisend_submitted);
+            if (!window._showSubmitted) claims = claims.filter(c => !isSent(c));
             const beforeSearch = claims.length;
             claims = applyClaimsSearch(claims);
             const searching = claims.length !== beforeSearch;
@@ -2544,7 +2542,7 @@ def api_claim_counts():
         def tally(rows):
             total = len(rows)
             done = sum(1 for r in rows
-                       if int(r.get('state') or 0) in submitted_states)
+                       if int(r.get('state') or 0) in submitted_states or r.get('symplisend_submitted'))
             return {'submitted': done, 'total': total}
 
         is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
