@@ -50,7 +50,7 @@ class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_single_column_screens_release_the_pin(self):
         # Otherwise grid-column:2 would conjure a second column on a laptop.
         src = _src()
-        i = src.index('@media(max-width:1560px)')   # 2026-09-20: the rail drops under the table sooner, so eight columns keep their room
+        i = src.index('@media(max-width:1320px)')   # 2026-09-20: no sidebar any more; the rail drops under the table only on narrow screens
         block = src[i:src.index('}\n@media', i)]
         self.assertIn('.main > .task-panel{grid-column:1;grid-row:auto}', block)
 

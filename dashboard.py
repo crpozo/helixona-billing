@@ -127,23 +127,15 @@ input,textarea,select,button{font-family:'Inter',sans-serif}
 ::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:3px}
 
 /* ========== LAYOUT ========== */
-.app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
-.sb{background:linear-gradient(180deg,#08080c 0%,#0a0a10 100%);border-right:1px solid var(--bdr);padding:18px 14px;display:flex;flex-direction:column;gap:14px;position:sticky;top:0;height:100vh;overflow-y:auto;z-index:50}
+.app{display:block;min-height:100vh}
 .shell{padding:18px 26px 40px;min-width:0}
 
 /* ========== SIDEBAR ========== */
-.brand{display:flex;align-items:center;gap:10px;padding:6px 8px 14px;border-bottom:1px solid var(--bdr)}
+.brand{display:flex;align-items:center;gap:10px;padding:0 14px 0 0;margin-right:4px;border-right:1px solid var(--bdr)}
 .brand img{height:30px;opacity:.95}
 .brand-t{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;color:var(--accent);line-height:1}
 .brand-s{font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.2px;margin-top:3px}
 
-.nav{display:flex;flex-direction:column;gap:2px}
-.nav a{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;font-size:12px;color:var(--text-secondary);cursor:pointer;transition:all .15s;font-weight:500}
-.nav a:hover{background:var(--card);color:var(--text-primary)}
-.nav a.on{background:var(--card2);color:var(--text-primary);box-shadow:inset 2px 0 0 var(--accent)}
-.nav a .ico{width:16px;text-align:center;font-size:13px;opacity:.85}
-.nav-cnt{margin-left:auto;background:var(--bg2);color:var(--text-muted);font-size:9px;padding:2px 7px;border-radius:8px;font-weight:600}
-.nav a.on .nav-cnt{background:var(--accent-glow);color:var(--accent)}
 
 .sb-sec{font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);font-weight:600;padding:0 10px;margin-top:8px;display:flex;align-items:center;gap:6px}
 .sb-list{display:flex;flex-direction:column;gap:3px;max-height:240px;overflow-y:auto}
@@ -450,7 +442,7 @@ tbody tr:last-child td{border-bottom:none}
 .footer{text-align:center;padding:22px 0 10px;color:var(--text-dim);font-size:10px;border-top:1px solid var(--bdr);margin-top:24px}
 .footer a{color:var(--accent)}
 
-@media(max-width:1560px){
+@media(max-width:1320px){
   .hero{grid-template-columns:1fr 1fr 1fr}
   .hero .promo{grid-column:1/-1;min-height:auto;flex-direction:row;align-items:center;gap:20px}
   .hero .promo>div:nth-child(2){flex:1}
@@ -463,8 +455,6 @@ tbody tr:last-child td{border-bottom:none}
   .hero{grid-template-columns:1fr 1fr}
 }
 @media(max-width:780px){
-  .app{grid-template-columns:1fr}
-  .sb{position:relative;height:auto}
   .hero{grid-template-columns:1fr}
   .hero .promo{flex-direction:column}
   .hero-num{font-size:46px}
@@ -474,31 +464,19 @@ tbody tr:last-child td{border-bottom:none}
 <body>
 <div class="app">
 
-  <!-- ═══════════════ SIDEBAR ═══════════════ -->
-  <aside class="sb">
-    <div class="brand">
-      <img src="/static/helixona-logo.png" alt="Helixona">
-      <div>
-        <div class="brand-t">Helixona<sup style="font-size:8px;color:var(--text-muted)">®</sup></div>
-        <div class="brand-s">Billing Agent · v1</div>
-      </div>
-    </div>
-
-    <div class="nav">
-      <a class="on" onclick="scrollToEl('.hero-kpi')"><span class="ico">▦</span>Overview</a>
-      <a onclick="scrollToEl('.claims-section')"><span class="ico">📋</span>Claims<span class="nav-cnt" id="nv-cl">0</span></a>
-      <a onclick="scrollToEl('#send-task-card')"><span class="ico">⚡</span>Send Task</a>
-      <a onclick="scrollToEl('.logs-panel')"><span class="ico">🔴</span>Logs</a>
-      <a href="/audit"><span class="ico">🧾</span>Audit Log</a>
-    </div>
-  </aside>
-
   <!-- ═══════════════ MAIN ═══════════════ -->
   <div class="shell">
 
     <!-- TOPBAR -->
     <div class="tb">
       <div class="tb-l">
+        <div class="brand">
+          <img src="/static/helixona-logo.png" alt="Helixona">
+          <div>
+            <div class="brand-t">Helixona<sup style="font-size:8px;color:var(--text-muted)">®</sup></div>
+            <div class="brand-s">Billing Agent · v1</div>
+          </div>
+        </div>
         <button id="stopBtn" class="stop-btn" onclick="stopAgent()">⛔ Stop Agent</button>
         <a id="novnc-link" href="http://54.189.175.233:6080/vnc.html" target="_blank" class="novnc-link">🖥️ noVNC</a>
         <button id="live-toggle" class="novnc-link" onclick="toggleLiveScreen()" title="Watch the active bot's browser here">👁️ Live screen</button>
@@ -506,6 +484,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="tb-r">
         <div class="status-badge"><div class="status-dot"></div>Agent Running · 54.189.175.233</div>
         <span style="font-size:10px;color:var(--text-muted)" id="ts">—</span>
+        <a href="/audit" class="novnc-link" title="Every submission the bot made, with its documents">🧾 Audit Log</a>
         <div class="icbtn" onclick="loadData();loadLogs()" title="Refresh">↻</div>
       </div>
     </div>
