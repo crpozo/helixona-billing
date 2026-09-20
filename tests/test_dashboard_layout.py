@@ -50,7 +50,7 @@ class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_single_column_screens_release_the_pin(self):
         # Otherwise grid-column:2 would conjure a second column on a laptop.
         src = _src()
-        i = src.index('@media(max-width:1380px)')
+        i = src.index('@media(max-width:1560px)')   # 2026-09-20: the rail drops under the table sooner, so eight columns keep their room
         block = src[i:src.index('}\n@media', i)]
         self.assertIn('.main > .task-panel{grid-column:1;grid-row:auto}', block)
 
@@ -121,6 +121,10 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
         self.assertIn("tile('need attention', mism, 'mismatch', 'var(--bad)', 'a person must act')", src)
         self.assertIn('<td class="todo">${todo(r)}</td>', src)
         self.assertIn('<th>Documents</th><th>Submission</th><th>Stage</th>', src)
+        # 2026-09-20: room to breathe, and the finished claims out of the way.
+        for want in ('td.nowrap,th.nowrap{white-space:nowrap}', '.docs .doc{white-space:nowrap;', 'id="submitted-toggle"',
+                     "if (!window._showSubmitted) claims = claims.filter(c => !c.symplisend_submitted);", 'function toggleSubmitted()'):
+            self.assertIn(want, src)
         self.assertIn('<div id="folders-body" hidden>', src)
 
 

@@ -340,7 +340,7 @@ class TheClaimsTableTellsTheTruthAboutHcfa(unittest.TestCase):
 
     def test_a_claim_never_attempted_shows_neither(self):
         html = dashboard.DASHBOARD_HTML
-        i = html.index('hcfaCell = \'—\'')
+        i = html.index("hcfaCell = '<span class=\"doc-missing\">HCFA —</span>'")
         self.assertGreater(i, html.index('hcfaTried'))
 
 

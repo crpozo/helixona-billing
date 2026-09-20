@@ -284,7 +284,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .subtab .s{font-size:9px;color:var(--text-dim);font-weight:500;display:block}
 .subtab.on{color:var(--text-primary);border-bottom-color:var(--accent)}
 
-.main{display:grid;grid-template-columns:1fr 360px;gap:18px;align-items:start}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
 
 /* ========== CLAIMS TABLE ========== */
 .claims-section{background:var(--panel);border:1px solid var(--bdr);border-radius:14px;overflow:hidden}
@@ -318,6 +318,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .ftree mark{background:rgba(205,180,134,.35);color:inherit;border-radius:3px;padding:0 2px}
 .chk-filter{font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:12px;background:transparent;color:inherit;cursor:pointer}
 .chk-filter.on{border-color:var(--accent);color:var(--accent)}
+.btn.on{border-color:var(--accent);color:var(--accent)}
 .chk-tiles{display:flex;flex-wrap:wrap;gap:10px;padding:10px 14px 4px}
 .chk-tile{min-width:118px;padding:10px 12px;border:1px solid var(--bdr);border-radius:10px;background:var(--card);cursor:pointer}
 .chk-tile-n{font-size:22px;font-weight:700;line-height:1.1}
@@ -327,7 +328,6 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .verdict-pill{display:inline-block;padding:3px 9px;border-radius:30px;font-size:10.5px;font-weight:600;white-space:nowrap;background:var(--card2)}
 .todo{font-size:11px;line-height:1.5;color:var(--text-secondary);max-width:280px}
 .todo strong{color:var(--text-primary)}
-.docs{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
 .action{background:var(--card);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:10px}
 .action-t{font-size:12.5px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}
 .action-d{font-size:11px;color:var(--text-secondary);line-height:1.5;margin:5px 0 8px}
@@ -359,7 +359,15 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 table{width:100%;border-collapse:collapse}
 thead th{background:rgba(255,255,255,.015);padding:11px 14px;text-align:left;font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:2}
-tbody td{padding:11px 14px;font-size:11.5px;border-bottom:1px solid var(--bdr);color:var(--text-secondary)}
+tbody td{padding:12px 14px;font-size:12px;border-bottom:1px solid var(--bdr);color:var(--text-secondary);vertical-align:top;line-height:1.45}
+td.nowrap,th.nowrap{white-space:nowrap}
+td .sub{font-size:10.5px;color:var(--text-muted);font-weight:400;margin-top:3px;white-space:nowrap}
+.docs{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.docs .doc{white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.docs .doc a{margin-left:0 !important}
+.doc-missing{color:var(--text-dim);font-size:11px}
+.docs-cell{min-width:230px}
+#submitted-toggle{white-space:nowrap}
 tbody tr{transition:background .15s}
 tbody tr:hover{background:var(--card)}
 tbody tr:last-child td{border-bottom:none}
@@ -442,7 +450,7 @@ tbody tr:last-child td{border-bottom:none}
 .footer{text-align:center;padding:22px 0 10px;color:var(--text-dim);font-size:10px;border-top:1px solid var(--bdr);margin-top:24px}
 .footer a{color:var(--accent)}
 
-@media(max-width:1380px){
+@media(max-width:1560px){
   .hero{grid-template-columns:1fr 1fr 1fr}
   .hero .promo{grid-column:1/-1;min-height:auto;flex-direction:row;align-items:center;gap:20px}
   .hero .promo>div:nth-child(2){flex:1}
@@ -596,6 +604,7 @@ tbody tr:last-child td{border-bottom:none}
           <input id="claims-search" class="claims-search" autocomplete="off"
                  placeholder="Search: patient, claim #, BS ref, DOS, subscriber…"
                  oninput="onClaimsSearch()">
+          <button class="btn" id="submitted-toggle" onclick="toggleSubmitted()" title="Claims already sent to SympliSend are out of the way by default">Show submitted</button>
           <button class="btn btn-refresh" onclick="loadData()">↻ Refresh</button>
           <span id="claims-eta" style="font-size:11px;color:var(--info);font-weight:600;margin-left:auto;display:none">⏱ </span>
           <span id="claims-meta" style="font-size:11px;color:var(--text-muted);margin-left:14px"></span>
@@ -604,11 +613,11 @@ tbody tr:last-child td{border-bottom:none}
           <table>
             <thead>
               <tr>
-                <th>Claim #</th><th>Patient</th><th>DOS</th><th class="col-payer">Payer</th><th>Charges</th><th>Type</th>
+                <th>Claim #</th><th>Patient</th><th>DOS</th><th class="col-payer">Payer</th><th class="num">Charges</th>
                 <th>Documents</th><th>Submission</th><th>Stage</th>
               </tr>
             </thead>
-            <tbody id="claims-body"><tr><td colspan="9" class="empty-state">No claims yet. Use <strong>▶ Run → Get documentation from eCW</strong> on the right.</td></tr></tbody>
+            <tbody id="claims-body"><tr><td colspan="8" class="empty-state">No claims yet. Use <strong>▶ Run → Get documentation from eCW</strong> on the right.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1738,6 +1747,13 @@ window.scrollToEl = function(sel){
             });
         }
 
+        function toggleSubmitted() {
+            window._showSubmitted = !window._showSubmitted;
+            try { localStorage.setItem('showSubmitted', window._showSubmitted ? '1' : '0'); } catch (e) {}
+            if (window._allClaims) renderClaims(applyDateFilter(claimsForActiveBot(window._allClaims)));
+        }
+        try { window._showSubmitted = localStorage.getItem('showSubmitted') === '1'; } catch (e) { window._showSubmitted = false; }
+
         let _claimsSearchTimer = null;
         function onClaimsSearch() {
             clearTimeout(_claimsSearchTimer);
@@ -1753,13 +1769,20 @@ window.scrollToEl = function(sel){
         function renderClaims(claims) {
             const body = document.getElementById('claims-body');
             const meta = document.getElementById('claims-meta');
+            // Claims already sent to SympliSend are done: out of the table
+            // unless asked for (2026-09-20), so what is left is what needs work.
+            const submittedN = claims.filter(c => c.symplisend_submitted).length;
+            const tog = document.getElementById('submitted-toggle');
+            if (tog) { tog.textContent = (window._showSubmitted ? 'Hide' : 'Show') + ` submitted (${submittedN})`; tog.classList.toggle('on', !!window._showSubmitted); }
+            if (!window._showSubmitted) claims = claims.filter(c => !c.symplisend_submitted);
             const beforeSearch = claims.length;
             claims = applyClaimsSearch(claims);
             const searching = claims.length !== beforeSearch;
             if (!claims.length) {
                 body.innerHTML = searching
-                    ? '<tr><td colspan="9" class="empty-state">No claims match the search.</td></tr>'
-                    : '<tr><td colspan="9" class="empty-state">No claims yet. Use <strong>▶ Run → Get documentation from eCW</strong> on the right.</td></tr>';
+                    ? '<tr><td colspan="8" class="empty-state">No claims match the search.</td></tr>'
+                    : submittedN ? `<tr><td colspan="8" class="empty-state">Every claim here is already sent to SympliSend (${submittedN}). <a href="#" onclick="toggleSubmitted();return false;">Show them</a>.</td></tr>`
+                    : '<tr><td colspan="8" class="empty-state">No claims yet. Use <strong>▶ Run → Get documentation from eCW</strong> on the right.</td></tr>';
                 if (meta) meta.textContent = searching ? `0 of ${beforeSearch} claims match` : '';
                 return;
             }
@@ -1874,7 +1897,7 @@ window.scrollToEl = function(sel){
                     const when = c.hcfa_generated_at ? ` at ${c.hcfa_generated_at}` : '';
                     hcfaCell = `<span style="color:#ef4444;font-size:11px;font-weight:600;" title="ECW was asked for the HCFA${when} but the PDF never downloaded. Re-run ECW Obtain Claims Documentation for this claim.">🚫 HCFA failed</span>`;
                 } else {
-                    hcfaCell = '—';
+                    hcfaCell = '<span class="doc-missing">HCFA —</span>';
                 }
                 // Submission type from Box 22
                 const subType = c.submission_type || (state >= 2 ? 'Pending' : '—');
@@ -1905,7 +1928,7 @@ window.scrollToEl = function(sel){
                 const hasProgNotes = !!c.prog_notes_s3_path;
                 const progNotesCell = hasProgNotes
                     ? `<span class="hcfa-link" onclick="window.open('/api/prog_notes/${c.claim_id}', '_blank')" title="Captured: ${c.prog_notes_captured_at || ''}">📝 IV Note</span>`
-                    : '—';
+                    : '<span class="doc-missing">IV Note —</span>';
                 // Office visit (E/M CPT 99201-99205 / 99211-99215) → only HCFA + IV Note,
                 // no Progress Note required. Honor the persisted flag or detect from CPT.
                 const isOffice = !!c.office_visit || /\b(9920[1-5]|9921[1-5])\b/.test(String(c.cpt || ''));
@@ -1924,7 +1947,7 @@ window.scrollToEl = function(sel){
                 // (manual override for diagnostic-only / mixed CPT cases).
                 const uploadBtn = `<a href="#" onclick="event.stopPropagation();uploadEncounterFile('${c.claim_id}');return false;" style="margin-left:6px;color:var(--info);text-decoration:underline;font-size:10px;">📤 Upload</a>`;
                 const skipBtn = `<a href="#" onclick="event.stopPropagation();skipProgressNote('${c.claim_id}', true);return false;" style="margin-left:6px;color:var(--success);text-decoration:underline;font-size:10px;" title="Mark this claim as not needing a Progress Note (submittable without one)">✓ Skip</a>`;
-                let encFileCell = '—';
+                let encFileCell = '<span class="doc-missing">Progress Note —</span>';
                 if (c.encounter_file_s3_path) {
                     encFileCell = `<span class="hcfa-link" onclick="window.open('/api/encounter_file/${c.claim_id}', '_blank')" title="Captured: ${c.encounter_file_captured_at || ''}">📄 Progress Note</span>`;
                 } else if (isOffice) {
@@ -1954,16 +1977,16 @@ window.scrollToEl = function(sel){
                 const procBadge = isProcessing
                     ? `<br><span class="proc-badge"><span class="proc-spin"></span>${_stepLive}</span>`
                     : '';
+                const doc = (inner, title) => `<span class="doc" title="${title || ''}">${inner}</span>`;
                 return `<tr class="${rowClass}">
-                    <td style="font-weight:600;color:var(--accent);">${c.claim_id || '—'}${procBadge}</td>
-                    <td>${c.patient_name || '—'}</td>
-                    <td>${c.encounter_date || c.service_date || c.dos || '—'}</td>
-                    <td class="col-payer">${c.payer || '—'}</td>
-                    <td>${c.charges || '—'}</td>
-                    <td>${officeVisitCell}</td>
-                    <td class="docs-cell"><div class="docs">${hcfaCell}${progNotesCell}${encFileCell}</div>${(c.encounter_date || c.prog_note_date || c.iv_note_rx_start_date) && !isOffice ? `<div style="font-size:10.5px;color:var(--text-muted);margin-top:3px">Progress note date ${formatProgNoteDate(c)}</div>` : ''}</td>
-                    <td>${subCell}</td>
-                    <td>${getStagePill(state, c)}</td>
+                    <td class="nowrap" style="font-weight:600;color:var(--accent);">${c.claim_id || '—'}<div class="sub">${officeVisitCell}</div>${procBadge}</td>
+                    <td class="nowrap">${c.patient_name || '—'}</td>
+                    <td class="nowrap">${c.encounter_date || c.service_date || c.dos || '—'}</td>
+                    <td class="col-payer nowrap">${(c.payer || '—').replace(' of California', '')}</td>
+                    <td class="num nowrap">${c.charges || '—'}</td>
+                    <td class="docs-cell"><div class="docs">${doc(hcfaCell, 'HCFA form')}${doc(progNotesCell, 'IV Note')}${doc(encFileCell, 'Progress Note')}</div>${(c.encounter_date || c.prog_note_date || c.iv_note_rx_start_date) && !isOffice ? `<div class="sub">Progress note date ${formatProgNoteDate(c)}</div>` : ''}</td>
+                    <td style="min-width:150px">${subCell}</td>
+                    <td class="nowrap">${getStagePill(state, c)}</td>
                 </tr>`;
             }).join('');
 
