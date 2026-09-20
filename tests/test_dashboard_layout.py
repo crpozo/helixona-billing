@@ -72,14 +72,15 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
 
     def test_remittance_counts_matches_not_completions(self):
         fn = _fn('setActiveBot')
-        self.assertIn("'posted & matching' : 'sent to SympliSend'", fn)
-        self.assertIn("'eCW not checked yet' : 'sent'", fn)
-        # 2026-09-20: the claims headline is what is still to send, like the table under it.
+        self.assertIn("'posted & matching' : 'ready to upload'", fn)
+        self.assertIn("'eCW not checked yet' : 'still missing documents'", fn)
+        # 2026-09-20: the claims headline is the claims still to send and how many are ready — the table's rows.
         src = _src()
-        self.assertIn("set('hero-submitted', nf(total - done));", src)
-        self.assertIn("lbl.textContent = ' still to send,'", src)
-        self.assertIn("paintClaimsHero(c.submitted, c.total);", src)
-        self.assertIn("paintClaimsHero(claims.filter(isSent).length, claims.length);", src)   # renderStats, the third writer, paints the same words
+        self.assertIn("function paintClaimsHero(pending, ready) {", src)
+        self.assertIn("set('hero-submitted', nf(pending));", src)
+        self.assertIn("paintClaimsHero(c.pending ?? (c.total - c.submitted), c.ready ?? 0);", src)
+        self.assertIn("paintClaimsHero(pending.length, pending.filter(c => !needsWork(c)).length);", src)
+        self.assertIn('id="hero-of"', src)
 
 
 class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
@@ -128,11 +129,11 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
         self.assertIn('<td class="todo">${todo(r)}</td>', src)
         self.assertIn('<th>Documents</th><th>Submission</th><th>Stage</th>', src)
         # 2026-09-20: room to breathe, and the finished claims out of the way.
-        for want in ('td.nowrap,th.nowrap{white-space:nowrap}', '.docs .doc{white-space:nowrap;', 'id="submitted-toggle"',
-                     "if (!window._showSubmitted) claims = claims.filter(c => !isSent(c));", 'function toggleSubmitted()',
-                     "const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;",
-                     "paintClaimsHero(claims.filter(isSent).length, claims.length);"):
+        for want in ('td.nowrap,th.nowrap{white-space:nowrap}', '.docs .doc{white-space:nowrap;',
+                     "claims = claims.filter(c => !isSent(c));",
+                     "const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;"):
             self.assertIn(want, src)
+        self.assertNotIn('submitted-toggle', src)   # the sent ones are the audit log's business
         self.assertIn('<div id="folders-body" hidden>', src)
 
 

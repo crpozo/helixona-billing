@@ -51,10 +51,13 @@ class CountsCase(unittest.TestCase):
 
 class ItCountsPerBot(CountsCase):
     def test_submissions_counts_only_first_time_claims(self):
-        self.assertEqual(self.data['submissions'], {'submitted': 3, 'total': 5})
+        d = self.data['submissions']
+        self.assertEqual((d['submitted'], d['total'], d['pending']), (3, 5, 2))
+        self.assertIn('ready', d)
 
     def test_resubmissions_counts_only_resubmissions(self):
-        self.assertEqual(self.data['resubmissions'], {'submitted': 4, 'total': 5})
+        d = self.data['resubmissions']
+        self.assertEqual((d['submitted'], d['total'], d['pending']), (4, 5, 1))
 
     def test_the_two_tabs_add_up_to_the_whole_table(self):
         self.assertEqual(
