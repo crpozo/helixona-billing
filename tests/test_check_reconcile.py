@@ -546,7 +546,9 @@ class ADepositIsManyChecks(unittest.TestCase):
         self.assertIn("🏦 deposit of {len(nums)} checks", d)
         h = _read('dashboard_checks.html')
         for pin in ('const deposits = new Map((sm.deposits || []).map(d => [d.file, d]));', 'data-dep="${esc(d.file)}"',
-                    "each check is its own case", "tr.dep { cursor: pointer;", "rowHtml(r, true)", '(slip only)'):
+                    'Each check below is its own case.', 'tr.dep { cursor: pointer; }', 'rowHtml(r, true)', '(slip only)',
+                    # 2026-09-20: one band across the table, with a chevron a person can see and hit.
+                    'class="dep-band"', 'class="dep-toggle"', '<td colspan="9">', 'tr.dep.open .dep-toggle { transform: rotate(90deg); }'):
             self.assertIn(pin, h)
         self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", _read('src/checks/run.py'))
 

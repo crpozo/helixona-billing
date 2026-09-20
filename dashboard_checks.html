@@ -115,10 +115,23 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .more{display:block;width:100%;padding:12px;background:var(--surface-2);border:none;border-top:1px solid var(--line);font:inherit;color:var(--ink-2);cursor:pointer}
 @media (max-width:900px){.hero{grid-template-columns:1fr}.hero-n{font-size:40px}.filters input{min-width:0;flex:1}.brand-sep{display:none}.logo{height:28px}}
 @media print{.filters,.btn,.more{display:none}.tbl{border:none}th{position:static}}
-  tr.dep { cursor: pointer; background: var(--accent-soft); }
-  tr.dep:hover { filter: brightness(.97); }
-  tr.dep td { border-top: 2px solid var(--accent); }
-  tr.dep .caret { display: inline-block; width: 1em; color: var(--accent); }
+  tr.dep { cursor: pointer; }
+  tr.dep > td { padding: 0; border-top: 2px solid var(--accent); background: var(--accent-soft); }
+  tr.dep:hover > td { filter: brightness(.98); }
+  .dep-band { display: flex; align-items: center; gap: 18px; padding: 12px 16px; }
+  .dep-toggle { flex: none; width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--accent);
+                background: var(--surface); color: var(--accent); display: flex; align-items: center;
+                justify-content: center; cursor: pointer; transition: transform .15s ease, background .15s ease; }
+  tr.dep:hover .dep-toggle { background: var(--accent); color: var(--accent-ink); }
+  tr.dep.open .dep-toggle { transform: rotate(90deg); }
+  .dep-id { flex: 1 1 320px; min-width: 0; }
+  .dep-t { font-weight: 650; font-size: 14px; }
+  .dep-id .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dep-total { flex: none; text-align: right; }
+  .dep-amt { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 17px; }
+  .dep-chips { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .dep-hint { flex: none; color: var(--ink-3); max-width: 190px; }
+  @media (max-width: 900px) { .dep-hint { display: none; } }
   tr.in-dep td { background: var(--surface-2); }
   tr.in-dep .indent { color: var(--accent); }
 </style>
@@ -337,21 +350,37 @@ function render() {
     if (!seen.has(key)) { seen.set(key, {dep: deposits.get(key) || {file: key}, rows: []}); groups.push(seen.get(key)); }
     seen.get(key).rows.push(r);
   }
+  // One bank deposit: one band across the table, not a check's row forced
+  // to carry a summary (2026-09-20 — the columns squeezed every sentence
+  // into three lines and the caret was a grey speck).
   const depHeader = (g) => {
     const d = g.dep, open = OPEN.has(d.file), name = String(d.file || '').split('/').pop();
     const inside = g.rows.length, all = d.count || (d.checks || []).length || inside;
     const att = g.rows.filter(attention).length, ok = g.rows.filter(r => r.verdict === 'posted' && !issues(r).length).length;
-    const link = d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.file)}">${esc(d.folder || '')}</a>` : `<span title="${esc(d.file)}">${esc(d.folder || '')}</span>`;
+    const link = d.url ? `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.file)}" onclick="event.stopPropagation()">${esc(name)}</a>` : `<span title="${esc(d.file)}">${esc(name)}</span>`;
     return `<tr class="dep${open ? ' open' : ''}" data-dep="${esc(d.file)}">
-      <td class="mono"><span class="caret">${open ? '▾' : '▸'}</span> 🏦 Deposit${d.date ? ' ' + esc(d.date) : ''}</td>
-      <td><span class="pill good">✓ Yes</span></td>
-      <td>${link}<div class="small muted">${esc(name)}</div></td>
-      <td class="num"><strong>${money(d.total)}</strong></td>
-      <td class="num muted">—</td>
-      <td class="small muted">${all} check${all === 1 ? '' : 's'} in this deposit${inside !== all ? ` · ${inside} under this filter` : ''}</td>
-      <td class="small">${ok ? `<span class="pill good">${ok} posted</span> ` : ''}${att ? `<span class="pill critical">${att} need attention</span>` : ''}${!ok && !att ? '<span class="muted">—</span>' : ''}</td>
-      <td class="small muted">each check is its own case</td>
-      <td class="todo small">${open ? 'Click to fold the deposit.' : 'Click to open the deposit and see each check.'}</td>
+      <td colspan="9">
+        <div class="dep-band">
+          <button class="dep-toggle" type="button" aria-expanded="${open}" aria-label="${open ? 'Fold' : 'Open'} this deposit">
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6 3.5 L11 8 L6 12.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="dep-id">
+            <div class="dep-t">🏦 Bank deposit${d.date ? ' · ' + esc(d.date) : ''}</div>
+            <div class="small muted">${esc(d.folder || '')} · ${link}</div>
+          </div>
+          <div class="dep-total">
+            <div class="dep-amt">${money(d.total)}</div>
+            <div class="small muted">${all} check${all === 1 ? '' : 's'} deposited</div>
+          </div>
+          <div class="dep-chips">
+            ${ok ? `<span class="pill good">${ok} posted</span>` : ''}
+            ${att ? `<span class="pill critical">${att} need attention</span>` : ''}
+            ${!ok && !att ? '<span class="muted small">Nothing looked up yet</span>' : ''}
+            ${inside !== all ? `<span class="small muted">${inside} shown under this filter</span>` : ''}
+          </div>
+          <div class="dep-hint small">${open ? 'Each check below is its own case.' : 'Open to see each check on its own.'}</div>
+        </div>
+      </td>
     </tr>`;
   };
   body.innerHTML = groups.map(g => g.dep
