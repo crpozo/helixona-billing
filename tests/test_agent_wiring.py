@@ -184,7 +184,7 @@ class TheHcfaFillsWhatTheClaimsPageDidNotSay(unittest.TestCase):
     def test_patient_dos_and_charges_come_off_the_form(self):
         from src.main import _facts_from_hcfa_words
         got = _facts_from_hcfa_words(self._words())
-        self.assertEqual(got, {'patient_name': 'Gray, Cassandra', 'service_date': '04/10/2026', 'charges': '350.50'})
+        self.assertEqual(got, {'patient_name': 'Gray, Cassandra', 'service_date': '04/10/2026', 'charges': '350.50'})   # 325.00 + 25.50, the lines
 
     def test_nothing_is_guessed_when_the_layout_does_not_match(self):
         from src.main import _facts_from_hcfa_words
@@ -208,3 +208,44 @@ class TheHcfaFillsWhatTheClaimsPageDidNotSay(unittest.TestCase):
         src = open('src/main.py', encoding='utf-8').read()
         self.assertIn("_fill_claim_facts(aws_client, claim_record, _lp_f, where=' on file')", src)
         self.assertIn("_fill_claim_facts(aws_client, claim_record, download_path, where=' just generated')", src)
+
+
+class TheLookupRowNamesThePatient(unittest.TestCase):
+    """2026-09-20: the HCFA read gave no name and '1.14' for every claim's
+    charges. eCW's own lookup row has patient, DOS, charges and payer."""
+
+    ROW = {'idx': 5, 'headers': ['', '', '', '', 'COLL', 'CLAIM #', 'SERVICE DATE', 'PVDR', 'PATIENT', 'PAYER', 'STATUS', 'CHARGES', 'PMTS/ ADJS', 'ADJUSTMENT', 'WITHHELD', 'BALANCE'],
+           'cells': ['', '', '', '', '', '6485', '06/30/2026', 'ED', 'Bashor, Linda', 'Blue Cross Califor...', 'Crossover', '265.75', '229.59', '87.88', '0.00', '36.16']}
+
+    def test_by_header_and_by_shape(self):
+        from src.main import _facts_from_row
+        self.assertEqual(_facts_from_row(self.ROW), {'patient_name': 'Bashor, Linda', 'service_date': '06/30/2026', 'charges': '265.75', 'payer': 'Blue Cross Califor...'})
+        bare = _facts_from_row({**self.ROW, 'headers': []})
+        self.assertEqual((bare['patient_name'], bare['service_date'], bare['charges']), ('Bashor, Linda', '06/30/2026', ''))
+        self.assertEqual(_facts_from_row(None)['patient_name'], '')
+
+    def test_the_row_fills_gaps_and_corrects_the_hcfa_read_but_not_the_claims_page(self):
+        from src import main as m
+        saved = {}
+        class _Aws:
+            def update_claim_status(self, cid, data): saved[cid] = data
+        rec = {'claim_id': '6485', 'patient_name': '', 'service_date': '06/30/2026', 'charges': '1.14', 'facts_source': 'hcfa'}
+        got = m._apply_facts(_Aws(), rec, m._facts_from_row(self.ROW), 'ecw_row')
+        self.assertEqual(got, {'patient_name': 'Bashor, Linda', 'charges': '265.75'})
+        self.assertEqual((rec['facts_source'], saved['6485']['facts_source']), ('ecw_row', 'ecw_row'))
+        # What the Claims page said stays; only the charges are refreshed from the row.
+        rec2 = {'claim_id': '8239', 'patient_name': 'Ybarra, Jennifer', 'service_date': '09/17/2026', 'charges': '2522.50'}
+        self.assertEqual(m._apply_facts(_Aws(), rec2, {'patient_name': 'Other, Person', 'service_date': '01/01/2026', 'charges': '2522.50'}, 'ecw_row'), {})
+        # A HCFA read never overwrites anything.
+        self.assertEqual(m._apply_facts(_Aws(), rec2, {'patient_name': 'Other, Person'}, 'hcfa'), {})
+        src = open('src/main.py', encoding='utf-8').read()
+        self.assertIn("_row = _claim_row_facts(page, claim_id)", src)
+        self.assertIn("_apply_facts(aws_client, claim_record, _row, 'ecw_row')", src)
+
+    def test_the_hcfa_charges_are_the_lines_sum_never_a_region_read(self):
+        from src.main import _facts_from_hcfa_words
+        w = lambda text, x, y: {'text': text, 'x': x, 'y': y}
+        page = [w('GRAY,', 0.03, 0.128), w('CASSANDRA', 0.09, 0.128),
+                w('04', 0.02, 0.70), w('10', 0.06, 0.70), w('26', 0.10, 0.70), w('11', 0.24, 0.70), w('96365', 0.31, 0.70), w('325', 0.63, 0.70), w('00', 0.68, 0.70), w('1', 0.71, 0.70),
+                w('1', 0.63, 0.89), w('14', 0.68, 0.89)]   # the printed constant that read as "1.14"
+        self.assertEqual(_facts_from_hcfa_words([page])['charges'], '325.00')

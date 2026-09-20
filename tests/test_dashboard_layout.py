@@ -72,8 +72,13 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
 
     def test_remittance_counts_matches_not_completions(self):
         fn = _fn('setActiveBot')
-        self.assertIn("'match' : 'complete'", fn)
-        self.assertIn("'do not match' : 'remaining'", fn)
+        self.assertIn("'posted & matching' : 'sent to SympliSend'", fn)
+        self.assertIn("'eCW not checked yet' : 'sent'", fn)
+        # 2026-09-20: the claims headline is what is still to send, like the table under it.
+        src = _src()
+        self.assertIn("set('hero-submitted', nf(total - done));", src)
+        self.assertIn("lbl.textContent = ' still to send,'", src)
+        self.assertIn("paintClaimsHero(c.submitted, c.total);", src)
 
 
 class TheChecksTableIsTheRemittancePanel(unittest.TestCase):

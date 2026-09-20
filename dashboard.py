@@ -1055,17 +1055,17 @@ window.scrollToEl = function(sel){
             const df = document.getElementById('date-filter');
             if (df) df.hidden = (bot === 'eob');
             const numLabel = document.getElementById('hero-num-label');
-            if (numLabel) { numLabel.hidden = bot !== 'eob'; numLabel.textContent = bot === 'eob' ? ' need attention,' : ''; }
+            if (numLabel) { numLabel.hidden = false; numLabel.textContent = bot === 'eob' ? ' need attention,' : ' still to send,'; }
             // The headline counts something different per bot: what each has
             // sent, or — for Remittance — how many checks the three sources
             // agree on (a copy on file, cashed, posted in eCW, amounts equal).
             const denom = document.getElementById('hero-denom-label');
             if (denom) denom.textContent = bot === 'eob'
-                ? 'checks compared: copy · Blue Shield · eCW' : 'claims submitted';
+                ? 'checks compared: copy · Blue Shield · eCW' : 'claims in eCW';
             const pctLabel = document.getElementById('hero-pct-label');
-            if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'match' : 'complete';
+            if (pctLabel) pctLabel.textContent = bot === 'eob' ? 'posted & matching' : 'sent to SympliSend';
             const remLabel = document.getElementById('hero-remaining-label');
-            if (remLabel) remLabel.textContent = bot === 'eob' ? 'do not match' : 'remaining';
+            if (remLabel) remLabel.textContent = bot === 'eob' ? 'eCW not checked yet' : 'sent';
             // Remittance works per check, not per claim document — the claims
             // table's HCFA / IV note / progress-note columns mean nothing
             // there — so each tab shows exactly one main panel.
@@ -1532,6 +1532,26 @@ window.scrollToEl = function(sel){
             onDateFilterChange();
         }
 
+        // The claims headline (2026-09-20): what is still to send, out of the
+        // claims in eCW — the table below shows exactly those; the sent ones
+        // are the bar and the small print.
+        function paintClaimsHero(done, total) {
+            const nf = n => Number(n || 0).toLocaleString('en-US');
+            const pct = total ? Math.round((done / total) * 100) : 0;
+            const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+            set('hero-submitted', nf(total - done));
+            set('hero-total', nf(total));
+            set('hero-denom-label', 'claims in eCW');
+            set('hero-pct', pct + '%');
+            set('hero-pct-label', 'sent to SympliSend');
+            set('hero-remaining', nf(done));
+            set('hero-remaining-label', 'sent');
+            const lbl = document.getElementById('hero-num-label');
+            if (lbl) { lbl.hidden = false; lbl.textContent = ' still to send,'; }
+            const fill = document.getElementById('hero-progress-fill');
+            if (fill) fill.style.width = pct + '%';
+        }
+
         async function loadCounts() {
             if (window.activeBot === 'eob') return;   // renderChecks writes that headline
             // With a date filter on, the headline is computed from the cached
@@ -1541,13 +1561,7 @@ window.scrollToEl = function(sel){
                 const rows = applyDateFilter(claimsForActiveBot(window._allClaims));
                 const sub = PIPELINE_STAGES.submitted.states;
                 const done = rows.filter(c => sub.includes(parseInt(c.state || 0))).length;
-                const total = rows.length;
-                const pct = total ? Math.round((done / total) * 100) : 0;
-                document.getElementById('hero-submitted').textContent = done;
-                document.getElementById('hero-total').textContent = total;
-                document.getElementById('hero-pct').textContent = pct + '%';
-                document.getElementById('hero-remaining').textContent = total - done;
-                document.getElementById('hero-progress-fill').style.width = pct + '%';
+                paintClaimsHero(done, rows.length);
                 const hint = document.getElementById('df-hint');
                 if (hint) hint.textContent = 'filtered';
                 return;
@@ -1557,12 +1571,7 @@ window.scrollToEl = function(sel){
                 const data = await res.json();
                 const c = data[window.activeBot];
                 if (!c || !c.total) return;
-                const pct = Math.round((c.submitted / c.total) * 100);
-                document.getElementById('hero-submitted').textContent = c.submitted;
-                document.getElementById('hero-total').textContent = c.total;
-                document.getElementById('hero-pct').textContent = pct + '%';
-                document.getElementById('hero-remaining').textContent = c.total - c.submitted;
-                document.getElementById('hero-progress-fill').style.width = pct + '%';
+                paintClaimsHero(c.submitted, c.total);
             } catch (e) { /* the next tick will retry */ }
         }
 

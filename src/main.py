@@ -2659,13 +2659,9 @@ def _facts_from_hcfa_words(pages_words):
     dated = [l['dos_from'] for l in lines if l.get('dos_from')]
     if dated:
         out['service_date'] = min(dated, key=lambda d: (d[6:], d[:2], d[3:5]))
-    # Box 28: TOTAL CHARGE, bottom right of the lines block.
-    tot = [w for w in first if 0.60 <= w['x'] < 0.74 and 0.87 <= w['y'] < 0.915 and _re.fullmatch(r'[\d,]+(\.\d\d)?', w['text'])]
-    if tot:
-        digits = ''.join(w['text'] for w in sorted(tot, key=lambda w: w['x'])).replace(',', '').replace('.', '')
-        if len(digits) >= 3:
-            out['charges'] = f"{int(digits[:-2])}.{digits[-2:]}"
-    if not out['charges'] and lines:
+    # The charges: the lines' sum (box 28 read from the page region gave
+    # "1.14" on every form — a printed constant, not the total).
+    if lines:
         try:
             billed = total_billed(lines)
             if billed and billed != '0.00':
@@ -2689,28 +2685,118 @@ def _claim_facts_from_hcfa_pdf(pdf_path):
         return {}
 
 
-def _fill_claim_facts(aws_client, claim_record, pdf_path, where=''):
+def _apply_facts(aws_client, claim_record, facts, source, where=''):
     """Fill patient_name / service_date / charges on the record and in
-    DynamoDB from the HCFA when they are missing. Returns what was filled."""
-    missing = [k for k in ('patient_name', 'service_date') if not claim_record.get(k)]
-    if not missing and claim_record.get('charges'):
-        return {}
-    facts = _claim_facts_from_hcfa_pdf(pdf_path)
-    filled = {k: v for k, v in facts.items() if v and not claim_record.get(k)}
+    DynamoDB. What the eCW Claims page or the lookup row says (source
+    'ecw_row') is eCW's own word: it fills gaps and replaces values read
+    off a HCFA. HCFA-read values (source 'hcfa') only fill gaps. Charges
+    from the row always win — the HCFA read of them went wrong once."""
+    prior = str(claim_record.get('facts_source') or '')
+    filled = {}
+    for k, v in (facts or {}).items():
+        if not v or k not in ('patient_name', 'service_date', 'charges'):
+            continue
+        have = claim_record.get(k)
+        replace = (not have) or (source == 'ecw_row' and (prior == 'hcfa' or k == 'charges'))
+        if replace and str(have or '') != str(v):
+            filled[k] = v
     if not filled:
         return {}
     claim_record.update(filled)
+    upd = dict(filled)
     if 'service_date' in filled:
         claim_record['dos'] = filled['service_date']
-    upd = dict(filled)
-    if 'service_date' in upd:
-        upd['dos'] = upd['service_date']
+        upd['dos'] = filled['service_date']
+    upd['facts_source'] = source
+    claim_record['facts_source'] = source
     try:
         aws_client.update_claim_status(claim_record['claim_id'], upd)
     except Exception as e:
-        logger.warning(f"  facts from the HCFA not saved for {claim_record['claim_id']}: {e}")
-    logger.info(f"📋 Claim {claim_record['claim_id']}: {', '.join(f'{k} = {v}' for k, v in filled.items())} read off the HCFA{where}")
+        logger.warning(f"  facts not saved for {claim_record['claim_id']}: {e}")
+    logger.info(f"📋 Claim {claim_record['claim_id']}: {', '.join(f'{k} = {v}' for k, v in filled.items())}"
+                f" — from {'the eCW lookup row' if source == 'ecw_row' else 'the HCFA'}{where}")
     return filled
+
+
+def _fill_claim_facts(aws_client, claim_record, pdf_path, where=''):
+    """Patient / DOS / charges off the HCFA, into the gaps. Returns what was filled."""
+    if claim_record.get('patient_name') and claim_record.get('service_date') and claim_record.get('charges'):
+        return {}
+    return _apply_facts(aws_client, claim_record, _claim_facts_from_hcfa_pdf(pdf_path), 'hcfa', where)
+
+
+ROW_FACTS_JS = r"""((claimId) => {
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const rows = Array.from(document.querySelectorAll('tr'));
+    for (const row of rows) {
+        const tds = Array.from(row.querySelectorAll('td'));
+        if (tds.length < 4) continue;
+        const idx = tds.slice(0, 8).findIndex(td => norm(td.textContent) === String(claimId));
+        if (idx < 0) continue;
+        const table = row.closest('table');
+        let ths = table ? Array.from(table.querySelectorAll('th')) : [];
+        if (ths.length !== tds.length) {
+            // eCW draws the headers in a table of their own, just above the body table
+            let el = table;
+            for (let hops = 0; el && hops < 6 && ths.length !== tds.length; hops++) {
+                el = el.previousElementSibling || (el.parentElement && el.parentElement.previousElementSibling);
+                if (!el) break;
+                const cand = Array.from(el.querySelectorAll ? el.querySelectorAll('th') : []);
+                if (cand.length === tds.length) ths = cand;
+            }
+        }
+        return {cells: tds.map(td => norm(td.textContent)),
+                headers: ths.length === tds.length ? ths.map(th => norm(th.textContent).toUpperCase()) : [],
+                idx};
+    }
+    return null;
+})"""
+
+
+def _facts_from_row(found):
+    """Patient, DOS, charges and payer out of the lookup row ({cells, headers,
+    idx} as ROW_FACTS_JS gives it): by header when the headers pair up with
+    the cells, else by shape — a 'Last, First' cell and a date after the
+    claim number. Charges only under a CHARGES header."""
+    import re as _re
+    out = {'patient_name': '', 'service_date': '', 'charges': '', 'payer': ''}
+    if not found or not found.get('cells'):
+        return out
+    cells, headers, idx = found['cells'], found.get('headers') or [], int(found.get('idx') or 0)
+    money = _re.compile(r'^-?[\d,]+\.\d{2}$')
+    date = _re.compile(r'^\d{2}/\d{2}/\d{4}$')
+    name = _re.compile(r"^[A-Za-z][A-Za-z'\- .]{0,40},\s*[A-Za-z][A-Za-z'\- .]{0,40}$")
+    if headers:
+        for h, c in zip(headers, cells):
+            if 'PATIENT' in h and name.match(c):
+                out['patient_name'] = c
+            elif ('SERVICE DATE' in h or h in ('DOS', 'SERVICE DT')) and date.match(c):
+                out['service_date'] = c
+            elif h.startswith('CHARGES') and money.match(c):
+                out['charges'] = c.replace(',', '')
+            elif h.startswith('PAYER') and c and not money.match(c):
+                out['payer'] = c
+    after = cells[idx + 1:]
+    if not out['patient_name']:
+        out['patient_name'] = next((c for c in after if name.match(c)), '')
+    if not out['service_date']:
+        out['service_date'] = next((c for c in after if date.match(c)), '')
+    return out
+
+
+def _claim_row_facts(page, claim_id):
+    """What eCW's lookup results say about the claim — its row, read in
+    every frame. {} when the row is not on screen."""
+    for ctx in [page] + list(page.frames):
+        try:
+            found = ctx.evaluate(ROW_FACTS_JS, str(claim_id))
+        except Exception:
+            continue
+        if found:
+            facts = _facts_from_row(found)
+            if facts.get('patient_name') or facts.get('service_date'):
+                return facts
+    return {}
 
 
 def _subscriber_id_from_hcfa_pdf(pdf_path):
@@ -5579,6 +5665,20 @@ def process_message(message: dict, aws_client: AWSClient):
 
                 # Wait for the claim detail popup to open
                 time.sleep(2)
+
+                # The lookup lists the claim: its row says who the patient is,
+                # the DOS, the charges and the payer — eCW's own word, and what
+                # the IV Note and Progress Note captures verify against.
+                try:
+                    _row = _claim_row_facts(page, claim_id)
+                    if _row:
+                        _apply_facts(aws_client, claim_record, _row, 'ecw_row')
+                        if _row.get('payer') and not claim_record.get('payer'):
+                            claim_record['payer'] = _row['payer']
+                            aws_client.update_claim_status(claim_id, {'payer': _row['payer']})
+                        patient_name = claim_record.get('patient_name', '')
+                except Exception as _row_err:
+                    logger.warning(f"  lookup row not read for {claim_id}: {_row_err}")
 
                 # ── 6b. Verify the popup ACTUALLY opened ──
                 # Must find Cancel/OK/Prog.Notes buttons — NOT just listing page text
