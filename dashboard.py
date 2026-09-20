@@ -2481,7 +2481,12 @@ def checks_client_view():
     next to this file; it reads /api/checks."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard_checks.html')
     with open(path, encoding='utf-8') as fh:
-        return fh.read()
+        resp = app.response_class(fh.read(), mimetype='text/html')
+    # The page itself, not only its data: without this a browser kept serving
+    # the copy it cached before a deploy, so a shipped change looked missing
+    # (2026-09-20).
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    return resp
 
 
 @app.route('/api/checks')

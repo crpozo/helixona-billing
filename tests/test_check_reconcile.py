@@ -766,6 +766,8 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         self.assertIn('setInterval(load, 15000);', h)
         self.assertIn('Run in progress', h)
         self.assertIn("resp.headers['Cache-Control'] = 'no-store'", d)
+        # The HTML too: a cached copy made a deployed change look missing.
+        self.assertIn("resp.headers['Cache-Control'] = 'no-store, must-revalidate'", d)
         self.assertIn('<th>Check #</th><th>Copy in SharePoint</th><th class="num">Amount</th><th>Blue Shield</th><th>eCW</th><th>Verdict</th><th>What to do</th>', d)
         for want in ("fetch('/api/checks', {cache: 'no-store'})", "const issues = r => flags(r).filter(f => String(f) !== 'other payer');",
                      'checks need attention', 'What to do', 'Cashed, not in eCW',
