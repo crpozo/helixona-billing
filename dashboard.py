@@ -1521,12 +1521,12 @@ window.scrollToEl = function(sel){
                 const m = String(c.symplisend_submitted_at || '').match(/^(\d{4}-\d{2}-\d{2})/);
                 return m ? m[1] : '';
             }
-            // The same date the DOS column shows, and both shapes it is
-            // stored in: MM/DD/YYYY from the Claims page, YYYY-MM-DD from the
-            // encounter capture. Reading only `dos` meant the filter judged a
-            // claim by a date the operator could not see, and dropped every
-            // claim that had none (2026-09-21).
-            return _toISO(c.encounter_date) || _toISO(c.service_date) || _toISO(c.dos);
+            // The claim's service date — the same one the DOS column shows and
+            // the one eCW's Claims list filters on. Not the encounter date: that
+            // is when the IV was given, and showing it as the DOS made claim
+            // 7807 read 2026-08-17 where eCW says 08/19/2026, and made every
+            // claim sharing an encounter look like a duplicate (2026-09-21).
+            return _toISO(c.service_date) || _toISO(c.dos);
         }
 
         function _toISO(v) {
@@ -2025,7 +2025,7 @@ window.scrollToEl = function(sel){
                 return `<tr class="${rowClass}">
                     <td class="nowrap" style="font-weight:600;color:var(--accent);">${c.claim_id || '—'}<div class="sub">${officeVisitCell}</div>${procBadge}</td>
                     <td class="nowrap">${c.patient_name || '—'}</td>
-                    <td class="nowrap">${c.encounter_date || c.service_date || c.dos || '—'}</td>
+                    <td class="nowrap">${c.service_date || c.dos || '—'}</td>
                     <td class="col-payer nowrap">${(c.payer || '—').replace(' of California', '')}</td>
                     <td class="num nowrap">${c.charges || '—'}</td>
                     <td class="docs-cell"><div class="docs">${doc(hcfaCell, 'HCFA form')}${doc(progNotesCell, 'IV Note')}${doc(encFileCell, 'Progress Note')}</div>${(c.encounter_date || c.prog_note_date || c.iv_note_rx_start_date) && !isOffice ? `<div class="sub">Progress note date ${formatProgNoteDate(c)}</div>` : ''}</td>
