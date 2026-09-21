@@ -48,7 +48,15 @@ class BothDateShapesParse(unittest.TestCase):
     """
 
     def test_dos_is_reordered_to_iso(self):
-        self.assertIn('`${m[3]}-${m[1]}-${m[2]}`', _js())
+        self.assertIn("return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '';", _src())
+
+    def test_it_reads_the_date_the_column_shows_in_either_shape(self):
+        # The DOS column shows encounter_date first, and the encounter capture
+        # stores it as YYYY-MM-DD while the Claims page gives MM/DD/YYYY. The
+        # filter used to read `dos` alone, judging a claim by a date nobody
+        # could see (2026-09-21).
+        self.assertIn("return _toISO(c.encounter_date) || _toISO(c.service_date) || _toISO(c.dos);", _src())
+        self.assertIn('let m = t.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);', _src())
 
     def test_sent_takes_the_leading_iso_date(self):
         self.assertIn('symplisend_submitted_at', _js())

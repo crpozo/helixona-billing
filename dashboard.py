@@ -1498,8 +1498,20 @@ window.scrollToEl = function(sel){
                 const m = String(c.symplisend_submitted_at || '').match(/^(\d{4}-\d{2}-\d{2})/);
                 return m ? m[1] : '';
             }
-            const m = String(c.dos || c.service_date || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
-            return m ? `${m[3]}-${m[1]}-${m[2]}` : '';
+            // The same date the DOS column shows, and both shapes it is
+            // stored in: MM/DD/YYYY from the Claims page, YYYY-MM-DD from the
+            // encounter capture. Reading only `dos` meant the filter judged a
+            // claim by a date the operator could not see, and dropped every
+            // claim that had none (2026-09-21).
+            return _toISO(c.encounter_date) || _toISO(c.service_date) || _toISO(c.dos);
+        }
+
+        function _toISO(v) {
+            const t = String(v || '').trim();
+            let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+            m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : '';
         }
 
         function dateFilterActive() {
