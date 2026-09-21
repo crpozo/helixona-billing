@@ -44,3 +44,4 @@ Thumbs.db
 *.bak_*
 *.log
 DEPLOYED
+deleted_claims_*.json
