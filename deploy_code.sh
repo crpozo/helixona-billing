@@ -34,6 +34,14 @@ fi
 echo
 echo "Deploying Helixona Billing Agent to $EC2_IP..."
 
+# A version marker travels with the code: .git is excluded, so without this
+# the dashboard cannot say which commit is running and a shipped change looks
+# like it never landed (2026-09-21).
+printf '%s\n%s\n%s\n' \
+    "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+    "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)" \
+    "$(date -u '+%Y-%m-%d %H:%M UTC')" > DEPLOYED
+
 # Sync source code.
 # .git and .claude are excluded deliberately: they can carry worktrees and
 # local scratch that have no business on a host holding patient data.

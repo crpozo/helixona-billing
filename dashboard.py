@@ -100,6 +100,26 @@ PIPELINE_STAGES = {
     "revision":      {"label": "Revision Required SympliSend", "color": "#8a7450", "states": [11, 12, 14, 15]},
 }
 
+def _deployed():
+    """Which commit this dashboard is running, written by deploy_code.sh.
+    Falls back to this file's own timestamp, which a deploy always refreshes."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(here, 'DEPLOYED'), encoding='utf-8') as fh:
+            commit, branch, when = (fh.read().split('\n') + ['', '', ''])[:3]
+        if commit.strip():
+            return f"{commit.strip()} · deployed {when.strip()}"
+    except Exception:
+        pass
+    try:
+        ts = os.path.getmtime(os.path.join(here, 'dashboard.py'))
+        return 'deployed ' + datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M UTC')
+    except Exception:
+        return 'version unknown'
+
+
+DEPLOYED = _deployed()
+
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -675,7 +695,7 @@ tbody tr:last-child td{border-bottom:none}
       </div>
     </div>
 
-    <div class="footer">Helixona Billing Agent · v1 · <a href="https://helixona.com" target="_blank">helixona.com</a> · Auto-refresh 10s</div>
+    <div class="footer">Helixona Billing Agent · v1 · <a href="https://helixona.com" target="_blank">helixona.com</a> · Auto-refresh 10s · <span title="The code this dashboard is running. If a change you expect is missing, this tells you whether the deploy landed.">{{ deployed }}</span></div>
 
   </div>
 </div>
@@ -2330,6 +2350,7 @@ window.scrollToEl = function(sel){
 @app.route('/')
 def dashboard():
     return render_template_string(DASHBOARD_HTML,
+        deployed=DEPLOYED,
         state_labels=STATE_LABELS,
         pipeline_stages=PIPELINE_STAGES,
         bot_novnc={k: v['novnc_port'] for k, v in BOT_ROUTING.items()},

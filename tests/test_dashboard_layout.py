@@ -145,6 +145,29 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
         self.assertIn('<div id="folders-body" hidden>', src)
 
 
+class ThePageSaysWhichCodeItIsRunning(unittest.TestCase):
+    """2026-09-21: a shipped change looked like it had never landed three
+    times over, because nothing on the page said which commit was up."""
+
+    def test_the_footer_carries_the_version(self):
+        src = _src()
+        self.assertIn('{{ deployed }}', src)
+        self.assertIn('deployed=DEPLOYED,', src)
+
+    def test_the_deploy_writes_the_marker(self):
+        with open(os.path.join(REPO, 'deploy_code.sh'), encoding='utf-8') as fh:
+            sh = fh.read()
+        self.assertIn('> DEPLOYED', sh)
+        self.assertIn('git rev-parse --short HEAD', sh)
+        # .git never ships, so the marker is the only way to know.
+        self.assertIn("--exclude='.git'", sh)
+
+    def test_it_falls_back_to_this_files_own_timestamp(self):
+        d = _dash()
+        self.assertTrue(d._deployed())
+        self.assertIn("os.path.getmtime(os.path.join(here, 'dashboard.py'))", _src())
+
+
 class BigResponsesAreCompressed(unittest.TestCase):
     def _run(self, body, mimetype='application/json', accept='gzip, deflate'):
         d = _dash()
