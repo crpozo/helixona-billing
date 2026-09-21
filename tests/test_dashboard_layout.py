@@ -81,6 +81,10 @@ class TheHeadlineSpeaksEachTabsLanguage(unittest.TestCase):
         self.assertIn("paintClaimsHero(c.pending ?? (c.total - c.submitted), c.ready ?? 0);", src)
         self.assertIn("paintClaimsHero(pending.length, pending.filter(c => !needsWork(c)).length);", src)
         self.assertIn('id="hero-of"', src)
+        # 2026-09-21: a claim eCW no longer lists is kept but not counted as one to send.
+        self.assertIn('const isArchived = c => c.ecw_visible === false;', src)
+        self.assertIn("claims = claims.filter(c => !isSent(c) && !isArchived(c));", src)
+        self.assertIn('id="hero-archived"', src)
         # 2026-09-20: HCFA + IV Note + subscriber ID is ready; the Progress Note never blocks.
         self.assertIn('const needsWork = c => missingFor(c).length > 0;', src)
         self.assertIn("return bool(evaluate_claim(c).get('blockers'))", src)
@@ -134,7 +138,7 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
         self.assertIn('<th>Documents</th><th>Submission</th><th>Stage</th>', src)
         # 2026-09-20: room to breathe, and the finished claims out of the way.
         for want in ('td.nowrap,th.nowrap{white-space:nowrap}', '.docs .doc{white-space:nowrap;',
-                     "claims = claims.filter(c => !isSent(c));",
+                     "claims = claims.filter(c => !isSent(c) && !isArchived(c));",
                      "const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;"):
             self.assertIn(want, src)
         self.assertNotIn('submitted-toggle', src)   # the sent ones are the audit log's business

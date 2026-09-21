@@ -18,7 +18,9 @@ import dashboard  # noqa: E402
 SUBMITTED = dashboard.PIPELINE_STAGES['submitted']['states'][0]
 
 PAGE_1 = ([{'state': SUBMITTED, 'submission_type': 'First Time Submission'}] * 3 +
-          [{'state': 1, 'submission_type': 'First Time Submission'}] * 2)
+          [{'state': 1, 'submission_type': 'First Time Submission'}] +
+          # eCW's claim lookup no longer lists this one: kept, not counted.
+          [{'state': 1, 'submission_type': 'First Time Submission', 'ecw_visible': False}])
 PAGE_2 = ([{'state': SUBMITTED, 'submission_type': 'Resubmission'}] * 4 +
           [{'state': 2, 'submission_type': 'Resubmission'}])
 
@@ -52,12 +54,12 @@ class CountsCase(unittest.TestCase):
 class ItCountsPerBot(CountsCase):
     def test_submissions_counts_only_first_time_claims(self):
         d = self.data['submissions']
-        self.assertEqual((d['submitted'], d['total'], d['pending']), (3, 5, 2))
+        self.assertEqual((d['submitted'], d['total'], d['pending'], d['archived']), (3, 5, 1, 1))
         self.assertIn('ready', d)
 
     def test_resubmissions_counts_only_resubmissions(self):
         d = self.data['resubmissions']
-        self.assertEqual((d['submitted'], d['total'], d['pending']), (4, 5, 1))
+        self.assertEqual((d['submitted'], d['total'], d['pending'], d['archived']), (4, 5, 1, 0))
 
     def test_the_two_tabs_add_up_to_the_whole_table(self):
         self.assertEqual(

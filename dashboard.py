@@ -370,6 +370,7 @@ tbody tr:last-child td{border-bottom:none}
 .state-pill.revision{background:rgba(239,68,68,.12);color:var(--bad)}
 .state-pill.pending{background:rgba(245,158,11,.12);color:var(--warning)}
 .state-pill.ready{background:rgba(16,185,129,.12);color:var(--success)}
+.hero-archived{font-size:10.5px;color:var(--text-dim);font-weight:400;margin-top:6px;max-width:400px;line-height:1.5;margin-left:auto}
 .hcfa-link{cursor:pointer;color:var(--accent);font-size:11px;font-weight:500;padding:3px 7px;border-radius:6px;background:var(--accent-glow);display:inline-block;transition:all .15s}
 .hcfa-link:hover{background:rgba(205,180,134,.25);box-shadow:0 0 0 1px var(--accent)}
 .empty-state{text-align:center;padding:30px 20px;color:var(--text-muted);font-size:12px}
@@ -504,7 +505,8 @@ tbody tr:last-child td{border-bottom:none}
           <span class="hero-num" id="hero-submitted">—</span>
           <span class="hero-denom"><span id="hero-num-label" hidden></span><span id="hero-of"> of <span id="hero-total">—</span> <span id="hero-denom-label">claims submitted</span></span></span>
         </div>
-        <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> <span id="hero-pct-label">complete</span> · <span id="hero-remaining">—</span> <span id="hero-remaining-label">remaining</span></div>
+        <div class="hero-kpi-pct"><strong id="hero-pct">—</strong> <span id="hero-pct-label">complete</span> · <span id="hero-remaining">—</span> <span id="hero-remaining-label">remaining</span>
+          <div id="hero-archived" class="hero-archived" hidden></div></div>
       </div>
       <div class="date-filter" id="date-filter">
         <label for="df-from">Dates</label>
@@ -1543,6 +1545,10 @@ window.scrollToEl = function(sel){
         // or flagged as sent through SympliSend. Sent claims are the audit
         // log's business; this page is about what is still to send.
         const isSent = c => (PIPELINE_STAGES.submitted.states || []).includes(parseInt(c.state || c.current_state || 0)) || !!c.symplisend_submitted;
+        // eCW's claim lookup no longer lists this claim — its status moved on,
+        // or it fell outside the window the bot searches. The bot keeps the row
+        // for its history; it is not something we are waiting to send.
+        const isArchived = c => c.ecw_visible === false;
         // What SympliSend needs — the submission gate's own rule: the HCFA,
         // the IV Note (of the right patient) and a verified subscriber ID.
         // The Progress Note rides along when we hold it; it never holds the
@@ -1571,6 +1577,12 @@ window.scrollToEl = function(sel){
             set('hero-pct-label', 'ready to upload');
             set('hero-remaining', nf(pending - ready));
             set('hero-remaining-label', 'still missing documents');
+            const note = document.getElementById('hero-archived');
+            if (note) {
+                const n = window._archivedCount || 0;
+                note.hidden = !n;
+                note.textContent = n ? `${nf(n)} more are kept for their history — eCW's claim lookup no longer lists them` : '';
+            }
             const fill = document.getElementById('hero-progress-fill');
             if (fill) fill.style.width = pct + '%';
         }
@@ -1582,7 +1594,9 @@ window.scrollToEl = function(sel){
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
             if (dateFilterActive() && window._allClaims) {
                 const rows = applyDateFilter(claimsForActiveBot(window._allClaims));
-                const pending = rows.filter(c => !isSent(c));
+                const live = rows.filter(c => !isSent(c));
+                window._archivedCount = live.filter(isArchived).length;
+                const pending = live.filter(c => !isArchived(c));
                 paintClaimsHero(pending.length, pending.filter(c => !needsWork(c)).length);
                 const hint = document.getElementById('df-hint');
                 if (hint) hint.textContent = 'filtered';
@@ -1593,6 +1607,7 @@ window.scrollToEl = function(sel){
                 const data = await res.json();
                 const c = data[window.activeBot];
                 if (!c || !c.total) return;
+                window._archivedCount = c.archived ?? 0;
                 paintClaimsHero(c.pending ?? (c.total - c.submitted), c.ready ?? 0);
             } catch (e) { /* the next tick will retry */ }
         }
@@ -1687,7 +1702,9 @@ window.scrollToEl = function(sel){
 
         function renderStats(claims) {
             if (window.activeBot === 'eob') return;   // renderChecks writes that headline
-            const pending = claims.filter(c => !isSent(c));
+            const live = claims.filter(c => !isSent(c));
+            window._archivedCount = live.filter(isArchived).length;
+            const pending = live.filter(c => !isArchived(c));
             paintClaimsHero(pending.length, pending.filter(c => !needsWork(c)).length);
         }
 
@@ -1766,7 +1783,7 @@ window.scrollToEl = function(sel){
             // Claims already sent to SympliSend are done and live in the
             // audit log (2026-09-20): this table is what is still to send.
             const submittedN = claims.filter(isSent).length;
-            claims = claims.filter(c => !isSent(c));
+            claims = claims.filter(c => !isSent(c) && !isArchived(c));
             const beforeSearch = claims.length;
             claims = applyClaimsSearch(claims);
             const searching = claims.length !== beforeSearch;
@@ -2545,7 +2562,8 @@ def api_claim_counts():
         table = dynamodb.Table('helixona-claims')
         items, kwargs = [], {
             'ProjectionExpression': '#st, submission_type, symplisend_submitted, eob_check_eft, hcfa_s3_path, '
-                                    'prog_notes_s3_path, subscriber_id, subscriber_id_unverified, iv_note_patient_mismatch, cpt',
+                                    'prog_notes_s3_path, subscriber_id, subscriber_id_unverified, iv_note_patient_mismatch, '
+                                    'cpt, ecw_visible',
             'ExpressionAttributeNames': {'#st': 'state'},
         }
         while True:
@@ -2560,11 +2578,18 @@ def api_claim_counts():
         def tally(rows):
             # The headline (2026-09-20): the claims still to send, and how many
             # of them have their packet complete — the same test the table uses.
+            # A claim eCW no longer lists (ecw_visible False, written by the
+            # bot's own sync) is not ours to send: it is kept for its history
+            # but left out of the count — 2026-09-21, the dashboard said 95
+            # where eCW's claim lookup found 74.
             total = len(rows)
             sent = [r for r in rows if int(r.get('state') or 0) in submitted_states or r.get('symplisend_submitted')]
-            pending = [r for r in rows if r not in sent]
+            rest = [r for r in rows if r not in sent]
+            archived = [r for r in rest if r.get('ecw_visible') is False]
+            pending = [r for r in rest if r.get('ecw_visible') is not False]
             ready = sum(1 for r in pending if not _claim_needs_work(r))
-            return {'submitted': len(sent), 'total': total, 'pending': len(pending), 'ready': ready}
+            return {'submitted': len(sent), 'total': total, 'pending': len(pending),
+                    'ready': ready, 'archived': len(archived)}
 
         is_resub = lambda r: 'resub' in str(r.get('submission_type', '')).lower()
         # Remittance's headline is not a slice of the submissions/resubmissions
