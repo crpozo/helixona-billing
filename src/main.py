@@ -49,6 +49,14 @@ from src.audit.submission_log import (
 )
 
 logger = get_logger(__name__)
+
+# How far back the claims bot looks in eCW — its Claims lookup, its Encounters
+# tab and every date filter it fills. 2026-09-21, the operator: "máximo
+# verifica los claims del 1 de junio del 2025; anteriores no cuentan". It was
+# 07/01/2025 written out in nineteen places, which is how such a floor drifts.
+# CLAIMS_SINCE overrides it for a one-off run. The check reconciliation has its
+# own `since` (src/checks/run.py) and is not this.
+CLAIMS_SINCE = os.environ.get('CLAIMS_SINCE', '06/01/2025')
 rules = RulesEngine()
 
 
@@ -728,7 +736,7 @@ def _run_fix_coding_ivs_stage2(page, body, aws_client, ecw_url):
     Fix Coding IVs — Stage 2: Remove test claims.
       1. Navigate to Billing → Claims.
       2. For each status in ['Pending With Errors', 'Pending']:
-         a. Set status filter + date range 07/01/2025 → today
+         a. Set status filter + date range CLAIMS_SINCE → today
          b. Click #btnclaimlookup
          c. Find rows where the patient name (LastName, FirstName) contains 'test'
          d. For each match: select row checkbox → Claims dropdown (#claimLookupBtn10)
@@ -770,7 +778,7 @@ def _run_fix_coding_ivs_stage2(page, body, aws_client, ecw_url):
 
         logger.info(f"━━ Status: {status_label} ━━")
 
-        # Set date range 07/01/2025 → today
+        # Set date range CLAIMS_SINCE → today
         try:
             inputs = page.locator('input[type="text"]:visible').all()
             n = 0
@@ -779,7 +787,7 @@ def _run_fix_coding_ivs_stage2(page, body, aws_client, ecw_url):
                     val = inp.input_value()
                     if val and '/' in val and len(val) == 10:
                         if n == 0:
-                            inp.click(click_count=3); inp.fill('07/01/2025')
+                            inp.click(click_count=3); inp.fill(CLAIMS_SINCE)
                             inp.dispatch_event('change'); inp.dispatch_event('blur')
                         elif n == 1:
                             inp.click(click_count=3); inp.fill(today_str)
@@ -1151,7 +1159,7 @@ def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
     """
     Fix Coding IVs — Stage 1: Create encounter claims.
       1. (login already done by caller)
-      2. Encounters → 07/01/2025-today, "Progress Notes Done/Locked" filter, click Filter.
+      2. Encounters → CLAIMS_SINCE-today, "Progress Notes Done/Locked" filter, click Filter.
       3. Click "Claims IPE All" → confirm Yes → close result modal.
          (If "No encounters selected" appears, IPE already ran — skip.)
 
@@ -1190,7 +1198,7 @@ def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
     except Exception as e:
         logger.error(f"Encounters navigation failed: {e}")
 
-    logger.info("Setting Encounters date range 07/01/2025 → today...")
+    logger.info(f"Setting Encounters date range {CLAIMS_SINCE} → today...")
     try:
         date_inputs = page.locator('input[type="text"]:visible').all()
         set_count = 0
@@ -1199,9 +1207,9 @@ def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
                 val = inp.input_value()
                 if val and '/' in val and len(val) == 10:
                     if set_count == 0:
-                        inp.click(click_count=3); inp.fill('07/01/2025')
+                        inp.click(click_count=3); inp.fill(CLAIMS_SINCE)
                         inp.dispatch_event('change'); inp.dispatch_event('blur')
-                        logger.info("✅ FROM 07/01/2025")
+                        logger.info(f"✅ FROM {CLAIMS_SINCE}")
                     elif set_count == 1:
                         inp.click(click_count=3); inp.fill(today_str)
                         inp.dispatch_event('change'); inp.dispatch_event('blur')
@@ -1354,7 +1362,7 @@ def _run_fix_coding_ivs_stage3(page, body, aws_client, ecw_url):
     Fix Coding IVs — Stage 3: Generate Excel documentation.
       1. Navigate to Billing → Claims.
       2. For each status in ['Pending with Errors', 'Pending']:
-         a. Set status filter + date range 07/01/2025 → today
+         a. Set status filter + date range CLAIMS_SINCE → today
          b. Click #btnclaimlookup
          c. Billing menu → View Claims Report → EXCEL (download)
       3. Combine the two Excels and upload to S3 (+ DynamoDB metadata).
@@ -1390,7 +1398,7 @@ def _run_fix_coding_ivs_stage3(page, body, aws_client, ecw_url):
     for status_label in statuses:
         logger.info(f"━━ Processing status: {status_label} ━━")
 
-        logger.info("Setting Claims date range 07/01/2025 → today...")
+        logger.info(f"Setting Claims date range {CLAIMS_SINCE} → today...")
         try:
             inputs = page.locator('input[type="text"]:visible').all()
             n = 0
@@ -1399,7 +1407,7 @@ def _run_fix_coding_ivs_stage3(page, body, aws_client, ecw_url):
                     val = inp.input_value()
                     if val and '/' in val and len(val) == 10:
                         if n == 0:
-                            inp.click(click_count=3); inp.fill('07/01/2025')
+                            inp.click(click_count=3); inp.fill(CLAIMS_SINCE)
                             inp.dispatch_event('change'); inp.dispatch_event('blur')
                         elif n == 1:
                             inp.click(click_count=3); inp.fill(today_str)
@@ -3699,7 +3707,7 @@ def process_message(message: dict, aws_client: AWSClient):
                 pass
 
             # ── SET FILTERS using Playwright's native interaction (proper AngularJS binding) ──
-            logger.info("Setting date filter: from 07/01/2025")
+            logger.info(f"Setting date filter: from {CLAIMS_SINCE}")
 
             # Find the Service Dt FROM input using visible label association
             date_set = False
@@ -3719,7 +3727,7 @@ def process_message(message: dict, aws_client: AWSClient):
                             # Use triple-click to select all, then type to replace
                             inp.click(click_count=3)
                             time.sleep(0.3)
-                            inp.fill('07/01/2025')
+                            inp.fill(CLAIMS_SINCE)
                             inp.dispatch_event('change')
                             inp.dispatch_event('blur')
                             logger.info(f"✅ FROM date set via: {sel}")
@@ -3745,7 +3753,7 @@ def process_message(message: dict, aws_client: AWSClient):
                                     # First date input is FROM
                                     inp.click(click_count=3)
                                     time.sleep(0.3)
-                                    inp.fill('07/01/2025')
+                                    inp.fill(CLAIMS_SINCE)
                                     inp.dispatch_event('change')
                                     inp.dispatch_event('blur')
                                     logger.info(f"✅ FROM date set via visible input[{i}]: {inp_id}")
@@ -3796,13 +3804,13 @@ def process_message(message: dict, aws_client: AWSClient):
                         inp = page.query_selector(sel)
                         if inp and inp.is_visible():
                             actual_val = inp.input_value()
-                            if actual_val == '07/01/2025':
+                            if actual_val == CLAIMS_SINCE:
                                 logger.info(f"✅ FROM date verified: {actual_val}")
                             else:
                                 logger.warning(f"⚠️ FROM date value changed to: {actual_val} — re-setting")
                                 inp.click(click_count=3)
                                 time.sleep(0.2)
-                                inp.fill('07/01/2025')
+                                inp.fill(CLAIMS_SINCE)
                                 inp.dispatch_event('change')
                                 inp.dispatch_event('blur')
                                 page.keyboard.press('Escape')
@@ -4411,7 +4419,7 @@ def process_message(message: dict, aws_client: AWSClient):
                     'claims': claims_list,
                     'total_found': len(claims_list),
                     'filter_status': 'Ready to Submit to Symplisend',
-                    'filter_date_from': '07/01/2025',
+                    'filter_date_from': CLAIMS_SINCE,
                     'scraped_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
                 }
                 with open('/opt/helixona-agent/ecw_claims.json', 'w') as ecw_f:
@@ -4872,7 +4880,7 @@ def process_message(message: dict, aws_client: AWSClient):
             time.sleep(3)
 
             # ── 5. Set filters & Lookup (same as extraction) ──
-            logger.info("Setting date filter: from 07/01/2025")
+            logger.info(f"Setting date filter: from {CLAIMS_SINCE}")
             date_set = False
             from_selectors = [
                 'input[ng-model*="fromDate"]',
@@ -4887,7 +4895,7 @@ def process_message(message: dict, aws_client: AWSClient):
                     if inp and inp.is_visible():
                         inp.click(click_count=3)
                         time.sleep(0.3)
-                        inp.fill('07/01/2025')
+                        inp.fill(CLAIMS_SINCE)
                         inp.dispatch_event('change')
                         inp.dispatch_event('blur')
                         logger.info(f"✅ FROM date set via: {sel}")
@@ -4904,7 +4912,7 @@ def process_message(message: dict, aws_client: AWSClient):
                         if val and '/' in val and len(val) == 10:
                             inp.click(click_count=3)
                             time.sleep(0.3)
-                            inp.fill('07/01/2025')
+                            inp.fill(CLAIMS_SINCE)
                             inp.dispatch_event('change')
                             inp.dispatch_event('blur')
                             logger.info(f"✅ FROM date set via visible input[{i}]")

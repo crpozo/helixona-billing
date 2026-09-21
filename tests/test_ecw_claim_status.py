@@ -418,18 +418,29 @@ class OnlyAVerifiedChangeCounts(unittest.TestCase):
         self.assertIn('leaving unmarked for retry', _fn('_set_claim_status_in_ecw'))
 
 
-class TheClaimsSearchStartsInJuly2025(unittest.TestCase):
-    """The operator's ECW view runs from 07/01/2025; the bot must match it."""
+class TheClaimsSearchStartsOnOneNamedDate(unittest.TestCase):
+    """How far back the bot looks lives in one constant. It was written out
+    in nineteen places, pinned to 07/01/2025; on 2026-09-21 the operator set
+    the floor at 06/01/2025 ("anteriores no cuentan") and a scattered literal
+    is how such a floor drifts."""
 
-    def test_no_june_start_date_remains(self):
-        self.assertNotIn('06/01/2025', _read())
+    def test_the_floor_is_a_single_constant(self):
+        self.assertIn("CLAIMS_SINCE = os.environ.get('CLAIMS_SINCE', '06/01/2025')", _read())
+        from src.main import CLAIMS_SINCE
+        self.assertEqual(CLAIMS_SINCE, '06/01/2025')
 
-    def test_every_date_filter_uses_july_first(self):
+    def test_no_date_filter_carries_its_own_date(self):
         dates = set(re.findall(r"inp\.fill\('(\d{2}/\d{2}/\d{4})'\)", _read()))
-        self.assertEqual(dates, {'07/01/2025'}, 'mixed start dates: %s' % dates)
+        self.assertEqual(dates, set(), 'a date filter still types its own date: %s' % dates)
+        self.assertIn('inp.fill(CLAIMS_SINCE)', _read())
 
     def test_the_saved_filter_records_the_same_date(self):
-        self.assertIn("'filter_date_from': '07/01/2025'", _read())
+        self.assertIn("'filter_date_from': CLAIMS_SINCE,", _read())
+
+    def test_the_check_reconciliation_keeps_its_own_since(self):
+        # Remittance asks eCW's Payments screen a different question.
+        with open(os.path.join(REPO, 'src/checks/run.py'), encoding='utf-8') as fh:
+            self.assertIn("DEFAULT_SINCE = '07/01/2025'", fh.read())
 
 
 class TheClaimIsOpenedFromItsRow(unittest.TestCase):
