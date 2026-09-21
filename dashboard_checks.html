@@ -208,6 +208,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
       <dt><span class="pill neutral">● Other payer</span></dt><dd>Blue Shield does not list this check (another insurer, or outside the search window), so only eCW can vouch for it. Informational; the verdict comes from eCW.</dd>
       <dt><span class="pill info">● eCW not checked</span></dt><dd>eCW could not be read on the last run. Nothing can be said about these until the next run.</dd>
     </dl>
+    <p class="small" style="margin:6px 0"><strong>835 in eCW, not posted</strong> — eCW holds the payer's electronic remittance (the 835 file, Billing › ERA) and nobody has posted it. The payer says the money was sent; it does not say the check reached Helixona. <strong>835 only</strong> means no scan, no Blue Shield row and no payment in eCW know this number at all.</p>
     <p class="small" style="margin:6px 0"><strong>🏦 Deposit</strong> — one scan holding the bank deposit slip and the checks deposited with it. Click the row to open it: each check inside is compared with Blue Shield and looked up in eCW on its own, and the deposit total is the slip's. <em>(slip only)</em> marks a check written on the slip whose own page was not in the scan.</p>
 <p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks), Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. eCW is the source of truth: a check that is not in eCW is a check we do not have, whoever the payer. Each scan is read once and kept; the comparison is refreshed on every run.</p>
   </section>
@@ -239,6 +240,8 @@ function classify(r) {
   if (v === 'posted') return issues(r).length
     ? {cls: 'warning', label: 'Posted, but…', key: 'posted', todo: 'Posted in eCW, yet:'}
     : {cls: 'good', label: 'Posted', key: 'posted', todo: hasFlag(r, 'other payer') ? 'Nothing — in eCW, fully applied, copy on file.' : 'Nothing — the three sources agree.'};
+  if (v === '835 only') return {cls: 'serious', label: '835 only', key: '835 unposted',
+    todo: `The payer sent an 835 for ${money(r.era_amount)}${r.era_dated ? ' dated ' + esc(r.era_dated) : ''} and nothing else knows this payment. Confirm the check reached Helixona, then post it${r.era_file ? ' (ERA file ' + esc(r.era_file) + ')' : ''}.`};
   if (v === 'not cashed') return {cls: 'neutral', label: 'Not cashed yet', key: 'not cashed', todo: 'Wait: Blue Shield has not cashed it.'};
   if (v === 'eCW not checked') return {cls: 'info', label: 'eCW not checked', key: 'eCW not checked', todo: 'eCW could not be read on the last run — nothing can be said yet.'};
   return {cls: 'info', label: v || 'pending', key: v, todo: 'Awaiting the next run.'};
@@ -247,12 +250,13 @@ function todoFor(r) {
   const c = classify(r);
   const extra = [];
   if (hasFlag(r, 'no copy')) extra.push('Scan the check into SharePoint › Insurance Checks.');
+  if (hasFlag(r, '835 in eCW') && r.verdict !== '835 only') extra.push('eCW holds the 835 for it, unposted.');
   const amt = flags(r).find(f => String(f).startsWith('amounts differ'));
   if (amt) extra.push('Check the amounts: ' + esc(String(amt).replace('amounts differ: ', '')) + '.');
   return [c.todo, ...extra].join(' ');
 }
 // Needs attention = anything a person must act on.
-const attention = r => ['not in eCW', 'unposted'].includes(r.verdict) || hasFlag(r, 'no copy') || hasFlag(r, 'amounts differ');
+const attention = r => ['not in eCW', 'unposted', '835 only'].includes(r.verdict) || hasFlag(r, 'no copy') || hasFlag(r, 'amounts differ');
 
 // ---- tiles ----
 const TILES = [
@@ -265,9 +269,10 @@ const TILES = [
   ['not cashed', 'Not cashed yet', 'neutral', 'Issued, waiting on the bank', d => d.rows.filter(r => r.verdict === 'not cashed').length],
   ['other payer', 'Other payer', 'neutral', 'Not a Blue Shield check — eCW alone decides', d => d.rows.filter(r => hasFlag(r, 'other payer')).length],
   ['eCW not checked', 'eCW not checked', 'info', 'eCW could not be read last run', d => d.rows.filter(r => r.verdict === 'eCW not checked').length],
+  ['835 unposted', '835 in eCW, not posted', 'serious', 'The payer sent it; nobody posted it', d => d.rows.filter(r => hasFlag(r, '835 in eCW')).length],
   ['all', 'All checks', 'info', 'Everything compared', d => d.rows.length],
 ];
-const CHIPS = ['attention', 'not in eCW', 'unposted', 'no copy', 'amounts', 'posted', 'not cashed', 'other payer', 'eCW not checked', 'all'];
+const CHIPS = ['attention', 'not in eCW', 'unposted', 'no copy', 'amounts', '835 unposted', 'posted', 'not cashed', 'other payer', 'eCW not checked', 'all'];
 
 function matches(r, f) {
   switch (f) {
@@ -276,6 +281,7 @@ function matches(r, f) {
     case 'no copy': return hasFlag(r, 'no copy');
     case 'other payer': return hasFlag(r, 'other payer');
     case 'amounts': return hasFlag(r, 'amounts differ');
+    case '835 unposted': return hasFlag(r, '835 in eCW');
     case 'posted': return r.verdict === 'posted' && !issues(r).length;
     default: return r.verdict === f;
   }
@@ -414,6 +420,9 @@ function rowHtml(r, inDeposit) {
       : `<span class="muted">other payer</span>`;
     const amounts = [r.ecw_posted !== '' && r.ecw_posted != null ? `posted ${money(r.ecw_posted)}` : '',
                      r.ecw_unposted !== '' && r.ecw_unposted != null ? `unposted ${money(r.ecw_unposted)}` : ''].filter(Boolean);
+    const era = r.in_era
+      ? `<div class="small" style="color:var(--serious)" title="ERA file ${esc(r.era_file || '')} · ${esc(r.era_payer || '')}">835 unposted${r.era_amount ? ' ' + money(r.era_amount) : ''}</div>`
+      : '';
     const ecw = r.in_ecw
       ? `on file${r.ecw_payment_id ? ` · #${esc(r.ecw_payment_id)}` : ''}${amounts.length ? `<div class="small">${amounts.join(' · ')}</div>` : ''}`
       : r.verdict === 'eCW not checked' ? `<span class="pill info">not checked</span>` : `<span class="muted">not found</span>`;
@@ -424,7 +433,7 @@ function rowHtml(r, inDeposit) {
       <td class="num">${money(r.copy_amount)}</td>
       <td class="num">${money(r.bs_amount)}</td>
       <td>${bs}</td>
-      <td>${ecw}</td>
+      <td>${ecw}${era}</td>
       <td><span class="pill ${c.cls}">● ${esc(c.label)}</span></td>
       <td class="todo small">${todoFor(r)}${inDeposit && r.copy_page ? `<div class="muted">page ${esc(String(r.copy_page))} of the deposit scan</div>` : ''}</td>
     </tr>`;

@@ -92,7 +92,82 @@ class TheVerdictPerCheck(unittest.TestCase):
         sm = summarize(table_rows)
         self.assertEqual((sm['checks'], sm['posted'], sm['amount_mismatch'], sm['no_copy'], sm['other_payer']), (6, 2, 1, 1, 1))
         self.assertEqual(summarize([]), {'checks': 0, 'posted': 0, 'unposted': 0, 'not_in_ecw': 0, 'not_cashed': 0,
-                                         'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0})
+                                         'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0,
+                                         'era_only': 0, 'era_unposted': 0})
+
+
+class TheUnpostedErasAreTheirOwnSource(unittest.TestCase):
+    """2026-09-21, the operator: Billing → ERA lists the unposted 835s —
+    "ECW has the 835 files. But Helixona has not confirmed whether they have
+    the checks or not"."""
+
+    HDRS = ['', 'STATUS', 'FILE', 'CHECK', 'PAYER', 'POSTED BY', 'POSTED DATE', 'METHOD', 'ACTION', 'DATED', 'TRACE#', 'AMOUNT']
+    ROWS = [['', 'U', '664', '664', 'BLUE SHIELD O...', '', '', 'Check', '', '09/11/2026', '31407766', '425.32'],
+            ['', 'U', '669', '669', 'BLUE SHIELD O...', '', '', 'Check', '', '09/04/2026', '31385053', '817.89'],
+            ['', 'U', 'x', 'x', 'JUNK', '', '', '', '', '', '', '']]
+
+    def test_the_trace_number_is_the_check_number(self):
+        from src.checks.ecw_era import rows_to_era
+        got = rows_to_era(self.HDRS, self.ROWS)
+        # The row with no trace is left out: nothing to compare it on.
+        self.assertEqual([r['check_no'] for r in got], ['31407766', '31385053'])
+        self.assertEqual((got[0]['era_file'], got[0]['amount'], got[0]['dated']), ('664', '425.32', '09/11/2026'))
+        # FILE and CHECK are eCW's own sequence, kept but never the key.
+        self.assertEqual(got[0]['era_check'], '664')
+
+    def test_an_era_never_settles_a_check_on_its_own(self):
+        eras = [{'check_no': '31407766', 'amount': '425.32', 'era_file': '664', 'dated': '09/11/2026', 'payer': 'BLUE SHIELD O...'},
+                {'check_no': '31385053', 'amount': '817.89', 'era_file': '669', 'dated': '09/04/2026', 'payer': 'BLUE SHIELD O...'}]
+        rows, sm = reconcile(copies=[{'check_number': '31407766', 'amount': '425.32'}], checks=[], payments=[],
+                             ecw_checked={'31407766', '31385053'}, eras=eras)
+        by = {r['check_number']: r for r in rows}
+        # A scan on file and an 835: still not in eCW's payments, so still ours to enter.
+        self.assertEqual(by['31407766']['verdict'], 'not in eCW')
+        # Nothing but the 835 knows this one.
+        self.assertEqual(by['31385053']['verdict'], '835 only')
+        for r in rows:
+            self.assertIn('835 in eCW, not posted', r['flags'])
+            self.assertTrue(r['in_era'])
+        self.assertEqual((sm['era_only'], sm['era_unposted']), (1, 2))
+
+    def test_a_posted_payment_is_not_flagged_by_its_era(self):
+        rows, _ = reconcile(copies=[], checks=[], payments=[{'check_no': '31407766', 'amount': '425.32', 'unposted': '0.00'}],
+                            eras=[{'check_no': '31407766', 'amount': '425.32'}])
+        self.assertEqual(rows[0]['verdict'], 'posted')
+        self.assertNotIn('835 in eCW, not posted', rows[0]['flags'])
+
+    def test_the_era_amount_joins_the_amount_comparison(self):
+        rows, _ = reconcile(copies=[{'check_number': '31407766', 'amount': '425.32'}], checks=[], payments=[],
+                            eras=[{'check_no': '31407766', 'amount': '999.99'}])
+        self.assertTrue(any(f.startswith('amounts differ') for f in rows[0]['flags']))
+
+    def test_both_pages_show_it(self):
+        d = _read('dashboard.py')
+        self.assertIn("tile('835 in eCW, not posted', sm.era_unposted, '835 unposted'", d)
+        self.assertIn("${ecwCell}${eraCell}", d)
+        self.assertIn("['era', 'ERA']", d)
+        self.assertIn("'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer'", d)
+        h = _read('dashboard_checks.html')
+        self.assertIn("['835 unposted', '835 in eCW, not posted', 'serious'", h)
+        self.assertIn("case '835 unposted': return hasFlag(r, '835 in eCW');", h)
+        self.assertIn("if (v === '835 only') return {cls: 'serious', label: '835 only'", h)
+        self.assertIn("['not in eCW', 'unposted', '835 only'].includes(r.verdict)", h)
+
+    def test_the_run_reads_it_once_and_keeps_the_answer(self):
+        r = _read('src/checks/run.py')
+        self.assertIn('got = list_unposted(get_page())', r)
+        self.assertIn("progress('era', 'not read — the earlier answer stands')", r)
+        self.assertIn("if it.get('in_era')]", r)
+        self.assertIn('eras=eras)', r)
+        e = _read('src/checks/ecw_era.py')
+        self.assertIn("UNPOSTED_LABELS = ('UnPosted', 'Unposted', 'Un-Posted', 'UNPOSTED')", e)
+        # Read only: the ERA screen can import, ePost and Mark as Post, and
+        # the bot does none of them. Every click it makes, named.
+        import re as _re
+        clicks = set(_re.findall(r"_click_text\(page, ([^,]+),", e))
+        self.assertEqual(clicks, {"['Billing']", "['ERA']", 'FILTER_LABELS', 'NEXT_LABELS'}, clicks)
+        for forbidden in ('Mark as Post', 'ePost', 'importEra', 'markAsPost'):
+            self.assertNotIn(forbidden, e, forbidden)
 
 
 class TheImageReaderIsShapeChecked(unittest.TestCase):

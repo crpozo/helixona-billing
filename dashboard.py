@@ -872,6 +872,7 @@ window.scrollToEl = function(sel){
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
                 blue_shield: false,
+                era: true,
                 limit_checks: 0,
                 check_eft: "",
                 copies: true,
@@ -941,8 +942,8 @@ window.scrollToEl = function(sel){
             ],
             eob: [
                 {icon: '✅', title: 'Reconcile all checks', task: 'check_reconcile',
-                 desc: 'Walks Blue Shield for new checks, reads new check images in SharePoint, looks each check up in eCW and refreshes every verdict. Reads only.',
-                 payload: {since: '07/01/2025', blue_shield: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true}},
+                 desc: 'Walks Blue Shield for new checks, reads new check images in SharePoint, looks each check up in eCW, reads the unposted 835s in Billing → ERA, and refreshes every verdict. Reads only.',
+                 payload: {since: '07/01/2025', blue_shield: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true, era: true}},
                 {icon: '🧪', title: 'Test one check', task: 'check_reconcile',
                  desc: 'One check end to end: Blue Shield today, its copy in SharePoint, eCW. Its row lands under the Last run tile.',
                  payload: {since: '07/01/2025', blue_shield: true, limit_checks: 1, check_eft: '', copies: true, limit_files: 10, ecw: true},
@@ -1353,7 +1354,7 @@ window.scrollToEl = function(sel){
             if ((lr.targets || []).length) return lr.targets.includes(String(r.check_number));
             return !!sm.reconciled_at && r.reconciled_at === sm.reconciled_at;
         };
-        const RUN_STEPS = [['blue_shield', 'Blue Shield'], ['copies', 'Copies'], ['ecw', 'eCW'], ['verdict', 'Verdict'], ['done', 'Done']];
+        const RUN_STEPS = [['blue_shield', 'Blue Shield'], ['copies', 'Copies'], ['ecw', 'eCW'], ['era', 'ERA'], ['verdict', 'Verdict'], ['done', 'Done']];
         function setChecksFilter(f) { window._checksFilter = f; window._checksFilterChosen = true; renderChecks(); }
         function renderChecks() {
             const body = document.getElementById('checks-body');
@@ -1409,6 +1410,7 @@ window.scrollToEl = function(sel){
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)', 'wait for the bank'),
                     tile('other payer', sm.other_payer, 'other payer', 'var(--text-muted)', 'not a Blue Shield check'),
                     tile('eCW not checked', sm.ecw_unchecked, 'eCW not checked', 'var(--info)', 'run again'),
+                    tile('835 in eCW, not posted', sm.era_unposted, '835 unposted', 'var(--vio2)', 'payer sent it, nobody posted'),
                     ...((lr.targets || []).length ? [tile('last run', data.rows.filter(r => inLastRun(r, sm)).length, 'last run', 'var(--vio2)', 'the test just run')] : []),
                     tile('all checks', data.rows.length, 'all', 'var(--text-secondary)', ''),
                 ].join('') : '';
@@ -1422,13 +1424,14 @@ window.scrollToEl = function(sel){
                 : f === 'posted' ? (r.verdict === 'posted' && !(r.flags || []).some(x => x !== 'other payer'))
                 : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy'))
                 : f === 'other payer' ? (r.flags || []).some(x => x === 'other payer')
+                : f === '835 unposted' ? (r.flags || []).some(x => x.startsWith('835 in eCW'))
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
                 : r.verdict === f);
             if (!rows.length) {
                 body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'No reconciliation yet. Use <strong>▶ Run → Reconcile all checks</strong> (or <strong>Test one check</strong>) on the right. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>Blue Shield code</strong> box.'}</td></tr>`;
                 return;
             }
-            const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : v === 'eCW not checked' ? 'var(--info)' : 'var(--text-muted)';
+            const color = v => v === 'posted' ? 'var(--success)' : v === 'unposted' ? 'var(--warning)' : v === 'not in eCW' ? 'var(--bad)' : v === 'eCW not checked' ? 'var(--info)' : v === '835 only' ? 'var(--vio2)' : 'var(--text-muted)';
             const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '')).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
             const todo = r => {
                 const out = [];
@@ -1437,6 +1440,8 @@ window.scrollToEl = function(sel){
                 if (r.verdict === 'unposted') out.push(`<strong>Finish posting</strong>${r.ecw_unposted ? ' ' + money(r.ecw_unposted) : ''} in eCW.`);
                 if (flags.some(x => x.startsWith('no copy'))) out.push('<strong>Scan the check</strong> into SharePoint › Insurance Checks.');
                 if (flags.some(x => x.startsWith('amounts differ'))) out.push('<strong>Check which amount is right</strong>: copy, Blue Shield and eCW disagree.');
+                if (r.verdict === '835 only') out.push('<strong>eCW holds the 835 but nothing else knows this payment</strong>. Confirm the check reached Helixona, then post it.');
+                if (flags.some(x => x.startsWith('835 in eCW')) && r.verdict !== '835 only') out.push('eCW holds the 835 from the payer and it is <strong>not posted</strong>.');
                 if (r.verdict === 'eCW not checked') out.push('eCW was not read for this check yet — <strong>run again</strong>.');
                 if (r.verdict === 'not cashed') out.push('Issued, not cashed — wait for the bank.');
                 if (!out.length) out.push('Nothing — the sources agree.');
@@ -1455,6 +1460,9 @@ window.scrollToEl = function(sel){
                 const bsCell = r.in_blue_shield
                     ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div style="font-size:11px;color:var(--text-muted)">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div style="font-size:11px;color:var(--text-muted)">issued ${esc(r.bs_date)}</div>` : ''}`
                     : '<span style="color:var(--text-muted)">other payer</span>';
+                const eraCell = r.in_era
+                    ? `<div style="font-size:11px;color:var(--vio2)" title="ERA file ${esc(r.era_file || '')} · ${esc(r.era_payer || '')}">835 unposted${r.era_amount ? ' ' + money(r.era_amount) : ''}${r.era_file ? ' · file ' + esc(r.era_file) : ''}</div>`
+                    : '';
                 const ecwCell = r.in_ecw
                     ? `on file${r.ecw_payment_id ? ' · #' + esc(r.ecw_payment_id) : ''}<div style="font-size:11px;color:var(--text-muted)">${r.ecw_posted ? 'posted ' + money(r.ecw_posted) : ''}${r.ecw_unposted && Number(r.ecw_unposted) > 0 ? ` · <span style="color:var(--warning)">unposted ${money(r.ecw_unposted)}</span>` : ''}</div>`
                     : r.verdict === 'eCW not checked' ? '<span style="color:var(--info)">not checked</span>' : '<span style="color:var(--text-muted)">not found</span>';
@@ -1464,7 +1472,7 @@ window.scrollToEl = function(sel){
                   <td>${copyCell}</td>
                   <td class="num">${amountCell}</td>
                   <td>${bsCell}</td>
-                  <td>${ecwCell}</td>
+                  <td>${ecwCell}${eraCell}</td>
                   <td><span class="verdict-pill" style="color:${color(r.verdict)}">● ${esc(r.verdict)}</span></td>
                   <td class="todo">${todo(r)}</td>
                 </tr>`;
@@ -2525,7 +2533,7 @@ def api_checks_csv():
     from flask import Response
     cols = ['check_number', 'check_full', 'deposit_file', 'deposit_total', 'copy_page', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
             'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
-            'ecw_posted', 'ecw_unposted', 'reconciled_at']
+            'ecw_posted', 'ecw_unposted', 'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer', 'reconciled_at']
     try:
         rows, _summary = _checks_rows()
     except Exception as e:

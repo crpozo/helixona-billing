@@ -35,6 +35,7 @@ from datetime import datetime
 
 from src.aws.clients import scan_all
 from src.checks.ecw_payments import find_payments, list_payments, spellings_of
+from src.checks.ecw_era import list_unposted
 from src.checks.read_check import read_check
 from src.checks.reconcile import norm_check, reconcile, summarize
 from src.checks import sharepoint as sp
@@ -329,8 +330,12 @@ def run_check_reconcile(aws_client, body, login, get_page):
     and with eCW, its row on the dashboard.
     """
     since = str(body.get('since') or DEFAULT_SINCE)
+
     do_copies = body.get('copies', True)
     do_ecw = body.get('ecw', True)
+    # Billing → ERA, Posting Status UnPosted: the 835s eCW holds that nobody
+    # posted. Forty pages, so a targeted run skips it unless asked.
+    do_era = bool(body.get('era', do_ecw and not (body.get('check_eft') or body.get('limit_checks'))))
     blue_shield = bool(body.get('blue_shield'))
     limit_checks = int(body.get('limit_checks') or 0)
     only = norm_check(body.get('check_eft'))
@@ -477,6 +482,32 @@ def run_check_reconcile(aws_client, body, login, get_page):
         progress('ecw', f"nothing to look up ({len(checked)} already posted, kept)")
     else:
         progress('ecw', 'skipped (ecw:false)')
+    # 3b. The 835s eCW holds and nobody posted. Read once per run, not per
+    # check; when it is not read, what an earlier run found still stands.
+    eras = []
+    if do_era:
+        progress('era', 'reading Billing → ERA, unposted…')
+        try:
+            got = list_unposted(get_page())
+        except Exception as e:
+            logger.error(f"❌ the ERA screen could not be read: {e}")
+            got = None
+        if got is None:
+            progress('era', 'not read — the earlier answer stands')
+        else:
+            eras = got
+            progress('era', f"{len(eras)} unposted 835(s) in eCW")
+    if not eras:
+        eras = [{'check_no': norm_check(it.get('check_number')), 'amount': it.get('era_amount', ''),
+                 'era_file': it.get('era_file', ''), 'payer': it.get('era_payer', ''), 'dated': it.get('era_dated', '')}
+                for it in scan_all(table) if it.get('in_era')]
+        if eras and do_era:
+            logger.info(f"🗂️ ERA: {len(eras)} unposted 835(s) kept from an earlier run")
+        elif eras:
+            progress('era', f"{len(eras)} on file from an earlier run (era:false)")
+    if targets:
+        eras = [e for e in eras if norm_check(e.get('check_no')) in targets]
+
     # Whatever eCW said on an earlier run stands until eCW says otherwise.
     kept = sorted((to_check - checked) & set(known))
     for ck in kept:
@@ -490,7 +521,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
     rows, _ = reconcile(
         [{'check_number': c['check_number'], 'amount': c.get('copy_amount', ''), 'file': c.get('copy_file', ''),
           'url': c.get('copy_url', ''), 'check_date': c.get('copy_date', '')} for c in copies],
-        checks, payments, ecw_checked=ecw_checked)
+        checks, payments, ecw_checked=ecw_checked, eras=eras)
     ecw_checked = bool(ecw_checked)   # for the summary: was eCW consulted at all
     if targets:
         rows = [r for r in rows if r['check_number'] in targets]
@@ -501,12 +532,15 @@ def run_check_reconcile(aws_client, body, login, get_page):
             Key={'check_number': r['check_number']},
             UpdateExpression='SET verdict = :v, flags = :f, in_blue_shield = :b, bs_amount = :ba, bs_status = :bs, '
                              'bs_date = :bd, cashed_date = :cd, in_ecw = :e, ecw_amount = :ea, ecw_posted = :ep, '
-                             'ecw_unposted = :eu, ecw_payment_id = :ei, has_copy = :hc, reconciled_at = :t',
+                             'ecw_unposted = :eu, ecw_payment_id = :ei, has_copy = :hc, reconciled_at = :t, '
+                             'in_era = :ir, era_amount = :ira, era_file = :irf, era_dated = :ird, era_payer = :irp',
             ExpressionAttributeValues={
                 ':v': r['verdict'], ':f': r['flags'], ':b': r['in_blue_shield'], ':ba': r['bs_amount'],
                 ':bs': r['bs_status'], ':bd': r['bs_date'], ':cd': r['cashed_date'], ':e': r['in_ecw'],
                 ':ea': r['ecw_amount'], ':ep': r['ecw_posted'], ':eu': r['ecw_unposted'],
-                ':ei': r['ecw_payment_id'], ':hc': r['has_copy'], ':t': now})
+                ':ei': r['ecw_payment_id'], ':hc': r['has_copy'], ':t': now,
+                ':ir': r['in_era'], ':ira': r['era_amount'], ':irf': r['era_file'],
+                ':ird': r['era_dated'], ':irp': r['era_payer']})
         if targets or len(rows) <= 25:
             logger.info(f"  ✅ {r['check_number']}: copy {'yes' if r['has_copy'] else 'NO'}"
                         f"{' $' + r['copy_amount'] if r['copy_amount'] else ''} · Blue Shield "
