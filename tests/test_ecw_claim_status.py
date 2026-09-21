@@ -419,15 +419,14 @@ class OnlyAVerifiedChangeCounts(unittest.TestCase):
 
 
 class TheClaimsSearchStartsOnOneNamedDate(unittest.TestCase):
-    """How far back the bot looks lives in one constant. It was written out
-    in nineteen places, pinned to 07/01/2025; on 2026-09-21 the operator set
-    the floor at 06/01/2025 ("anteriores no cuentan") and a scattered literal
-    is how such a floor drifts."""
+    """The operator's eCW window starts 07/01/2025 and claims before it do
+    not count. How far back the bot looks now lives in one constant: it was
+    written out in nineteen places, which is how such a floor drifts."""
 
     def test_the_floor_is_a_single_constant(self):
-        self.assertIn("CLAIMS_SINCE = os.environ.get('CLAIMS_SINCE', '06/01/2025')", _read())
+        self.assertIn("CLAIMS_SINCE = os.environ.get('CLAIMS_SINCE', '07/01/2025')", _read())
         from src.main import CLAIMS_SINCE
-        self.assertEqual(CLAIMS_SINCE, '06/01/2025')
+        self.assertEqual(CLAIMS_SINCE, '07/01/2025')
 
     def test_no_date_filter_carries_its_own_date(self):
         dates = set(re.findall(r"inp\.fill\('(\d{2}/\d{2}/\d{4})'\)", _read()))

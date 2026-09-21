@@ -51,12 +51,12 @@ from src.audit.submission_log import (
 logger = get_logger(__name__)
 
 # How far back the claims bot looks in eCW — its Claims lookup, its Encounters
-# tab and every date filter it fills. 2026-09-21, the operator: "máximo
-# verifica los claims del 1 de junio del 2025; anteriores no cuentan". It was
-# 07/01/2025 written out in nineteen places, which is how such a floor drifts.
-# CLAIMS_SINCE overrides it for a one-off run. The check reconciliation has its
-# own `since` (src/checks/run.py) and is not this.
-CLAIMS_SINCE = os.environ.get('CLAIMS_SINCE', '06/01/2025')
+# tab and every date filter it fills. 07/01/2025, the operator's own window;
+# claims before it do not count. It used to be written out in nineteen places,
+# which is how such a floor drifts. The environment overrides it for a one-off
+# run. The check reconciliation has its own `since` (src/checks/run.py) and is
+# not this.
+CLAIMS_SINCE = os.environ.get('CLAIMS_SINCE', '07/01/2025')
 rules = RulesEngine()
 
 
