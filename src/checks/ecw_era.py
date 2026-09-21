@@ -13,20 +13,24 @@ The grid, as eCW draws it (screenshot, 2026-09-21):
     STATUS · FILE · CHECK · PAYER · POSTED BY · POSTED DATE · METHOD ·
     ACTION · DATED · TRACE# · AMOUNT
 
-**TRACE# is the check number.** In an 835 the trace number (TRN02) is the
-check or EFT number the payer issued — 31407766, 31385053 — the same shape
+**TRACE# is the check number** (the operator, 2026-09-21: "in ERA this is
+the column where the Check Number is"). In an 835 the trace number (TRN02)
+is the check or EFT the payer issued — 31407766, 31385053 — the same shape
 as the Check/EFT numbers the Blue Shield portal lists. FILE and CHECK are
 eCW's own sequence for the imported file (both read 664 on the same row),
 so they identify the ERA inside eCW but say nothing about the paper. Both
-are kept: the trace is what the three systems meet on, the file number is
-what a person types into eCW to find the row again.
+are kept: the trace is what the sources meet on, the file number is what a
+person types into eCW to find the row again.
+
+Every page is read, not the first: a check that matches a trace number on
+page 37 is as much "in eCW, unconfirmed at Helixona" as one on page 1.
 
 Read only. Nothing here posts, imports or marks anything.
 """
 import re
 import time
 
-from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where
+from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where, _tick
 from src.checks.ecw_payments import _read_grid, _grid_signature
 from src.utils.logger import get_logger
 
@@ -43,6 +47,10 @@ ERA_HASHES = [
 STATUS_RX = r'posting\s*status|^status$'
 UNPOSTED_LABELS = ('UnPosted', 'Unposted', 'Un-Posted', 'UNPOSTED')
 FILTER_LABELS = ['Filter', 'Search', 'Lookup']
+# The filter carries a Posted Date range. 'All Posted Dates' makes it moot —
+# without it a fresh session would show only a window of the 835s and the run
+# would quietly conclude that the rest do not exist (2026-09-21).
+ALL_DATES_RX = r'all\s*posted\s*dates'
 NEXT_LABELS = ['Next', '>', 'Next Page']
 
 COLUMNS = {
@@ -202,6 +210,9 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
     if navigate and not open_era(page):
         return None
     set_posting_status(page)
+    if not _tick(page, ALL_DATES_RX, what='All Posted Dates'):
+        logger.warning("  ⚠️ 'All Posted Dates' was not ticked — the Posted Date range still applies, "
+                       "so 835s outside it are not in this answer")
     _click_text(page, FILTER_LABELS, timeout=6, what='filter', after_target=True)
     time.sleep(2)
     seen, out = set(), []
@@ -226,5 +237,8 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
             break
         if page_no % 10 == 0:
             logger.info(f"  … {len(out)} unposted ERA(s) over {page_no} page(s)")
-    logger.info(f"💸 eCW ERA: {len(out)} unposted remittance(s) — the payer sent the money, nobody posted it")
+    logger.info(f"💸 eCW ERA: {len(out)} unposted remittance(s) over {page_no} page(s) — the payer sent the "
+                f"money, nobody posted it")
+    if page_no >= max_pages:
+        logger.warning(f"  ⚠️ stopped at the {max_pages}-page cap — raise max_pages, there may be more")
     return out
