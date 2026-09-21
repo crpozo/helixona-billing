@@ -663,13 +663,18 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         # One round trip per folder, not two.
         self.assertEqual(sum('$expand=Files,Folders' in u for u in _Page.got if 'Insurance%20Checks%2F2026' in u or u.endswith("Insurance%20Checks'&$select=Files/Name,Files/ServerRelativeUrl,Files/TimeLastModified,Files/Length,Files/UniqueId,Files/ETag,Folders/Name,Folders/ServerRelativeUrl&$expand=Files,Folders&$top=5000")), 2)
 
-    def test_posted_2025_is_left_out_and_the_folder_is_the_teams_word(self):
+    def test_every_year_is_read_and_the_folder_is_the_teams_word(self):
+        # 2026-09-21: Posted Checks/2025 had been skipped, so every check
+        # cashed in 2025 read as one we hold no scan of.
         from src.checks.sharepoint_browser import SKIP_FOLDERS, _skipped
-        self.assertIn('Posted Checks/2025', SKIP_FOLDERS)
-        self.assertTrue(_skipped('Posted Checks/2025', SKIP_FOLDERS))
-        self.assertTrue(_skipped('posted checks/2025/03-2025', SKIP_FOLDERS))
+        self.assertNotIn('Posted Checks/2025', SKIP_FOLDERS)
+        self.assertFalse(_skipped('Posted Checks/2025', SKIP_FOLDERS))
+        self.assertFalse(_skipped('posted checks/2025/03-2025', SKIP_FOLDERS))
         self.assertFalse(_skipped('Posted Checks/2026', SKIP_FOLDERS))
         self.assertFalse(_skipped('Unposted Checks/07-13-2026', SKIP_FOLDERS))
+        # The tracker spreadsheet is still not scans, and Forms is SharePoint's own.
+        self.assertTrue(_skipped('Insurance Check Tracker', SKIP_FOLDERS))
+        self.assertTrue(_skipped('Forms', SKIP_FOLDERS))
         r = _read('src/checks/run.py')
         self.assertIn("'copy_status': ('posted' if f['path'].lower().startswith('posted')", r)
 

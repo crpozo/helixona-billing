@@ -6,8 +6,10 @@ The operator's procedure (2026-09-16), as the Remittance bot runs it
 1. **SharePoint** — `Shared Documents / Insurance Checks` on the
    BillingDepartment site holds an image of every check the clinic received:
    `Posted Checks / <year> / <month>` and `Unposted Checks / <date>`
-   (`Insurance Check Tracker` is the team's spreadsheet and `Posted
-   Checks/2025` is before the period; both are left out). Each new file is
+   (`Insurance Check Tracker` is the team's spreadsheet, not scans, and is
+   left out; every year is read, `Posted Checks/2025` included since
+   2026-09-21, because skipping it made every check cashed in 2025 read as
+   one we hold no scan of). Each new file is
    read **once** for its check number and amount (the PDF's text layer when
    it has one, else Claude looking at the image) and stored with the folder
    it was found in; later runs only read files that are new or changed.

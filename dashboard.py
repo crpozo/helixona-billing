@@ -2488,7 +2488,7 @@ def api_checks_folders():
         items = scan_all(dynamodb.Table('helixona-checks'))
         run = next((it for it in items if it.get('check_number') == '_run'), {})
         out = _folder_tree([it for it in items if not str(it.get('check_number', '')).startswith('_')])
-        out['skipped'] = ['Insurance Check Tracker', 'Posted Checks/2025']
+        out['skipped'] = ['Insurance Check Tracker']
         out['last_run'] = str(run.get('updated_at') or '')
         return jsonify(json.loads(json.dumps(out, default=str)))
     except Exception as e:

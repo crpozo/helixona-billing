@@ -35,9 +35,11 @@ LOGIN_HOSTS = ('login.microsoftonline.com', 'login.live.com', 'login.microsoft.c
 #   Insurance Checks / Posted Checks / <year> / <month> / <scans>
 #                    / Unposted Checks / <date> / <scans>
 #                    / Insurance Check Tracker   (their spreadsheet, not scans)
-# Posted Checks/2025 is before the period reconciled (the operator said to
-# leave it out), so it is not read.
-SKIP_FOLDERS = ('Forms', 'Insurance Check Tracker', 'Posted Checks/2025')
+# Posted Checks/2025 was left out while the reconciliation began in 2026;
+# it is read again since 2026-09-21, because the checks cashed in 2025 were
+# being counted as scans we do not hold. Only the tracker spreadsheet and
+# SharePoint's own Forms folder are skipped now.
+SKIP_FOLDERS = ('Forms', 'Insurance Check Tracker')
 SITE_RX = re.compile(r'^(https://[^/]+/sites/[^/?#]+)', re.I)
 JSON_HEADERS = {'Accept': 'application/json;odata=nometadata'}
 
