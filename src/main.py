@@ -4593,7 +4593,12 @@ def process_message(message: dict, aws_client: AWSClient):
         # The claims this run is about (claim_ids / test_claim_id, several
         # allowed); `redo` collects everything for them again whatever is
         # stored — on by default when claim_ids is given.
-        target_ids = _claim_id_list(body)
+        # sync_only: walk eCW's claim list and mark what it no longer shows,
+        # then stop. No documents, no popups — and nothing is overwritten
+        # (2026-09-21: 21 claims the dashboard still counted as ours to send
+        # had moved on in eCW, and only a full walk can tell).
+        sync_only = bool(body.get('sync_only'))
+        target_ids = [] if sync_only else _claim_id_list(body)
         redo = bool(body.get('redo', bool(body.get('claim_ids'))))
         if target_ids:
             testing_mode = True
@@ -5333,6 +5338,10 @@ def process_message(message: dict, aws_client: AWSClient):
                         _sync_ecw_claim_visibility(claims_table, ecw_claim_ids)
                     except Exception as e:
                         logger.warning(f"Claim sync failed: {e}")
+                    if sync_only:
+                        logger.info(f"🔄 sync only: {len(ecw_claim_ids)} claim(s) still listed by eCW "
+                                    f"— nothing else was touched")
+                        claims_to_process = []
             else:
                 logger.warning("No claims found on the ECW page after Lookup")
                 # Fallback: named claims are loaded from DDB and opened by direct claim lookup
@@ -10674,6 +10683,9 @@ def process_message(message: dict, aws_client: AWSClient):
         # Forward testing_mode and test_claim_id flags if present
         if body.get('testing_mode'):
             step_body['testing_mode'] = True
+        if body.get('sync_only'):
+            step_body['sync_only'] = True
+            logger.info("🔄 Sync only — eCW's claim list is re-read and nothing is collected")
         if body.get('claim_ids'):
             step_body['claim_ids'] = body['claim_ids']
         if 'redo' in body:

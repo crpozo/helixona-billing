@@ -277,3 +277,35 @@ class ReadyMeansWhatSympliSendNeeds(unittest.TestCase):
         from src.rules.submission_gate import evaluate_claim
         for claim in (self.READY, {**self.READY, 'hcfa_s3_path': ''}, {**self.READY, 'subscriber_id': ''}):
             self.assertEqual(dashboard._claim_needs_work(claim), bool(evaluate_claim(claim)['blockers']))
+
+
+class SyncOnlyTouchesNothingElse(unittest.TestCase):
+    """2026-09-21: 21 claims the dashboard counted as ours to send had moved
+    on in eCW. Only a full walk of the claim list can tell, and the existing
+    claims_ecw task would have overwritten every record to do it."""
+
+    def _src(self):
+        return open('src/main.py', encoding='utf-8').read()
+
+    def test_it_ignores_named_claims_and_stops_after_the_sync(self):
+        src = self._src()
+        self.assertIn("sync_only = bool(body.get('sync_only'))", src)
+        self.assertIn("target_ids = [] if sync_only else _claim_id_list(body)", src)
+        i = src.index('_sync_ecw_claim_visibility(claims_table, ecw_claim_ids)')
+        self.assertIn('if sync_only:', src[i:i + 600])
+        self.assertIn('claims_to_process = []', src[i:i + 600])
+
+    def test_the_pipeline_forwards_it(self):
+        self.assertIn("step_body['sync_only'] = True", self._src())
+
+    def test_the_sync_archives_and_never_deletes(self):
+        # The claim keeps its documents, its FLN and its audit trail.
+        i = self._src().index('def _sync_ecw_claim_visibility')
+        body = self._src()[i:i + 2600].split('"""', 2)[2]   # past the docstring, which names the old destructive sync
+        self.assertIn("SET ecw_visible = :f, ecw_removed_at = :t", body)
+        self.assertNotIn('delete_item', body)
+
+    def test_the_dashboard_offers_it(self):
+        d = open('dashboard.py', encoding='utf-8').read()
+        self.assertIn("title: 'Refresh what eCW still lists', task: 'bs_missing_docs'", d)
+        self.assertIn('payload: {sync_only: true}', d)

@@ -901,7 +901,7 @@ window.scrollToEl = function(sel){
             bs_missing_docs: {
                 title: 'ECW obtain claims documentation',
                 desc: 'eCW only — nothing is sent to Blue Shield. Discovers the claims in eCW, generates the HCFA forms and captures the Progress Notes, and stores them. Uploading to Blue Shield is the separate task "Blueshield Submissions".',
-                steps: ['eCW → Billing → Claims: discover the claims and store them', 'Generate the HCFA form for each claim', 'Capture the Progress Notes', 'Nothing is uploaded — run Blueshield Submissions for that', 'To redo specific claims: list them in claim_ids (or the box above) — their documents are collected again']
+                steps: ['eCW → Billing → Claims: discover the claims and store them', 'Generate the HCFA form for each claim', 'Capture the Progress Notes', 'Nothing is uploaded — run Blueshield Submissions for that', 'To redo specific claims: list them in claim_ids (or the box above) — their documents are collected again', 'sync_only:true re-reads the claim list and sets aside what eCW no longer shows, collecting nothing']
             },
             blueshield_submissions: {
                 title: 'Blueshield Submissions',
@@ -937,6 +937,9 @@ window.scrollToEl = function(sel){
                 {icon: '📤', title: 'Upload to Blue Shield', task: 'blueshield_submissions',
                  desc: 'Sends every complete packet (HCFA, IV Note, Progress Note) through SympliSend.',
                  input: {key: 'test_claim_id', placeholder: 'Only this claim, e.g. 6234 (empty = all ready)', extra: {testing_mode: true}}},
+                {icon: '🔄', title: 'Refresh what eCW still lists', task: 'bs_missing_docs',
+                 desc: 'Re-reads the eCW claim list and sets aside the claims it no longer shows — their status moved on. They keep their history and leave the count. Collects no documents.',
+                 payload: {sync_only: true}},
                 {icon: '📝', title: 'Mark sent claims in eCW', task: 'ecw_status_update',
                  desc: "Sets each submitted claim to 'Claim sent via Symplisend' in eCW."},
             ],
