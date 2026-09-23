@@ -6446,7 +6446,6 @@ def process_message(message: dict, aws_client: AWSClient):
                             logger.info(f"📂 Looking for encounter by Rx Start Date: {enc_date_mmddyyyy}")
                             logger.info(f"📂 Looking for date: {enc_date_mmddyyyy or '(none — will pick most recent matching type)'}")
                         
-                            import subprocess
                             import base64
                         
                             # Step 1: Click "Encounters" in the Smart Panel (right side of claim detail popup)
@@ -9860,8 +9859,11 @@ def process_message(message: dict, aws_client: AWSClient):
             current_url = page.url
             logger.info(f"Landed on: {page.title()} | {current_url[:120]}")
 
-            # Check the URL PATH (not query params) to avoid false positives
-            from urllib.parse import urlparse
+            # Check the URL PATH (not query params) to avoid false positives.
+            # urlparse is the module-level import: importing it again here
+            # made it a local of process_message, so the SympliSend check
+            # further down (a closure) found it unbound, swallowed the
+            # NameError and never saw the dashboard (2026-09-23).
             parsed = urlparse(current_url)
             is_on_portal = 'providerwebapp' in parsed.path
 
