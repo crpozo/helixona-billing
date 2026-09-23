@@ -1362,14 +1362,14 @@ window.scrollToEl = function(sel){
         window._checksFilter = window._checksFilter || 'mismatch';
         const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Needs attention'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
                                ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'], ['eCW not checked', 'eCW not checked'],
-                               ['other payer', 'Other payer'], ['no copy', 'No copy'], ['amounts', 'Amounts differ']];
+                               ['other payer', 'Other payer'], ['no copy', 'No copy'], ['tracker no scan', 'In tracker, no scan'], ['in tracker', 'In tracker'], ['amounts', 'Amounts differ']];
         // "Needs attention" — the same definition as the team view: what a
         // person must act on. Cashed but not in eCW, entered but unposted, a
         // cashed check with no copy, amounts that disagree. Copy-only checks
         // (other payers), not-yet-cashed ones and an unread eCW are shown in
         // their own tiles, not counted here.
         const checkMismatch = r => ['not in eCW', 'unposted'].includes(r.verdict)
-            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('amounts differ'));
+            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('in tracker, no scan') || String(f).startsWith('amounts differ'));
         // The rows the last run wrote: its targets (a test of 1), else
         // whatever carries the last reconciliation's timestamp.
         const inLastRun = (r, sm) => {
@@ -1377,7 +1377,7 @@ window.scrollToEl = function(sel){
             if ((lr.targets || []).length) return lr.targets.includes(String(r.check_number));
             return !!sm.reconciled_at && r.reconciled_at === sm.reconciled_at;
         };
-        const RUN_STEPS = [['blue_shield', 'Blue Shield'], ['copies', 'Copies'], ['ecw', 'eCW'], ['era', 'ERA'], ['verdict', 'Verdict'], ['done', 'Done']];
+        const RUN_STEPS = [['blue_shield', 'Blue Shield'], ['copies', 'Copies'], ['tracker', 'Tracker'], ['ecw', 'eCW'], ['era', 'ERA'], ['verdict', 'Verdict'], ['done', 'Done']];
         function setChecksFilter(f) { window._checksFilter = f; window._checksFilterChosen = true; renderChecks(); }
         function renderChecks() {
             const body = document.getElementById('checks-body');
@@ -1427,13 +1427,15 @@ window.scrollToEl = function(sel){
                     tile('need attention', mism, 'mismatch', 'var(--bad)', 'a person must act'),
                     tile('cashed, not in eCW', sm.not_in_ecw, 'not in eCW', 'var(--bad)', 'enter the payment'),
                     tile('entered, unposted', sm.unposted, 'unposted', 'var(--warning)', 'finish posting'),
-                    tile('no copy of the check', sm.no_copy, 'no copy', 'var(--bad)', 'scan it into SharePoint'),
+                    tile('no copy of the check', sm.no_copy, 'no copy', 'var(--bad)', 'cashed, nobody logged it'),
+                    tile('in tracker, no scan', sm.tracker_no_scan, 'tracker no scan', 'var(--warning)', 'logged as received, scan missing'),
                     tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)', 'check which is right'),
                     tile('posted & matching', matching, 'posted', 'var(--success)', 'nothing to do'),
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)', 'wait for the bank'),
                     tile('other payer', sm.other_payer, 'other payer', 'var(--text-muted)', 'not a Blue Shield check'),
                     tile('eCW not checked', sm.ecw_unchecked, 'eCW not checked', 'var(--info)', 'run again'),
                     tile('835 in eCW, not posted', sm.era_unposted, '835 unposted', 'var(--vio2)', 'payer sent it, nobody posted'),
+                    tile('in the tracker', sm.in_tracker, 'in tracker', 'var(--info)', 'the team logged it as received'),
                     ...((lr.targets || []).length ? [tile('last run', data.rows.filter(r => inLastRun(r, sm)).length, 'last run', 'var(--vio2)', 'the test just run')] : []),
                     tile('all checks', data.rows.length, 'all', 'var(--text-secondary)', ''),
                 ].join('') : '';
@@ -1446,6 +1448,8 @@ window.scrollToEl = function(sel){
                 : f === 'mismatch' ? checkMismatch(r)
                 : f === 'posted' ? (r.verdict === 'posted' && !(r.flags || []).some(x => x !== 'other payer'))
                 : f === 'no copy' ? (r.flags || []).some(x => x.startsWith('no copy'))
+                : f === 'tracker no scan' ? (r.flags || []).some(x => x.startsWith('in tracker, no scan'))
+                : f === 'in tracker' ? !!r.in_tracker
                 : f === 'other payer' ? (r.flags || []).some(x => x === 'other payer')
                 : f === '835 unposted' ? (r.flags || []).some(x => x.startsWith('835 in eCW'))
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
@@ -1461,7 +1465,8 @@ window.scrollToEl = function(sel){
                 const flags = r.flags || [];
                 if (r.verdict === 'not in eCW') out.push(`<strong>Enter the payment in eCW</strong>${r.has_copy ? ` — the scan is in ${esc(r.copy_folder || 'SharePoint')}` : ''}.`);
                 if (r.verdict === 'unposted') out.push(`<strong>Finish posting</strong>${r.ecw_unposted ? ' ' + money(r.ecw_unposted) : ''} in eCW.`);
-                if (flags.some(x => x.startsWith('no copy'))) out.push('<strong>Scan the check</strong> into SharePoint › Insurance Checks.');
+                if (flags.some(x => x.startsWith('no copy'))) out.push('<strong>Scan the check</strong> into SharePoint › Insurance Checks — the tracker does not list it either.');
+                if (flags.some(x => x.startsWith('in tracker, no scan'))) out.push(`The tracker says it was received${r.tracker_received ? ' ' + esc(r.tracker_received) : ''}, but no folder holds its scan — <strong>find it or scan it</strong> into Insurance Checks.`);
                 if (flags.some(x => x.startsWith('amounts differ'))) out.push('<strong>Check which amount is right</strong>: copy, Blue Shield and eCW disagree.');
                 if (r.verdict === '835 only') out.push('<strong>eCW holds the 835 but nothing else knows this payment</strong>. Confirm the check reached Helixona, then post it.');
                 if (flags.some(x => x.startsWith('835 in eCW')) && r.verdict !== '835 only') out.push('eCW holds the 835 from the payer and it is <strong>not posted</strong>.');
@@ -1471,7 +1476,7 @@ window.scrollToEl = function(sel){
                 return out.join('<br>');
             };
             body.innerHTML = rows.map(r => {
-                const amounts = [['copy', r.copy_amount], ['Blue Shield', r.bs_amount], ['eCW', r.ecw_amount]].filter(([, v]) => v);
+                const amounts = [['copy', r.copy_amount], ['Blue Shield', r.bs_amount], ['eCW', r.ecw_amount], ['835', r.era_amount], ['tracker', r.tracker_amount]].filter(([, v]) => v);
                 const differ = (r.flags || []).some(x => x.startsWith('amounts differ'));
                 const amountCell = !amounts.length ? '<span style="color:var(--text-muted)">—</span>'
                     : differ ? amounts.map(([k, v]) => `<div style="font-size:11px">${money(v)} <span style="color:var(--text-muted)">${k}</span></div>`).join('')
@@ -1479,7 +1484,11 @@ window.scrollToEl = function(sel){
                 const copyCell = r.has_copy
                     ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`)
                       + `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file || '').split('/').pop())}${r.deposit_file ? ` · 🏦 deposit${r.deposit_date ? ' ' + esc(r.deposit_date) : ''} ${money(r.deposit_total)}${r.copy_page ? ' · p.' + esc(String(r.copy_page)) : ''}` : ''}</div>`
+                    : r.in_tracker ? '<span style="color:var(--warning);font-weight:600">✗ no scan</span>'
                     : '<span style="color:var(--bad);font-weight:600">✗ no copy</span>';
+                const trackerCell = r.in_tracker
+                    ? `<div style="font-size:11px;color:var(--info)" title="tracker ${esc(r.tracker_sheet || '')}${r.tracker_payer ? ' · ' + esc(r.tracker_payer) : ''}">📒 tracker${r.tracker_received ? ' · received ' + esc(r.tracker_received) : ''}${r.tracker_deposit ? ' · deposited ' + esc(r.tracker_deposit) : ''}${r.tracker_posted ? ' · posted: ' + esc(r.tracker_posted) : ''}</div>`
+                    : '';
                 const bsCell = r.in_blue_shield
                     ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div style="font-size:11px;color:var(--text-muted)">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div style="font-size:11px;color:var(--text-muted)">issued ${esc(r.bs_date)}</div>` : ''}`
                     : '<span style="color:var(--text-muted)">other payer</span>';
@@ -1492,7 +1501,7 @@ window.scrollToEl = function(sel){
                 return `
                 <tr${inLastRun(r, sm) ? ' style="background:rgba(99,102,241,.06)"' : ''}>
                   <td title="checked ${esc(r.reconciled_at || '')}"><strong>${esc(r.check_full || r.check_number)}</strong>${inLastRun(r, sm) ? ' <span title="in the last run">🧪</span>' : ''}</td>
-                  <td>${copyCell}</td>
+                  <td>${copyCell}${trackerCell}</td>
                   <td class="num">${amountCell}</td>
                   <td>${bsCell}</td>
                   <td>${ecwCell}${eraCell}</td>
@@ -2569,7 +2578,9 @@ def api_checks_csv():
     from flask import Response
     cols = ['check_number', 'check_full', 'deposit_file', 'deposit_total', 'copy_page', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
             'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
-            'ecw_posted', 'ecw_unposted', 'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer', 'reconciled_at']
+            'ecw_posted', 'ecw_unposted', 'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer',
+            'in_tracker', 'tracker_received', 'tracker_deposit', 'tracker_amount', 'tracker_payer', 'tracker_posted',
+            'tracker_sheet', 'reconciled_at']
     try:
         rows, _summary = _checks_rows()
     except Exception as e:

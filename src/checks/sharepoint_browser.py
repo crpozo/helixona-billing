@@ -159,7 +159,7 @@ def _skipped(rel, skip):
     return any(low == s.lower() or low.startswith(s.lower() + '/') for s in skip)
 
 
-def list_folder(page, site, folder, skip=SKIP_FOLDERS):
+def list_folder(page, site, folder, skip=SKIP_FOLDERS, extensions=None):
     """Every image under the folder (subfolders included, `skip` left out),
     in the shape of sharepoint.list_check_files: {'id','name','path','size',
     'etag','modified','web_url','download_url'}. `path` is relative to the
@@ -187,7 +187,7 @@ def list_folder(page, site, folder, skip=SKIP_FOLDERS):
             return
         for it in files.get('value', []):
             name = it.get('Name', '')
-            if not name.lower().endswith(IMAGE_EXT):
+            if not name.lower().endswith(extensions or IMAGE_EXT):
                 continue
             out.append({
                 'id': it.get('UniqueId', ''), 'name': name, 'path': f"{rel}/{name}" if rel else name,

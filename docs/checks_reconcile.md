@@ -1,4 +1,4 @@
-# Reconciling checks: copies · Blue Shield · eCW
+# Reconciling checks: copies · tracker · Blue Shield · eCW
 
 The operator's procedure (2026-09-16), as the Remittance bot runs it
 (`check_reconcile`, src/checks/run.py). Read-only against all three systems.
@@ -17,8 +17,21 @@ The operator's procedure (2026-09-16), as the Remittance bot runs it
    With `blue_shield:true` the run walks the portal itself (Claims → Check
    claim status → each Check/EFT, check data only); otherwise it takes the
    checks an earlier run with `blue_shield:true` stored (helixona-eobs).
-3. **No copy** — every cashed check we hold no image of is flagged.
-4. **eCW** — Billing → Payments since 07/01/2025, every check. A payment
+3. **The tracker** — the `Insurance Check Tracker` spreadsheet, the team's
+   own log of the checks it received (Date Check Received · Check Date ·
+   Deposit Date · Insurance Company · Check Number · Amount Paid · Posted to
+   Account). Downloaded fresh each run through the sharing link (never
+   written), every sheet read, columns matched by name, rows received since
+   the run's `since` kept (an undated row is kept too). Matched on the check
+   number alone: "the checks are not always in the exact folder, so the idea
+   is to search all of them and match" (the operator, 2026-09-23) — check
+   4121991, received 6/3/2026, matches its scan in whatever date folder it
+   was filed. Every tracker check is also looked up in eCW.
+4. **No copy** — a cashed check we hold no image of. When the tracker lists
+   it the flag is `in tracker, no scan found` (Helixona has it; the image is
+   missing or misfiled — find it or scan it); when the tracker does not, it
+   is `no copy of the check` (nobody logged it).
+5. **eCW** — Billing → Payments since 07/01/2025, every check. A payment
    under the number means it was entered: `posted` when nothing is left
    unposted, `unposted` when a balance remains (the payment was created and
    the lines never finished; see docs/ecw_posting.md).
@@ -44,7 +57,7 @@ Check numbers are keyed bare (231282015) so Blue Shield, the copies and eCW meet
 
 | `eCW not checked` | eCW has never answered for this check; nothing can be said. An answer from an earlier run (posted, unposted, not in eCW) is kept when this run's lookup fails — a failed lookup is not a new answer |
 
-Flags alongside: `no copy of the check`; `other payer` (Blue Shield does not
+Flags alongside: `no copy of the check`; `in tracker, no scan found`; `other payer` (Blue Shield does not
 list it — informational); `amounts differ: copy 275.09, bs 257.09`.
 
 Everything lands in the **✅ Checks** table on the Remittance tab (filters
@@ -124,7 +137,11 @@ could not be read are tried again on every run and shown on the tab as
 `check_eft` names one; `force` defaults to true on such a targeted run so
 the check is re-opened for its status today). `copies:false` skips the
 images (reconcile what is already read); `limit_files` caps the images read.
-`ecw:false` reuses the last Payments list read.
+`ecw:false` reuses the last Payments list read. `tracker:false` skips the
+tracker (it follows `copies` by default) and keeps what an earlier run read;
+`tracker_link` / `tracker_folder` point at another copy of the sheet (by
+default the team's sharing link, else the newest spreadsheet in
+`Insurance Checks/Insurance Check Tracker`).
 
 ## The test of 1
 

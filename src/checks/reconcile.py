@@ -10,6 +10,9 @@
 * eras     — the 835s eCW holds and nobody posted (Billing → ERA, Posting
              Status UnPosted): {'check_no' (the trace number), 'amount',
              'era_file', 'payer', 'dated', ...}
+* tracker  — the billing team's own sheet of checks received (Insurance
+             Check Tracker): {'check_no', 'amount', 'received',
+             'deposit_date', 'payer', 'posted', 'sheet', 'row'}
 
 The verdict, per check — eCW is the source of truth (the operator,
 2026-09-18: "if it is not in eCW, we do not have the check"), whatever the
@@ -29,6 +32,13 @@ sent; it does not prove the check reached Helixona, and unposted means
 nobody applied it either. So an ERA never settles a check on its own: it
 adds the flag `835 in eCW, not posted` and, when nothing else knows the
 number, the verdict `835 only`.
+
+The tracker is the one source that says Helixona received the check. A
+check in it with no scan found in any SharePoint folder is flagged
+`in tracker, no scan found` — the team has it, the image is missing or
+misfiled — and not `no copy of the check`, which is kept for the cashed
+checks nobody logged. A check the tracker lists is not `835 only` either:
+Helixona confirmed it.
 
 Flags alongside: `no copy of the check` (Blue Shield cashed it, no scan),
 `other payer` (Blue Shield's results do not list it — Cigna, Aetna…, or
@@ -58,7 +68,7 @@ def _cashed(status):
     return 'cashed' in norm_text(status).lower()
 
 
-def reconcile(copies, checks, payments, ecw_checked=True, eras=()):
+def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
     """Rows keyed by check number, plus a summary.
 
     `ecw_checked`: True/False for every check, or the set of check numbers
@@ -78,7 +88,9 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=()):
             'copy_date': '', 'in_blue_shield': False, 'bs_amount': '', 'bs_status': '', 'bs_date': '',
             'cashed_date': '', 'in_ecw': False, 'ecw_amount': '', 'ecw_posted': '', 'ecw_unposted': '',
             'ecw_payment_id': '', 'in_era': False, 'era_amount': '', 'era_file': '',
-            'era_dated': '', 'era_payer': '', 'flags': [], 'verdict': '',
+            'era_dated': '', 'era_payer': '', 'in_tracker': False, 'tracker_received': '',
+            'tracker_deposit': '', 'tracker_amount': '', 'tracker_payer': '', 'tracker_posted': '',
+            'tracker_sheet': '', 'flags': [], 'verdict': '',
         })
 
     for c in copies:
@@ -111,6 +123,18 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=()):
         r.update(in_era=True, era_amount=money(e.get('amount')), era_file=str(e.get('era_file', '')),
                  era_dated=e.get('dated', ''), era_payer=e.get('payer', ''))
 
+    for t in tracker or ():
+        key = norm_check(t.get('check_no'))
+        if not key:
+            continue
+        r = row(key)
+        # The same check logged twice keeps the first row: the sheet's own order.
+        if not r['in_tracker']:
+            r.update(in_tracker=True, tracker_received=t.get('received', ''),
+                     tracker_deposit=t.get('deposit_date', ''), tracker_amount=money(t.get('amount')),
+                     tracker_payer=t.get('payer', ''), tracker_posted=t.get('posted', ''),
+                     tracker_sheet=f"{t.get('sheet', '')}:{t.get('row', '')}".strip(':'))
+
     for r in by.values():
         cashed = _cashed(r['bs_status']) or bool(r['cashed_date'])
         if r['in_ecw']:
@@ -120,7 +144,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=()):
             r['verdict'] = 'eCW not checked'
         elif r['in_blue_shield'] and not cashed:
             r['verdict'] = 'not cashed'
-        elif r['in_era'] and not r['in_blue_shield'] and not r['has_copy']:
+        elif r['in_era'] and not r['in_blue_shield'] and not r['has_copy'] and not r['in_tracker']:
             # Only the 835 knows this payment: no scan, no portal row, no
             # payment in eCW. The payer sent money nobody has accounted for.
             r['verdict'] = '835 only'
@@ -131,13 +155,15 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=()):
             r['flags'].append('835 in eCW, not posted')
         if not r['in_blue_shield']:
             r['flags'].append('other payer')
-        if r['in_blue_shield'] and cashed and not r['has_copy']:
+        if r['in_tracker'] and not r['has_copy']:
+            r['flags'].append('in tracker, no scan found')
+        elif r['in_blue_shield'] and cashed and not r['has_copy']:
             r['flags'].append('no copy of the check')
-        amounts = {k: _d(r[k]) for k in ('copy_amount', 'bs_amount', 'ecw_amount', 'era_amount') if _d(r[k]) is not None}
+        amounts = {k: _d(r[k]) for k in ('copy_amount', 'bs_amount', 'ecw_amount', 'era_amount', 'tracker_amount') if _d(r[k]) is not None}
         if len(set(amounts.values())) > 1:
             r['flags'].append('amounts differ: ' + ', '.join(f"{k.split('_')[0]} {v:.2f}" for k, v in amounts.items()))
 
-    rows = sorted(by.values(), key=lambda r: (r['bs_date'] or r['copy_date'] or r['era_dated'] or '', r['check_number']), reverse=True)
+    rows = sorted(by.values(), key=lambda r: (r['bs_date'] or r['copy_date'] or r['era_dated'] or r['tracker_received'] or '', r['check_number']), reverse=True)
     return rows, summarize(rows)
 
 
@@ -156,6 +182,8 @@ def summarize(rows):
         'ecw_unchecked': sum(r.get('verdict') == 'eCW not checked' for r in rows),
         'era_only': sum(r.get('verdict') == '835 only' for r in rows),
         'era_unposted': sum('835 in eCW, not posted' in flags(r) for r in rows),
+        'in_tracker': sum(bool(r.get('in_tracker')) for r in rows),
+        'tracker_no_scan': sum('in tracker, no scan found' in flags(r) for r in rows),
         'other_payer': sum('other payer' in flags(r) for r in rows),
         'no_copy': sum('no copy of the check' in flags(r) for r in rows),
         'amount_mismatch': sum(any(f.startswith('amounts differ') for f in flags(r)) for r in rows),

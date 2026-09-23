@@ -93,7 +93,8 @@ class TheVerdictPerCheck(unittest.TestCase):
         self.assertEqual((sm['checks'], sm['posted'], sm['amount_mismatch'], sm['no_copy'], sm['other_payer']), (6, 2, 1, 1, 1))
         self.assertEqual(summarize([]), {'checks': 0, 'posted': 0, 'unposted': 0, 'not_in_ecw': 0, 'not_cashed': 0,
                                          'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0,
-                                         'era_only': 0, 'era_unposted': 0})
+                                         'era_only': 0, 'era_unposted': 0,
+                                         'in_tracker': 0, 'tracker_no_scan': 0})
 
 
 class TheUnpostedErasAreTheirOwnSource(unittest.TestCase):
@@ -158,7 +159,7 @@ class TheUnpostedErasAreTheirOwnSource(unittest.TestCase):
         self.assertIn('got = list_unposted(get_page())', r)
         self.assertIn("progress('era', 'not read — the earlier answer stands')", r)
         self.assertIn("if it.get('in_era')]", r)
-        self.assertIn('eras=eras)', r)
+        self.assertIn('eras=eras, tracker=tracker_rows)', r)
         e = _read('src/checks/ecw_era.py')
         self.assertIn("UNPOSTED_LABELS = ('UnPosted', 'Unposted', 'Un-Posted', 'UNPOSTED')", e)
         # Every page, and the whole history: the Posted Date range is made moot

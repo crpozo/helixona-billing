@@ -201,7 +201,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
       <dt><span class="pill critical">● Cashed, not in eCW</span></dt><dd>Blue Shield shows the check was cashed, but eCW has no payment under that number. <strong>Enter the payment in eCW.</strong></dd>
       <dt><span class="pill critical">● Not in eCW</span></dt><dd>A scanned check from another payer (Cigna, Aetna, Health Net…) that eCW has no payment for. If it is not in eCW, we do not have it. <strong>Enter the payment in eCW.</strong></dd>
       <dt><span class="pill warning">● Entered, unposted</span></dt><dd>The payment exists in eCW but part of it was never applied to claims. <strong>Finish posting it.</strong></dd>
-      <dt><span class="pill serious">● No copy of check</span></dt><dd>A cashed check with no image in the SharePoint folder. <strong>Scan it into Insurance Checks.</strong></dd>
+      <dt><span class="pill serious">● No copy of check</span></dt><dd>Blue Shield cashed it, no folder holds its image and the Insurance Check Tracker does not list it. <strong>Scan it into Insurance Checks.</strong></dd>
+      <dt><span class="pill warning">● In tracker, no scan</span></dt><dd>The team logged it in the Insurance Check Tracker as received, but no folder (Posted or Unposted, any date) holds its scan. <strong>Find it or scan it.</strong></dd>
       <dt><span class="pill warning">● Amounts differ</span></dt><dd>The copy, Blue Shield and eCW do not agree on the amount. <strong>Check which one is right.</strong></dd>
       <dt><span class="pill good">● Posted</span></dt><dd>In eCW, fully applied, copy on file, amounts agree. Nothing to do.</dd>
       <dt><span class="pill neutral">● Not cashed yet</span></dt><dd>Blue Shield issued it but the bank has not cashed it. Wait.</dd>
@@ -210,7 +211,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
     </dl>
     <p class="small" style="margin:6px 0"><strong>835 in eCW, not posted</strong> — eCW holds the payer's electronic remittance (the 835 file, Billing › ERA) and nobody has posted it. The payer says the money was sent; it does not say the check reached Helixona. <strong>835 only</strong> means no scan, no Blue Shield row and no payment in eCW know this number at all.</p>
     <p class="small" style="margin:6px 0"><strong>🏦 Deposit</strong> — one scan holding the bank deposit slip and the checks deposited with it. Click the row to open it: each check inside is compared with Blue Shield and looked up in eCW on its own, and the deposit total is the slip's. <em>(slip only)</em> marks a check written on the slip whose own page was not in the scan.</p>
-<p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks), Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. eCW is the source of truth: a check that is not in eCW is a check we do not have, whoever the payer. Each scan is read once and kept; the comparison is refreshed on every run.</p>
+<p class="small" style="margin:6px 0"><strong>📒 Tracker</strong> — the team's Insurance Check Tracker spreadsheet. A check is matched on its number wherever its scan was filed, not by the folder its dates point to.</p>
+<p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks, every year and every date folder), the Insurance Check Tracker, Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. eCW is the source of truth: a check that is not in eCW is a check we do not have, whoever the payer. Each scan is read once and kept; the comparison is refreshed on every run.</p>
   </section>
 </div>
 
@@ -249,30 +251,33 @@ function classify(r) {
 function todoFor(r) {
   const c = classify(r);
   const extra = [];
-  if (hasFlag(r, 'no copy')) extra.push('Scan the check into SharePoint › Insurance Checks.');
+  if (hasFlag(r, 'no copy')) extra.push('Scan the check into SharePoint › Insurance Checks — the tracker does not list it either.');
+  if (hasFlag(r, 'in tracker, no scan')) extra.push(`The tracker says it was received${r.tracker_received ? ' ' + esc(r.tracker_received) : ''}, but no folder holds its scan — find it or scan it.`);
   if (hasFlag(r, '835 in eCW') && r.verdict !== '835 only') extra.push('eCW holds the 835 for it, unposted.');
   const amt = flags(r).find(f => String(f).startsWith('amounts differ'));
   if (amt) extra.push('Check the amounts: ' + esc(String(amt).replace('amounts differ: ', '')) + '.');
   return [c.todo, ...extra].join(' ');
 }
 // Needs attention = anything a person must act on.
-const attention = r => ['not in eCW', 'unposted', '835 only'].includes(r.verdict) || hasFlag(r, 'no copy') || hasFlag(r, 'amounts differ');
+const attention = r => ['not in eCW', 'unposted', '835 only'].includes(r.verdict) || hasFlag(r, 'no copy') || hasFlag(r, 'in tracker, no scan') || hasFlag(r, 'amounts differ');
 
 // ---- tiles ----
 const TILES = [
   ['attention', 'Needs attention', 'critical', 'Anything a person must act on', d => d.rows.filter(attention).length],
   ['not in eCW', 'Cashed, not in eCW', 'critical', 'Enter the payment in eCW', d => d.rows.filter(r => r.verdict === 'not in eCW').length],
   ['unposted', 'Entered, unposted', 'warning', 'Finish posting in eCW', d => d.rows.filter(r => r.verdict === 'unposted').length],
-  ['no copy', 'No copy of check', 'serious', 'Cashed, no scan in SharePoint', d => d.rows.filter(r => hasFlag(r, 'no copy')).length],
+  ['no copy', 'No copy of check', 'serious', 'Cashed, no scan, not in the tracker', d => d.rows.filter(r => hasFlag(r, 'no copy')).length],
+  ['tracker no scan', 'In tracker, no scan', 'warning', 'Logged as received, scan missing', d => d.rows.filter(r => hasFlag(r, 'in tracker, no scan')).length],
   ['amounts', 'Amounts differ', 'warning', 'Copy, Blue Shield and eCW disagree', d => d.rows.filter(r => hasFlag(r, 'amounts differ')).length],
   ['posted', 'Posted & matching', 'good', 'Nothing to do', d => d.rows.filter(r => r.verdict === 'posted' && !issues(r).length).length],
   ['not cashed', 'Not cashed yet', 'neutral', 'Issued, waiting on the bank', d => d.rows.filter(r => r.verdict === 'not cashed').length],
   ['other payer', 'Other payer', 'neutral', 'Not a Blue Shield check — eCW alone decides', d => d.rows.filter(r => hasFlag(r, 'other payer')).length],
   ['eCW not checked', 'eCW not checked', 'info', 'eCW could not be read last run', d => d.rows.filter(r => r.verdict === 'eCW not checked').length],
   ['835 unposted', '835 in eCW, not posted', 'serious', 'The payer sent it; nobody posted it', d => d.rows.filter(r => hasFlag(r, '835 in eCW')).length],
+  ['in tracker', 'In the tracker', 'info', 'The team logged it as received', d => d.rows.filter(r => r.in_tracker).length],
   ['all', 'All checks', 'info', 'Everything compared', d => d.rows.length],
 ];
-const CHIPS = ['attention', 'not in eCW', 'unposted', 'no copy', 'amounts', '835 unposted', 'posted', 'not cashed', 'other payer', 'eCW not checked', 'all'];
+const CHIPS = ['attention', 'not in eCW', 'unposted', 'no copy', 'tracker no scan', 'amounts', '835 unposted', 'in tracker', 'posted', 'not cashed', 'other payer', 'eCW not checked', 'all'];
 
 function matches(r, f) {
   switch (f) {
@@ -282,6 +287,8 @@ function matches(r, f) {
     case 'other payer': return hasFlag(r, 'other payer');
     case 'amounts': return hasFlag(r, 'amounts differ');
     case '835 unposted': return hasFlag(r, '835 in eCW');
+    case 'tracker no scan': return hasFlag(r, 'in tracker, no scan');
+    case 'in tracker': return !!r.in_tracker;
     case 'posted': return r.verdict === 'posted' && !issues(r).length;
     default: return r.verdict === f;
   }
@@ -409,7 +416,10 @@ document.getElementById('body').addEventListener('click', ev => {
 function rowHtml(r, inDeposit) {
   {
     const c = classify(r);
-    const sp = r.has_copy ? `<span class="pill good">✓ Yes</span>` : `<span class="pill critical">✗ No</span>`;
+    const sp = r.has_copy ? `<span class="pill good">✓ Yes</span>` : r.in_tracker ? `<span class="pill warning">✗ No</span>` : `<span class="pill critical">✗ No</span>`;
+    const tracker = r.in_tracker
+      ? `<div class="small" style="color:var(--info)" title="tracker ${esc(r.tracker_sheet || '')}${r.tracker_payer ? ' · ' + esc(r.tracker_payer) : ''}">📒 tracker${r.tracker_received ? ' · received ' + esc(r.tracker_received) : ''}${r.tracker_deposit ? ' · deposited ' + esc(r.tracker_deposit) : ''}${r.tracker_posted ? ' · posted: ' + esc(r.tracker_posted) : ''}</div>`
+      : '';
     const fileName = r.copy_file ? String(r.copy_file).split('/').pop() + (inDeposit && r.copy_page ? ` · p.${r.copy_page}` : '') : '';
     const copy = r.has_copy
       ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" rel="noopener" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`)
@@ -429,8 +439,8 @@ function rowHtml(r, inDeposit) {
     return `<tr${inDeposit ? ' class="in-dep"' : ''}>
       <td class="mono">${inDeposit ? '<span class="indent">↳</span> ' : ''}${esc(r.check_full || r.check_number)}${r.copy_from_slip ? ' <span class="small muted" title="only on the deposit slip — no page of its own in the scan">(slip only)</span>' : ''}</td>
       <td>${sp}</td>
-      <td>${copy}</td>
-      <td class="num">${money(r.copy_amount)}</td>
+      <td>${copy}${tracker}</td>
+      <td class="num">${money(r.copy_amount)}${!r.copy_amount && r.tracker_amount ? `<div class="small muted">${money(r.tracker_amount)} tracker</div>` : ""}</td>
       <td class="num">${money(r.bs_amount)}</td>
       <td>${bs}</td>
       <td>${ecw}${era}</td>

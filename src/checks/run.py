@@ -36,6 +36,7 @@ from datetime import datetime
 from src.aws.clients import scan_all
 from src.checks.ecw_payments import find_payments, list_payments, spellings_of
 from src.checks.ecw_era import list_unposted
+from src.checks.tracker import read_tracker, since_filter
 from src.checks.read_check import read_check
 from src.checks.reconcile import norm_check, reconcile, summarize
 from src.checks import sharepoint as sp
@@ -336,6 +337,9 @@ def run_check_reconcile(aws_client, body, login, get_page):
     # Billing → ERA, Posting Status UnPosted: the 835s eCW holds that nobody
     # posted. Forty pages, so a targeted run skips it unless asked.
     do_era = bool(body.get('era', do_ecw and not (body.get('check_eft') or body.get('limit_checks'))))
+    # The team's Insurance Check Tracker: one small file, no model, so it is
+    # read on every run that reads the copies.
+    do_tracker = bool(body.get('tracker', body.get('copies', True)))
     blue_shield = bool(body.get('blue_shield'))
     limit_checks = int(body.get('limit_checks') or 0)
     only = norm_check(body.get('check_eft'))
@@ -410,6 +414,35 @@ def run_check_reconcile(aws_client, body, login, get_page):
     if not blue_shield:
         progress('blue_shield', f"{len(checks)} check(s) on file from earlier captures")
 
+    # 2b. The team's tracker — the checks Helixona logged as received. Read
+    # fresh each run (the team edits it); when it cannot be read, what an
+    # earlier run found stands.
+    tracker_rows, tracker_read = [], False
+    if do_tracker:
+        progress('tracker', 'reading the Insurance Check Tracker…')
+        try:
+            with tempfile.TemporaryDirectory() as tdir:
+                tracker_rows = read_tracker(get_page(), tdir, link=body.get('tracker_link'),
+                                            folder=body.get('tracker_folder'))
+            tracker_read = True
+            logged = len(tracker_rows)
+            tracker_rows = since_filter(tracker_rows, since)
+            progress('tracker', f"{len(tracker_rows)} check(s) logged as received since {since}"
+                                + (f" ({logged - len(tracker_rows)} older left out)" if logged > len(tracker_rows) else ''))
+        except Exception as e:
+            logger.error(f"❌ the tracker could not be read: {e}")
+            progress('tracker', f"not read — the earlier answer stands ({str(e)[:80]})")
+    if not tracker_read:
+        tracker_rows = [{'check_no': norm_check(it.get('check_number')), 'amount': it.get('tracker_amount', ''),
+                         'received': it.get('tracker_received', ''), 'deposit_date': it.get('tracker_deposit', ''),
+                         'payer': it.get('tracker_payer', ''), 'posted': it.get('tracker_posted', ''),
+                         'sheet': it.get('tracker_sheet', '')}
+                        for it in scan_all(table) if it.get('in_tracker')]
+        if tracker_rows and do_tracker:
+            logger.info(f"🗂️ tracker: {len(tracker_rows)} check(s) kept from an earlier run")
+    if targets:
+        tracker_rows = [t for t in tracker_rows if norm_check(t.get('check_no')) in targets]
+
     # 3. eCW — one lookup per check, the operator's own step (2026-09-18):
     # Check # = the number, Rcvd Pmt Dts from `since` to today, Lookup. The
     # full Payments list is thousands of card payments and pages; a lookup
@@ -422,7 +455,8 @@ def run_check_reconcile(aws_client, body, login, get_page):
     known = {norm_check(it.get('check_number')): it for it in scan_all(table)
              if it.get('verdict') in ('posted', 'unposted', 'not in eCW')}
     settled = {ck: it for ck, it in known.items() if it.get('in_ecw') and it.get('verdict') == 'posted'}
-    to_check = targets or ({norm_check(q.get('check_eft')) for q in checks} | {norm_check(c.get('check_number')) for c in copies})
+    to_check = targets or ({norm_check(q.get('check_eft')) for q in checks} | {norm_check(c.get('check_number')) for c in copies}
+                           | {norm_check(t.get('check_no')) for t in tracker_rows})
     to_check = {k for k in to_check if k}
     payments, checked = [], set()
 
@@ -521,7 +555,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
     rows, _ = reconcile(
         [{'check_number': c['check_number'], 'amount': c.get('copy_amount', ''), 'file': c.get('copy_file', ''),
           'url': c.get('copy_url', ''), 'check_date': c.get('copy_date', '')} for c in copies],
-        checks, payments, ecw_checked=ecw_checked, eras=eras)
+        checks, payments, ecw_checked=ecw_checked, eras=eras, tracker=tracker_rows)
     ecw_checked = bool(ecw_checked)   # for the summary: was eCW consulted at all
     if targets:
         rows = [r for r in rows if r['check_number'] in targets]
@@ -533,14 +567,19 @@ def run_check_reconcile(aws_client, body, login, get_page):
             UpdateExpression='SET verdict = :v, flags = :f, in_blue_shield = :b, bs_amount = :ba, bs_status = :bs, '
                              'bs_date = :bd, cashed_date = :cd, in_ecw = :e, ecw_amount = :ea, ecw_posted = :ep, '
                              'ecw_unposted = :eu, ecw_payment_id = :ei, has_copy = :hc, reconciled_at = :t, '
-                             'in_era = :ir, era_amount = :ira, era_file = :irf, era_dated = :ird, era_payer = :irp',
+                             'in_era = :ir, era_amount = :ira, era_file = :irf, era_dated = :ird, era_payer = :irp, '
+                             'in_tracker = :it, tracker_received = :itr, tracker_deposit = :itd, '
+                             'tracker_amount = :ita, tracker_payer = :itp, tracker_posted = :itpo, tracker_sheet = :its',
             ExpressionAttributeValues={
                 ':v': r['verdict'], ':f': r['flags'], ':b': r['in_blue_shield'], ':ba': r['bs_amount'],
                 ':bs': r['bs_status'], ':bd': r['bs_date'], ':cd': r['cashed_date'], ':e': r['in_ecw'],
                 ':ea': r['ecw_amount'], ':ep': r['ecw_posted'], ':eu': r['ecw_unposted'],
                 ':ei': r['ecw_payment_id'], ':hc': r['has_copy'], ':t': now,
                 ':ir': r['in_era'], ':ira': r['era_amount'], ':irf': r['era_file'],
-                ':ird': r['era_dated'], ':irp': r['era_payer']})
+                ':ird': r['era_dated'], ':irp': r['era_payer'],
+                ':it': r['in_tracker'], ':itr': r['tracker_received'], ':itd': r['tracker_deposit'],
+                ':ita': r['tracker_amount'], ':itp': r['tracker_payer'], ':itpo': r['tracker_posted'],
+                ':its': r['tracker_sheet']})
         if targets or len(rows) <= 25:
             logger.info(f"  ✅ {r['check_number']}: copy {'yes' if r['has_copy'] else 'NO'}"
                         f"{' $' + r['copy_amount'] if r['copy_amount'] else ''} · Blue Shield "
