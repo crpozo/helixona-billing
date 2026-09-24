@@ -5,6 +5,7 @@ import datetime
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 from src.checks.reconcile import reconcile, summarize
 from src.checks.tracker import _guid_from, parse_tracker, rows_from_sheet, since_filter
@@ -72,6 +73,27 @@ class TheSheetIsReadByItsHeaders(unittest.TestCase):
                 {'check_no': '3', 'received': ''}, {'check_no': '4', 'received': '', 'check_date': '1/5/26'}]
         # An undated row is kept: one lookup too many beats a check dropped.
         self.assertEqual([r['check_no'] for r in since_filter(rows, '07/01/2025')], ['2', '3', '4'])
+
+
+class TheCopyOnTheMachineStandsInForSharePoint(unittest.TestCase):
+    def test_the_local_file_is_read_when_sharepoint_is_not(self):
+        import openpyxl
+        from src.checks import tracker as tr
+        with tempfile.TemporaryDirectory() as d:
+            wb = openpyxl.Workbook()
+            wb.active.append(HEADER)
+            wb.active.append(['08/19/2026', '', '', 'Blue Shield of California', 31291665, 71.72, ''])
+            path = os.path.join(d, 'Insurance Check Tracker.xlsx')
+            wb.save(path)
+            with unittest.mock.patch.object(tr, 'find_tracker', side_effect=RuntimeError('SharePoint sign-in not completed')):
+                rows = tr.read_tracker(None, d, local=path)
+            self.assertEqual([r['check_no'] for r in rows], ['31291665'])
+            # A folder: the newest spreadsheet in it. Nothing: the SharePoint error stands.
+            self.assertEqual(tr.local_tracker(d), path)
+            self.assertEqual(tr.local_tracker(os.path.join(d, 'none')), '')
+            with unittest.mock.patch.object(tr, 'find_tracker', side_effect=RuntimeError('boom')), self.assertRaises(RuntimeError):
+                tr.read_tracker(None, d, local=os.path.join(d, 'none'))
+        self.assertIn("local=body.get('tracker_file')", _read('src/checks/run.py'))
 
 
 class TheTrackerMeetsTheScansOnTheNumber(unittest.TestCase):

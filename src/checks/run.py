@@ -444,7 +444,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
         try:
             with tempfile.TemporaryDirectory() as tdir:
                 tracker_rows = read_tracker(get_page(), tdir, link=body.get('tracker_link'),
-                                            folder=body.get('tracker_folder'))
+                                            folder=body.get('tracker_folder'), local=body.get('tracker_file'))
             tracker_read = True
             logged = len(tracker_rows)
             tracker_rows = since_filter(tracker_rows, since)

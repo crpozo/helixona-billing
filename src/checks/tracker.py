@@ -37,6 +37,10 @@ DEFAULT_TRACKER_LINK = ('https://helixona.sharepoint.com/:x:/s/BillingDepartment
 # Where it lives, if the link cannot be followed: the newest spreadsheet here.
 DEFAULT_TRACKER_FOLDER = '/sites/BillingDepartment/Shared Documents/Insurance Checks/Insurance Check Tracker'
 SHEET_EXT = ('.xlsx', '.xlsm', '.xls', '.csv')
+# A copy of the sheet placed on the bot's own machine — read when SharePoint
+# cannot be (the operator handed the file over on 2026-09-24). Newest file
+# in the folder if the path is a folder.
+LOCAL_TRACKER = os.environ.get('TRACKER_FILE', '/opt/helixona-agent/data/Insurance Check Tracker.xlsx')
 
 COLUMNS = {
     'check_no': re.compile(r'check\s*(number|no\.?|num|#)', re.I),
@@ -225,12 +229,35 @@ def find_tracker(page, link=None, folder=None):
     return item, site
 
 
-def read_tracker(page, dest_dir, link=None, folder=None):
-    """Every row of the team's tracker. Raises when it cannot be read — the
-    caller keeps what an earlier run found."""
+def local_tracker(path=None):
+    """The copy on this machine, if there is one: the file, or the newest
+    spreadsheet in the folder. '' when there is none."""
+    path = path or LOCAL_TRACKER
+    if os.path.isfile(path):
+        return path
+    if os.path.isdir(path):
+        files = [os.path.join(path, f) for f in os.listdir(path) if f.lower().endswith(SHEET_EXT)]
+        if files:
+            return max(files, key=os.path.getmtime)
+    return ''
+
+
+def read_tracker(page, dest_dir, link=None, folder=None, local=None):
+    """Every row of the team's tracker: SharePoint first, else the copy on
+    this machine. Raises when neither can be read — the caller keeps what
+    an earlier run found."""
     from src.checks import sharepoint_browser as spb
-    item, _ = find_tracker(page, link, folder)
-    path = spb.download(page, item, dest_dir)
+    try:
+        item, _ = find_tracker(page, link, folder)
+        path = spb.download(page, item, dest_dir)
+        where = f"SharePoint · {item['name']}"
+    except Exception as e:
+        path = local_tracker(local)
+        if not path:
+            raise
+        logger.warning(f"  ⚠️ the tracker could not be read from SharePoint ({str(e)[:100]}) — "
+                       f"reading the copy on this machine, {path} (modified {time.strftime('%Y-%m-%d', time.localtime(os.path.getmtime(path)))})")
+        where = f"this machine · {os.path.basename(path)}"
     rows = parse_tracker(path)
-    logger.info(f"📒 tracker: {len(rows)} check(s) the team logged as received")
+    logger.info(f"📒 tracker: {len(rows)} check(s) the team logged as received ({where})")
     return rows
