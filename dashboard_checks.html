@@ -211,6 +211,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
     </dl>
     <p class="small" style="margin:6px 0"><strong>835 in eCW, not posted</strong> — eCW holds the payer's electronic remittance (the 835 file, Billing › ERA) and nobody has posted it. The payer says the money was sent; it does not say the check reached Helixona. <strong>835 only</strong> means no scan, no Blue Shield row and no payment in eCW know this number at all.</p>
     <p class="small" style="margin:6px 0"><strong>🏦 Deposit</strong> — one scan holding the bank deposit slip and the checks deposited with it. Click the row to open it: each check inside is compared with Blue Shield and looked up in eCW on its own, and the deposit total is the slip's. <em>(slip only)</em> marks a check written on the slip whose own page was not in the scan.</p>
+<p class="small" style="margin:6px 0"><strong>📎 Batch scan</strong> — several checks scanned into one file with no deposit slip (a stack of EOBs, each with its check). Every page is read; each check inside is its own row, and the band's total is the sum of them.</p>
 <p class="small" style="margin:6px 0"><strong>📒 Tracker</strong> — the team's Insurance Check Tracker spreadsheet. A check is matched on its number wherever its scan was filed, not by the folder its dates point to.</p>
 <p class="small" style="margin:12px 0 0">Sources: the scans in SharePoint › Insurance Checks (Posted Checks / Unposted Checks, every year and every date folder), the Insurance Check Tracker, Blue Shield Provider Connection (Check/EFT status), and eCW › Billing › Payments since 07/01/2025. eCW is the source of truth: a check that is not in eCW is a check we do not have, whoever the payer. Each scan is read once and kept; the comparison is refreshed on every run.</p>
   </section>
@@ -374,16 +375,16 @@ function render() {
     return `<tr class="dep${open ? ' open' : ''}" data-dep="${esc(d.file)}">
       <td colspan="9">
         <div class="dep-band">
-          <button class="dep-toggle" type="button" aria-expanded="${open}" aria-label="${open ? 'Fold' : 'Open'} this deposit">
+          <button class="dep-toggle" type="button" aria-expanded="${open}" aria-label="${open ? 'Fold' : 'Open'} this ${d.slip === false ? 'scan' : 'deposit'}">
             <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6 3.5 L11 8 L6 12.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div class="dep-id">
-            <div class="dep-t">🏦 Bank deposit${d.date ? ' · ' + esc(d.date) : ''}</div>
+            <div class="dep-t">${d.slip === false ? '📎 Batch scan · several checks in one file' : '🏦 Bank deposit' + (d.date ? ' · ' + esc(d.date) : '')}</div>
             <div class="small muted">${esc(d.folder || '')} · ${link}</div>
           </div>
           <div class="dep-total">
             <div class="dep-amt">${money(d.total)}</div>
-            <div class="small muted">${all} check${all === 1 ? '' : 's'} deposited</div>
+            <div class="small muted">${all} check${all === 1 ? '' : 's'} ${d.slip === false ? 'in this scan · sum' : 'deposited'}</div>
           </div>
           <div class="dep-chips">
             ${ok ? `<span class="pill good">${ok} posted</span>` : ''}
@@ -445,7 +446,7 @@ function rowHtml(r, inDeposit) {
       <td>${bs}</td>
       <td>${ecw}${era}</td>
       <td><span class="pill ${c.cls}">● ${esc(c.label)}</span></td>
-      <td class="todo small">${todoFor(r)}${inDeposit && r.copy_page ? `<div class="muted">page ${esc(String(r.copy_page))} of the deposit scan</div>` : ''}</td>
+      <td class="todo small">${todoFor(r)}${inDeposit && r.copy_page ? `<div class="muted">page ${esc(String(r.copy_page))} of the scan</div>` : ''}</td>
     </tr>`;
   }
 }

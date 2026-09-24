@@ -46,6 +46,8 @@ COLUMNS = {
     'deposit_date': re.compile(r'deposit', re.I),
     'payer': re.compile(r'insurance|payer|company', re.I),
     'posted': re.compile(r'posted', re.I),
+    # 08_2026 on: the seventh column is the claim number the check pays.
+    'claim_no': re.compile(r'claim\s*(number|no\.?|num|#)', re.I),
 }
 REQUIRED = ('check_no',)
 HEADER_SCAN_ROWS = 15
@@ -108,7 +110,8 @@ def rows_from_sheet(name, rows):
     for r_i, row in enumerate(rows[h_i + 1:], start=h_i + 2):
         cell = lambda k: (row[cols[k]] if k in cols and cols[k] < len(row) else None)
         num = _check_number(cell('check_no'))
-        if not re.fullmatch(r'\d{4,15}', num):
+        # 738, 739: patient checks — received all the same.
+        if not re.fullmatch(r'\d{3,15}', num):
             continue
         out.append({
             'check_no': num,
@@ -118,6 +121,7 @@ def rows_from_sheet(name, rows):
             'deposit_date': _cell_text(cell('deposit_date')),
             'payer': _cell_text(cell('payer')),
             'posted': _cell_text(cell('posted')),
+            'claim_no': re.sub(r'\D', '', _cell_text(cell('claim_no'))),
             'sheet': name,
             'row': r_i,
         })

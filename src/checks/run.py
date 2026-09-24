@@ -151,6 +151,9 @@ def _file_item(f, source, got, prev_attempts):
         'copy_source': source,
         'copy_read_by': got.get('read_by', ''),
         'copy_pages': int(got.get('pages') or 1),
+        # Since 2026-09-23 every page of a file is looked at; rows without
+        # this are from the reader that stopped at the first check.
+        'copy_read_mode': 'all_pages',
         'copy_attempts': prev_attempts + 1,
         'copy_read_at': _now(),
     }
@@ -164,12 +167,14 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
     A file that gave no check is tried again once (the model may have been
     down), then left alone unless it changes; a targeted run never re-tries.
 
-    A file may be a bank deposit (slip + the checks, one per page): it is
-    stored as a 'deposit:<file>' row with the total, and each check in it
-    as its own row carrying deposit_file — each is compared with Blue Shield
-    and looked up in eCW on its own. Files read before deposits were known
-    (no copy_pages on their row) are looked at once more, without the model
-    unless the PDF has three pages or more."""
+    A file may hold many checks — a bank deposit (slip + the checks, one
+    per page) or a batch scanned together with no slip (2026-09-23: 25 EOBs
+    with their checks in one 100-page PDF): it is stored as a
+    'deposit:<file>' row with the total (deposit_slip says which), and each
+    check in it as its own row carrying deposit_file — each is compared with
+    Blue Shield and looked up in eCW on its own. A multi-page PDF read
+    before every page was looked at (no copy_read_mode on its rows) is read
+    once more, page by page."""
     files, download, source = _sources(aws_client, body, get_page)
     limit = int(body.get('limit_files') or 0)
     want = {norm_check(p) for p in prefer if norm_check(p)}
@@ -179,14 +184,19 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
     # Files already looked at, by name + etag: the ones that read (skip while
     # unchanged) and the ones that did not (skip after MAX_READ_ATTEMPTS, or
     # always on a targeted run). by_path: every row a file produced.
-    known, tried, by_path, paged = {}, {}, {}, set()
-    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag, has_copy, copy_attempts, kind, copy_pages'):
+    known, tried, by_path, paged, whole = {}, {}, {}, {}, set()
+    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag, has_copy, copy_attempts, kind, copy_pages, '
+                                                   'copy_read_mode, deposit_file'):
         path = str(it.get('copy_file') or '')
         if not path:
             continue
         by_path.setdefault(path, []).append(str(it.get('check_number')))
         if it.get('copy_pages'):
-            paged.add(path)
+            paged[path] = int(it.get('copy_pages'))
+        # Every page of the file was looked at: a deposit's rows always were;
+        # a check's row says so since 2026-09-23.
+        if it.get('kind') == 'deposit' or it.get('deposit_file') or it.get('copy_read_mode') == 'all_pages':
+            whole.add(path)
         if it.get('has_copy') or it.get('kind') == 'deposit':
             known[path] = str(it.get('copy_etag') or '')
         else:
@@ -202,25 +212,30 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
             etag = f.get('etag') or ''
             prev = tried.get(f['path'])
             seen_before = (f['path'] in known and known[f['path']] == etag) or (prev and prev[0] == etag)
-            # A PDF read before deposits were known: count its pages once
-            # (a download, no model); three or more and it is read again.
-            relook = (seen_before and not targeted and f['path'] not in paged and f['path'].lower().endswith('.pdf'))
+            # A multi-page PDF read before every page was looked at: count
+            # its pages once if never counted (a download, no model); two or
+            # more and it is read again, page by page.
+            is_pdf = f['path'].lower().endswith('.pdf')
+            relook = (seen_before and not targeted and is_pdf
+                      and (f['path'] not in paged or (paged[f['path']] >= 2 and f['path'] not in whole)))
             if relook:
-                try:
-                    from src.checks.read_check import pdf_page_count
-                    n = pdf_page_count(download(f, tmp))
-                except Exception as e:
-                    logger.warning(f"  ⚠️ {f['path']}: could not be downloaded again: {str(e)[:120]}")
-                    n = 1
-                for key in by_path.get(f['path'], []):
-                    table.update_item(Key={'check_number': key}, UpdateExpression='SET copy_pages = :n',
-                                      ExpressionAttributeValues={':n': int(n)})
-                paged.add(f['path'])
-                if n < 3:
+                n = paged.get(f['path'])
+                if n is None:
+                    try:
+                        from src.checks.read_check import pdf_page_count
+                        n = pdf_page_count(download(f, tmp))
+                    except Exception as e:
+                        logger.warning(f"  ⚠️ {f['path']}: could not be downloaded again: {str(e)[:120]}")
+                        n = 1
+                    for key in by_path.get(f['path'], []):
+                        table.update_item(Key={'check_number': key}, UpdateExpression='SET copy_pages = :n',
+                                          ExpressionAttributeValues={':n': int(n)})
+                    paged[f['path']] = n
+                if n < 2:
                     skipped += 1
                     continue
                 relooked += 1
-                logger.info(f"  📄 {f['path']}: {n} pages, read before as one check — read again page by page")
+                logger.info(f"  📄 {f['path']}: {n} pages, not every page read before — read again page by page")
             elif f['path'] in known and known[f['path']] == etag:
                 skipped += 1
                 continue
@@ -245,12 +260,14 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
             prev_attempts = prev[1] if prev and prev[0] == etag else 0
             base = _file_item(f, source, got, prev_attempts)
             if got.get('kind') == 'deposit':
-                # The deposit and each check in it. Rows the file produced
-                # under the one-check reading go, unless they are its checks.
+                # The deposit (or slipless batch) and each check in it. Rows
+                # the file produced under the one-check reading go, unless
+                # they are its checks.
                 members = [c for c in got.get('checks', []) if norm_check(c.get('check_number'))]
                 keys = {norm_check(c['check_number']) for c in members}
                 dep_key = f"deposit:{f['path']}"
-                _write_item(table, dep_key, {**base, 'kind': 'deposit', 'has_copy': False,
+                slip = bool(got.get('slip', True))
+                _write_item(table, dep_key, {**base, 'kind': 'deposit', 'has_copy': False, 'deposit_slip': slip,
                                              'deposit_date': got.get('deposit_date', ''), 'deposit_total': got.get('deposit_total', ''),
                                              'deposit_count': len(members), 'deposit_checks': sorted(keys),
                                              'copy_confidence': got.get('confidence', ''), 'copy_problem': got.get('problem', '')})
@@ -259,9 +276,9 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                         **base, 'kind': 'check', 'has_copy': True,
                         'copy_check_raw': re.sub(r'\D', '', str(c.get('check_number') or '')),
                         'copy_amount': c.get('amount', ''), 'copy_date': c.get('check_date', '') or got.get('deposit_date', ''),
-                        'copy_payer': c.get('payer', ''), 'copy_page': int(c.get('page') or 1),
-                        'copy_from_slip': bool(c.get('from_slip')),
-                        'deposit_file': f['path'], 'deposit_total': got.get('deposit_total', ''),
+                        'copy_payer': c.get('payer', ''), 'copy_claim': c.get('claim_number', ''),
+                        'copy_page': int(c.get('page') or 1), 'copy_from_slip': bool(c.get('from_slip')),
+                        'deposit_file': f['path'], 'deposit_slip': slip, 'deposit_total': got.get('deposit_total', ''),
                         'deposit_date': got.get('deposit_date', ''),
                         'copy_confidence': got.get('confidence', ''), 'copy_problem': ''})
                 for old in by_path.get(f['path'], []):
@@ -270,7 +287,8 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                         logger.info(f"  🗑 {old}: was the one-check reading of this deposit — removed")
                 deposits += 1
                 read += len(members)
-                logger.info(f"  🏦 {f['path']}: deposit of {len(members)} check(s) · ${got.get('deposit_total') or '?'} · "
+                logger.info(f"  {'🏦' if slip else '📎'} {f['path']}: {'deposit' if slip else 'batch (no slip)'} of {len(members)} check(s)"
+                            f" · ${got.get('deposit_total') or '?'} · "
                             + ', '.join(c['check_number'] for c in members[:8]) + (' …' if len(members) > 8 else ''))
                 continue
             key = norm_check(got.get('check_number')) or f"unreadable:{f['path']}"
@@ -285,6 +303,8 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 'copy_amount': got.get('amount', ''),
                 'copy_date': got.get('check_date', ''),
                 'copy_payer': got.get('payer', ''),
+                'copy_claim': got.get('claim_number', ''),
+                'copy_page': int(got.get('page') or 0),
                 'copy_confidence': got.get('confidence', ''),
                 'copy_problem': got.get('problem', ''),
             }
@@ -300,7 +320,8 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 failed += 1
                 logger.warning(f"  ⚠️ {f['path']}: {item['copy_problem']}")
     logger.info(f"📁 copies: {read} read · {skipped} already on file · {failed} unreadable ({source})"
-                + (f" · {deposits} deposit(s)" if deposits else '') + (f" · {relooked} PDF(s) read again page by page" if relooked else ''))
+                + (f" · {deposits} file(s) holding several checks" if deposits else '')
+                + (f" · {relooked} PDF(s) read again page by page" if relooked else ''))
     return read, skipped, failed
 
 
@@ -569,7 +590,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
                              'ecw_unposted = :eu, ecw_payment_id = :ei, has_copy = :hc, reconciled_at = :t, '
                              'in_era = :ir, era_amount = :ira, era_file = :irf, era_dated = :ird, era_payer = :irp, '
                              'in_tracker = :it, tracker_received = :itr, tracker_deposit = :itd, '
-                             'tracker_amount = :ita, tracker_payer = :itp, tracker_posted = :itpo, tracker_sheet = :its',
+                             'tracker_amount = :ita, tracker_payer = :itp, tracker_posted = :itpo, tracker_sheet = :its, tracker_claim = :itc',
             ExpressionAttributeValues={
                 ':v': r['verdict'], ':f': r['flags'], ':b': r['in_blue_shield'], ':ba': r['bs_amount'],
                 ':bs': r['bs_status'], ':bd': r['bs_date'], ':cd': r['cashed_date'], ':e': r['in_ecw'],
@@ -579,7 +600,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
                 ':ird': r['era_dated'], ':irp': r['era_payer'],
                 ':it': r['in_tracker'], ':itr': r['tracker_received'], ':itd': r['tracker_deposit'],
                 ':ita': r['tracker_amount'], ':itp': r['tracker_payer'], ':itpo': r['tracker_posted'],
-                ':its': r['tracker_sheet']})
+                ':its': r['tracker_sheet'], ':itc': r['tracker_claim']})
         if targets or len(rows) <= 25:
             logger.info(f"  ✅ {r['check_number']}: copy {'yes' if r['has_copy'] else 'NO'}"
                         f"{' $' + r['copy_amount'] if r['copy_amount'] else ''} · Blue Shield "

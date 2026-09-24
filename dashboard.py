@@ -1483,7 +1483,7 @@ window.scrollToEl = function(sel){
                     : `<strong>${money(amounts[0][1])}</strong>`;
                 const copyCell = r.has_copy
                     ? (r.copy_url ? `<a href="${esc(r.copy_url)}" target="_blank" title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</a>` : `<span title="${esc(r.copy_file)}">${esc(r.copy_folder || '')}</span>`)
-                      + `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file || '').split('/').pop())}${r.deposit_file ? ` · 🏦 deposit${r.deposit_date ? ' ' + esc(r.deposit_date) : ''} ${money(r.deposit_total)}${r.copy_page ? ' · p.' + esc(String(r.copy_page)) : ''}` : ''}</div>`
+                      + `<div style="font-size:11px;color:var(--text-muted)">${esc(String(r.copy_file || '').split('/').pop())}${r.deposit_file ? (r.deposit_slip === false ? ` · 📎 batch of ${esc(String((sm.deposits || []).find(d => d.file === r.deposit_file)?.count || ''))} checks` : ` · 🏦 deposit${r.deposit_date ? ' ' + esc(r.deposit_date) : ''} ${money(r.deposit_total)}`) + (r.copy_page ? ' · p.' + esc(String(r.copy_page)) : '') : (r.copy_page > 1 ? ' · p.' + esc(String(r.copy_page)) : '')}</div>`
                     : r.in_tracker ? '<span style="color:var(--warning);font-weight:600">✗ no scan</span>'
                     : '<span style="color:var(--bad);font-weight:600">✗ no copy</span>';
                 const trackerCell = r.in_tracker
@@ -2533,6 +2533,8 @@ def _checks_rows():
         members = by_dep.get(str(d.get('copy_file') or ''), [])
         dep_rows.append({'file': str(d.get('copy_file') or ''), 'folder': str(d.get('copy_folder') or ''),
                          'url': str(d.get('copy_url') or ''), 'date': str(d.get('deposit_date') or ''),
+                         # False: a batch scanned together with no deposit slip — the total is the sum of its checks.
+                         'slip': d.get('deposit_slip', True) is not False,
                          'total': str(d.get('deposit_total') or ''), 'count': int(d.get('deposit_count') or len(members)),
                          'checks': [str(r['check_number']) for r in members],
                          'posted': sum(r.get('verdict') == 'posted' for r in members),
@@ -2576,11 +2578,11 @@ def api_checks_csv():
     import csv
     import io
     from flask import Response
-    cols = ['check_number', 'check_full', 'deposit_file', 'deposit_total', 'copy_page', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
+    cols = ['check_number', 'check_full', 'deposit_file', 'deposit_slip', 'deposit_total', 'copy_page', 'copy_claim', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
             'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
             'ecw_posted', 'ecw_unposted', 'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer',
             'in_tracker', 'tracker_received', 'tracker_deposit', 'tracker_amount', 'tracker_payer', 'tracker_posted',
-            'tracker_sheet', 'reconciled_at']
+            'tracker_sheet', 'tracker_claim', 'reconciled_at']
     try:
         rows, _summary = _checks_rows()
     except Exception as e:

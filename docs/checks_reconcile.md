@@ -26,7 +26,10 @@ The operator's procedure (2026-09-16), as the Remittance bot runs it
    number alone: "the checks are not always in the exact folder, so the idea
    is to search all of them and match" (the operator, 2026-09-23) — check
    4121991, received 6/3/2026, matches its scan in whatever date folder it
-   was filed. Every tracker check is also looked up in eCW.
+   was filed. Every tracker check is also looked up in eCW. From 08_2026
+   the sheet's seventh column is the claim number the check pays
+   (`tracker_claim`). Read against the team's file of 2026-09-24: 1,208 of
+   its 1,210 rows (ten monthly sheets, 12_2025–09_2026).
 4. **No copy** — a cashed check we hold no image of. When the tracker lists
    it the flag is `in tracker, no scan found` (Helixona has it; the image is
    missing or misfiled — find it or scan it); when the tracker does not, it
@@ -47,7 +50,9 @@ the one whose "not in eCW" list is real.
 | `unposted` | in eCW, a balance still unposted |
 | `not in eCW` | eCW has no payment under the number — a cashed Blue Shield check, or a scanned check from any payer. eCW is the source of truth: not in eCW means we do not have it |
 | `not cashed` | a Blue Shield check the bank has not cashed — nothing to enter yet |
-**Deposits.** A scan may be a bank deposit: page 1 the deposit slip (the checks listed by hand with the total) and one check per page after it. The reader classifies every page; a slip on page 1 makes the file a deposit, stored as a `deposit:<file>` row (total, date, the check numbers) with one row per check carrying `deposit_file`, `copy_page` and `copy_from_slip` (a line of the slip with no page of its own). Each check is compared with Blue Shield and looked up in eCW on its own; the team page shows the deposit as one accordion with its checks under it. PDFs read before deposits were known are counted once (a download, no model) and read again page by page only when they have three pages or more; the one-check row they had produced is removed.
+**Deposits.** A scan may be a bank deposit: page 1 the deposit slip (the checks listed by hand with the total) and one check per page after it. The reader classifies every page; a slip on page 1 makes the file a deposit, stored as a `deposit:<file>` row (total, date, the check numbers) with one row per check carrying `deposit_file`, `copy_page` and `copy_from_slip` (a line of the slip with no page of its own). Each check is compared with Blue Shield and looked up in eCW on its own; the team page shows the deposit as one accordion with its checks under it. PDFs read before deposits were known are counted once (a download, no model) and read again page by page when they have two pages or more; the one-check row they had produced is removed.
+
+**Every page.** A multi-page PDF is read on every page — its text layer where the scanner left one, the model where it did not — because a stack of checks needs no slip: `Unposted Checks/08-18-2026/08192026143346.pdf` (2026-09-23) is 25 EOBs scanned together, each with its check at the foot of its first page, a hundred pages and no slip anywhere; the reader that stopped at the first check saw one of the 25. A file that yields several checks and no slip is stored like a deposit (`deposit:<file>`, `deposit_slip` false, the total the sum of what was read) and shown as a **📎 Batch scan** band with one row per check. Rows written by the earlier reader carry no `copy_read_mode`; every such multi-page PDF is read once more, page by page, on the first run after the change — one model call per page without a text layer, so that run costs more and takes longer. The check's `claim_number`, when the EOB prints it, is kept as `copy_claim`.
 
 The `since` here is the remittance window (payments in eCW, default 07/01/2025). The claims bot has its own, separate floor — `CLAIMS_SINCE` in `src/main.py`, also 07/01/2025 — for how far back it looks in eCW's Claims lookup. They are not the same setting.
 

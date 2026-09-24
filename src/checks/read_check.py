@@ -16,6 +16,13 @@ and the total), and each page after it is one of those checks. Such a file
 is read page by page and comes back as a deposit — the checks in it, each
 its own case, and the total (2026-09-18: 04222026_001.pdf, 29 checks,
 $11,099.18; the one-check reader had made a "check 1100411" of the slip).
+
+Nor does a stack of checks need a slip: 08192026143346.pdf (2026-09-23) is
+25 EOBs scanned together, each with its check at the foot of its first page,
+a hundred pages with no slip anywhere. So every page of a multi-page PDF is
+looked at (its text layer first, the model only where there is none), and
+a file that yields several checks comes back as a deposit without a slip —
+the same shape, `slip` False, the total the sum of what was read.
 """
 import base64
 import io
@@ -46,23 +53,29 @@ IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
 CHECK_NO_RE = re.compile(r'\b\d{5,11}\b')
 
 PROMPT = """This is one page of a scan filed by a medical clinic's billing department. It is ONE of:
- (a) a paper check (or its remittance stub) mailed by a health insurer or a patient;
+ (a) a paper check mailed by a health insurer or a patient — alone, with its remittance stub, or printed at the bottom of an Explanation of Benefits page;
  (b) a bank DEPOSIT SLIP / deposit ticket — a form listing several checks by hand (a numbered list "CHECKS (List each separately)", each line a check number and its dollars and cents) with a total;
- (c) something else (a letter, an EOB page, a blank or back side).
+ (c) something else (a letter, an EOB page with no check on it, a blank or back side).
 Answer with ONE JSON object and nothing else:
 {"kind": "<check|deposit_slip|other>",
  "check": {"check_number": "<digits only, the check number printed on the check — usually top right, and again in the MICR line at the bottom between the ⑈ symbols; keep leading zeros>",
            "amount": "<the amount paid, as digits with cents, e.g. 1234.56>",
            "check_date": "<MM/DD/YYYY or empty>",
            "payer": "<who issued the check, e.g. Blue Shield of California, or empty>",
-           "payee": "<who it is paid to, or empty>"},
+           "payee": "<who it is paid to, or empty>",
+           "claim_number": "<the claim number printed on the EOB or stub next to the check, digits only, or empty>"},
  "deposit": {"date": "<MM/DD/YYYY or empty>",
              "total": "<the deposit total as digits with cents, or empty>",
              "checks": [{"check_number": "<digits as written>", "amount": "<digits with cents>"}]},
  "confidence": "<high|medium|low>"}
 Fill "check" only for kind check and "deposit" only for kind deposit_slip; leave the other empty. Transcribe every line of a deposit slip, in order.
 If a field cannot be read, leave it as an empty string. Do not invent digits."""
-DEPOSIT_MAX_PAGES = 80   # one model call per page of a deposit
+# One model call per page that has no text layer. A batch scan of EOBs with
+# their checks runs to a hundred pages (2026-09-23: 08192026143346.pdf, 25
+# checks, four pages each); every page is looked at, since any of them may
+# carry a check.
+MAX_PAGES = 200
+CHECK_KEYS = ('check_number', 'amount', 'check_date', 'payer', 'payee', 'claim_number')
 
 
 # ------------------------------------------------------------ the image
@@ -102,15 +115,22 @@ def image_payload(path, page_no=0):
 
 
 def pdf_text(path):
+    return '\n'.join(pdf_page_texts(path)[:2])
+
+
+def pdf_page_texts(path):
+    """The text layer of every page ('' for a page without one). A scanner
+    that OCRs gives one; a plain image scan gives none, and the model reads
+    the page instead."""
     if not path.lower().endswith('.pdf'):
-        return ''
+        return []
     try:
         import pdfplumber
         with pdfplumber.open(path) as pdf:
-            return '\n'.join((p.extract_text() or '') for p in pdf.pages[:2])
+            return [(p.extract_text() or '') for p in pdf.pages]
     except Exception as e:
         logger.warning(f"  could not read PDF text: {e}")
-        return ''
+        return []
 
 
 # ------------------------------------------------------------ the parsing
@@ -118,7 +138,7 @@ def parse_check_text(text):
     """Number and amount from a stub's text layer. Only when both are named
     on the page ("Check No", "Amount"): a bare number could be anything."""
     t = norm_text(text)
-    out = {'check_number': '', 'amount': '', 'check_date': '', 'payer': '', 'payee': ''}
+    out = {k: '' for k in CHECK_KEYS}
     m = re.search(r'(?:check|check|chk|eft)\s*(?:no\.?|number|#|num\.?)?\s*:?\s*(\d{5,11})\b', t, re.I)
     if m:
         out['check_number'] = m.group(1)
@@ -130,13 +150,17 @@ def parse_check_text(text):
         out['check_date'] = m.group(1)
     if re.search(r'blue\s*shield', t, re.I):
         out['payer'] = 'Blue Shield of California'
+    m = re.search(r'claim\s*(?:no\.?|number|#)\s*:?\s*(\d{6,20})\b', t, re.I)
+    if m:
+        out['claim_number'] = m.group(1)
     return out
 
 
 def _check_fields(data, confidence=''):
-    out = {k: norm_text((data or {}).get(k, '')) for k in ('check_number', 'amount', 'check_date', 'payer', 'payee')}
+    out = {k: norm_text((data or {}).get(k, '')) for k in CHECK_KEYS}
     out['confidence'] = norm_text(confidence or (data or {}).get('confidence', ''))
     out['check_number'] = re.sub(r'\D', '', out['check_number'])
+    out['claim_number'] = re.sub(r'\D', '', out['claim_number'])
     if not re.fullmatch(r'\d{5,11}', out['check_number']):
         out['check_number'] = ''
     out['amount'] = money(out['amount']) if out['amount'] else ''
@@ -296,53 +320,115 @@ def read_page(aws_client, path, page_no, model_id=VISION_MODEL_ID):
 
 def read_check(aws_client, path, model_id=VISION_MODEL_ID):
     """One file. A check: {'kind': 'check', 'check_number', 'amount',
-    'check_date', 'payer', 'payee', 'read_by', 'confidence', 'problem',
-    'pages'}. A deposit: {'kind': 'deposit', 'deposit_date', 'deposit_total',
-    'checks': [{'check_number', 'amount', 'check_date', 'payer', 'payee',
-    'page', 'from_slip'}], 'pages', 'read_by', 'problem'}. A failure names
-    its 'error_kind': 'file' (the file's fault) or 'api' (the account's)."""
-    result = {'kind': 'check', 'check_number': '', 'amount': '', 'check_date': '', 'payer': '', 'payee': '',
+    'check_date', 'payer', 'payee', 'claim_number', 'page', 'read_by',
+    'confidence', 'problem', 'pages'}. Several checks — a bank deposit
+    (slip on page 1) or a batch scanned together with no slip: {'kind':
+    'deposit', 'slip': bool, 'deposit_date', 'deposit_total', 'checks':
+    [{'check_number', 'amount', 'check_date', 'payer', 'payee',
+    'claim_number', 'page', 'from_slip'}], 'pages', 'read_by', 'problem'}.
+    A failure names its 'error_kind': 'file' (the file's fault) or 'api'
+    (the account's).
+
+    Every page of a multi-page PDF is looked at. 2026-09-23, the operator,
+    of a 100-page scan holding 25 EOBs with their checks: "this file has
+    many checks … so you have to check all the document"."""
+    result = {'kind': 'check', **{k: '' for k in CHECK_KEYS}, 'page': 0,
               'read_by': '', 'confidence': '', 'problem': ''}
     n = pdf_page_count(path)
     result['pages'] = n
-    text = pdf_text(path)
-    if text:
-        got = parse_check_text(text)
-        if got['check_number'] and got['amount']:
-            result.update(got, read_by='pdf_text', confidence='high')
-            return result
-    # Page 1, then page 2 and the last page of a longer PDF: a multi-page
-    # EOB carries the check on a later page (2026-09-18: forty Blue Shield
-    # EOBs gave "no check number" off their cover page). A deposit slip on
-    # page 1 means every page is read.
-    pages = [0]
-    if n > 1:
-        pages += [p for p in (1, n - 1) if p not in pages]
-    got, raw, tried = {}, '', []
-    for page_no in pages[:3]:
-        page, raw, err = _read_one(aws_client, path, page_no, model_id)
+    texts = pdf_page_texts(path) if n > 1 else ([pdf_text(path)] if path.lower().endswith('.pdf') else [])
+    if n <= 1:
+        page, raw, err = _page_check(aws_client, path, 0, texts, model_id)
         if err:
             result.update(err)
             return result
+        if not page:
+            result['problem'] = f'the model did not answer in JSON: {raw[:120]!r}'
+            return result
+        if page.get('kind') == 'deposit_slip':
+            return _read_deposit(aws_client, path, page, n, model_id, result, texts)
+        return _one_check(result, page, 1, [1], n)
+
+    found, tried, raw = [], [], ''
+    for page_no in range(0, min(n, MAX_PAGES)):
+        page, raw, err = _page_check(aws_client, path, page_no, texts, model_id)
+        if err:
+            if err.get('error_kind') == 'api' or page_no == 0:
+                result.update(err)
+                return result
+            continue
         tried.append(page_no + 1)
         if page.get('kind') == 'deposit_slip' and page_no == 0:
-            return _read_deposit(aws_client, path, page, n, model_id, result)
-        got = page.get('check') or {}
-        if got.get('check_number'):
-            if page_no:
-                logger.info(f"  (check number found on page {page_no + 1} of {n})")
-            break
-    if not got:
-        result['problem'] = f'the model did not answer in JSON: {raw[:120]!r}'
+            return _read_deposit(aws_client, path, page, n, model_id, result, texts)
+        ck = (page.get('check') or {}) if page.get('kind') == 'check' else {}
+        if ck.get('check_number'):
+            found.append({**{k: ck.get(k, '') for k in CHECK_KEYS}, 'confidence': ck.get('confidence', ''),
+                          'read_by': page.get('read_by', 'vision'), 'page': page_no + 1, 'from_slip': False})
+    if n > MAX_PAGES:
+        logger.warning(f"  ⚠️ {os.path.basename(path)}: {n} pages, only the first {MAX_PAGES} read")
+    # The same check on two pages (the check and its stub, a re-scan) is one check.
+    checks, seen = [], set()
+    for c in found:
+        key = c['check_number'].lstrip('0')
+        if key in seen:
+            continue
+        seen.add(key)
+        checks.append(c)
+    if not checks:
+        result['pages_tried'] = tried
+        result['problem'] = (f"no check number could be read off the image (pages {', '.join(map(str, tried))} of {n})"
+                             if tried else f'the model did not answer in JSON: {raw[:120]!r}')
         return result
+    if len(checks) == 1:
+        c = checks[0]
+        page = {'kind': 'check', 'check': c, 'read_by': c['read_by']}
+        return _one_check(result, page, c['page'], tried, n)
+    total = _sum(checks)
+    result.update(kind='deposit', slip=False, deposit_date='', deposit_total=total, checks=checks,
+                  read_by='vision' if any(c['read_by'] == 'vision' for c in checks) else 'pdf_text',
+                  confidence='', problem='', pages_tried=tried)
+    logger.info(f"  📎 {os.path.basename(path)}: {len(checks)} checks in one scan, no deposit slip · "
+                + ', '.join(c['check_number'] for c in checks[:8]) + (' …' if len(checks) > 8 else '')
+                + (f" · total ${total}" if total else ''))
+    return result
+
+
+def _sum(checks):
+    """The checks' amounts added up, to the cent — '' unless every one has
+    one. (money('652.3') is '': a float's str drops the last zero.)"""
+    if not checks or not all(c.get('amount') for c in checks):
+        return ''
+    from decimal import Decimal
+    return f"{sum(Decimal(str(c['amount'])) for c in checks):.2f}"
+
+
+def _one_check(result, page, page_no, tried, n):
+    got = page.get('check') or {}
     result['pages_tried'] = tried
-    result.update({k: got.get(k, '') for k in ('check_number', 'amount', 'check_date', 'payer', 'payee', 'confidence')},
-                  read_by='vision')
+    result.update({k: got.get(k, '') for k in CHECK_KEYS}, confidence=got.get('confidence', ''),
+                  read_by=page.get('read_by', 'vision'), page=page_no if got.get('check_number') else 0)
     if not result['check_number']:
         result['problem'] = f"no check number could be read off the image (page{'s' if len(tried) > 1 else ''} {', '.join(map(str, tried))} of {n})"
     elif not result['amount']:
         result['problem'] = 'no amount could be read off the image'
+    elif page_no > 1:
+        logger.info(f"  (check number found on page {page_no} of {n})")
     return result
+
+
+def _page_check(aws_client, path, page_no, texts, model_id):
+    """One page: from its text layer when that names a check number and an
+    amount (no model call), else as the model sees it. (page, raw, error)
+    in parse_page_json's shape, the page carrying 'read_by'."""
+    text = texts[page_no] if page_no < len(texts) else ''
+    if text:
+        got = parse_check_text(text)
+        if got['check_number'] and got['amount']:
+            return {'kind': 'check', 'check': {**got, 'confidence': 'high'}, 'deposit': {}, 'read_by': 'pdf_text'}, text, None
+    page, raw, err = _read_one(aws_client, path, page_no, model_id)
+    if page:
+        page['read_by'] = 'vision'
+    return page, raw, err
 
 
 def _read_one(aws_client, path, page_no, model_id):
@@ -366,7 +452,7 @@ def _read_one(aws_client, path, page_no, model_id):
     return page or {}, raw, None
 
 
-def _read_deposit(aws_client, path, slip, n, model_id, result):
+def _read_deposit(aws_client, path, slip, n, model_id, result, texts=()):
     """A deposit: the slip's list (page 1), then each page after it — the
     checks as printed win over the hand-written list; a line of the slip
     with no page of its own is kept from the slip and marked so."""
@@ -374,8 +460,8 @@ def _read_deposit(aws_client, path, slip, n, model_id, result):
     listed = dep.get('checks') or []
     logger.info(f"  🏦 deposit slip: {len(listed)} check(s) listed · total ${dep.get('total') or '?'} · {n} page(s)")
     found = []
-    for page_no in range(1, min(n, DEPOSIT_MAX_PAGES)):
-        page, raw, err = _read_one(aws_client, path, page_no, model_id)
+    for page_no in range(1, min(n, MAX_PAGES)):
+        page, raw, err = _page_check(aws_client, path, page_no, texts, model_id)
         if err:
             if err.get('error_kind') == 'api':
                 result.update(err)
@@ -383,19 +469,16 @@ def _read_deposit(aws_client, path, slip, n, model_id, result):
             continue
         ck = (page.get('check') or {}) if page.get('kind') == 'check' else {}
         if ck.get('check_number'):
-            found.append({**{k: ck.get(k, '') for k in ('check_number', 'amount', 'check_date', 'payer', 'payee')},
-                          'page': page_no + 1, 'from_slip': False})
+            found.append({**{k: ck.get(k, '') for k in CHECK_KEYS}, 'page': page_no + 1, 'from_slip': False})
     bare = lambda x: str(x or '').lstrip('0')
     seen = {bare(c['check_number']) for c in found}
     for ln in listed:
         if bare(ln['check_number']) not in seen:
             seen.add(bare(ln['check_number']))
-            found.append({'check_number': ln['check_number'], 'amount': ln.get('amount', ''), 'check_date': '',
-                          'payer': '', 'payee': '', 'page': 1, 'from_slip': True})
-    total = dep.get('total') or ''
-    if not total and found and all(c.get('amount') for c in found):
-        total = money(str(sum(float(c['amount']) for c in found)))
-    result.update(kind='deposit', deposit_date=dep.get('date', ''), deposit_total=total, checks=found,
+            found.append({**{k: '' for k in CHECK_KEYS}, 'check_number': ln['check_number'], 'amount': ln.get('amount', ''),
+                          'page': 1, 'from_slip': True})
+    total = dep.get('total') or _sum(found)
+    result.update(kind='deposit', slip=True, deposit_date=dep.get('date', ''), deposit_total=total, checks=found,
                   read_by='vision', confidence=slip.get('confidence', ''),
                   problem='' if found else 'a deposit slip with no legible check')
     from_slip = sum(1 for c in found if c['from_slip'])

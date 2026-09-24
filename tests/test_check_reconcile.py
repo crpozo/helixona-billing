@@ -714,10 +714,10 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         self.assertIn("'copy_attempts': prev_attempts + 1,", r)
         # A test of 1 whose check already has its copy does not walk the folder.
         self.assertIn("if do_copies and targets and set(on_file) >= targets:", r)
-        # A multi-page PDF is read beyond its cover page.
+        # A multi-page PDF is read on every page, not only its cover page.
         rc = _read('src/checks/read_check.py')
         self.assertIn('def pdf_page_count(path):', rc)
-        self.assertIn('pages += [p for p in (1, n - 1) if p not in pages]', rc)
+        self.assertIn('for page_no in range(0, min(n, MAX_PAGES)):', rc)
         self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", r)
         self.assertIn("startswith(('_', 'unreadable:', 'deposit:'))", _read('dashboard.py'))
         self.assertIn("'copy_folder': f['path'].rsplit('/', 1)[0] if '/' in f['path'] else ''", r)

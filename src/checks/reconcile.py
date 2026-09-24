@@ -90,7 +90,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
             'ecw_payment_id': '', 'in_era': False, 'era_amount': '', 'era_file': '',
             'era_dated': '', 'era_payer': '', 'in_tracker': False, 'tracker_received': '',
             'tracker_deposit': '', 'tracker_amount': '', 'tracker_payer': '', 'tracker_posted': '',
-            'tracker_sheet': '', 'flags': [], 'verdict': '',
+            'tracker_sheet': '', 'tracker_claim': '', 'flags': [], 'verdict': '',
         })
 
     for c in copies:
@@ -133,6 +133,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
             r.update(in_tracker=True, tracker_received=t.get('received', ''),
                      tracker_deposit=t.get('deposit_date', ''), tracker_amount=money(t.get('amount')),
                      tracker_payer=t.get('payer', ''), tracker_posted=t.get('posted', ''),
+                     tracker_claim=t.get('claim_no', ''),
                      tracker_sheet=f"{t.get('sheet', '')}:{t.get('row', '')}".strip(':'))
 
     for r in by.values():
