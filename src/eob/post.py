@@ -373,35 +373,54 @@ def _dismiss_dialogs(page, answer='Yes', rounds=3):
 
 
 # ------------------------------------------------------------ the screens
-MENU_JS = r"""([rx, click]) => {
-    // Menu items that lead to Payments — showing or not: eCW's bands open on
-    // hover, so the item is in the document before it is on screen.
+MENU_JS = r"""([rx, click, exactRx]) => {
+    // Menu items that lead somewhere — showing or not: eCW's bands open on
+    // hover, so the item is in the document before it is on screen. The
+    // pick: the item whose text is exactly the label (exactRx), visible if
+    // it can be, and the element that carries the handler (an <a> with an
+    // href or ng-click) over the <li> or <div> around it — a click on the
+    // wrapper of a hidden item does nothing (2026-09-24, Billing → ERA).
     const re = new RegExp(rx, 'i');
+    const ex = new RegExp(exactRx || rx, 'i');
     const out = [];
     for (const el of document.querySelectorAll('a, li, span, div, button, td, label')) {
         const t = txt(el); if (!t || t.length > 40) continue;
         const attrs = [el.getAttribute('href'), el.getAttribute('ng-click'), el.getAttribute('onclick'), el.id, el.title]
             .filter(Boolean).join(' ');
-        if (re.test(t) || re.test(attrs)) out.push({ el, text: t, attrs: attrs.slice(0, 160), visible: vis(el) });
+        if (re.test(t) || re.test(attrs)) {
+            const handler = !!(el.getAttribute('href') || el.getAttribute('ng-click') || el.getAttribute('onclick'));
+            out.push({ el, text: t, attrs: attrs.slice(0, 200), visible: vis(el), tag: el.tagName.toLowerCase(),
+                       score: (ex.test(t) ? 4 : 0) + (vis(el) ? 2 : 0) + (handler ? 1 : 0) });
+        }
     }
-    if (!click) return out.slice(0, 40).map(({ text, attrs, visible }) => ({ text, attrs, visible }));
-    const exact = out.filter(c => /^payments?$/i.test(c.text));
-    const pick = (exact.find(c => c.visible) || exact[0] || out.find(c => c.visible) || out[0]);
+    out.sort((a, b) => b.score - a.score);
+    if (!click) return out.slice(0, 40).map(({ text, attrs, visible, tag }) => ({ text, attrs, visible, tag }));
+    const pick = out[0];
     if (!pick) return null;
     pick.el.click();
-    return { text: pick.text, attrs: pick.attrs, visible: pick.visible };
+    return { text: pick.text, attrs: pick.attrs, visible: pick.visible, tag: pick.tag };
 }"""
 
 
-def _menu_items(page, rx, click=False):
+def _menu_items(page, rx, click=False, exact=None):
+    """The menu items matching `rx` (text or href/ng-click/onclick), best
+    first; with click=True, click the best and return it. `exact`: the
+    regex an item's text must match to count as the label itself."""
     for frm in page.frames:
         try:
-            got = frm.evaluate(_js(MENU_JS), [rx, click])
+            got = frm.evaluate(_js(MENU_JS), [rx, click, exact or ''])
         except Exception:
             got = None
         if got:
             return got
     return None
+
+
+def route_in(attrs):
+    """A screen's route inside a menu item's href / onclick / ng-click —
+    '/mobiledoc/jsp/webemr/webpm/era/eraListView.jsp' — or ''."""
+    m = re.search(r"(/mobiledoc/[^'\"\s)]+\.jsp[^'\"\s)]*)", str(attrs or ''))
+    return m.group(1) if m else ''
 
 
 def _hover_text(page, text):
@@ -440,7 +459,7 @@ def open_payments(page, wait_for_person=90):
         time.sleep(1.5)
         _hover_text(page, 'Billing')
         if not _click_text(page, ['Payments', 'Payment', 'Payment Lookup', 'Insurance Payments'], timeout=4, what='menu'):
-            hit = _menu_items(page, r'^payments?$|payment\s*lookup|insurance\s*payments?', click=True)
+            hit = _menu_items(page, r'^payments?$|payment\s*lookup|insurance\s*payments?', click=True, exact=r'^payments?$')
             if hit:
                 logger.info(f"  ✅ clicked menu item {hit['text']!r} ({'showing' if hit['visible'] else 'hidden'}) {hit['attrs'][:80]}")
         time.sleep(4)

@@ -779,7 +779,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         # is logged, and someone can open Billing → Payments on the live screen.
         p = _read('src/eob/post.py')
         self.assertIn('def open_payments(page, wait_for_person=90):', p)
-        self.assertIn("_menu_items(page, r'^payments?$|payment\\s*lookup|insurance\\s*payments?', click=True)", p)
+        self.assertIn("_menu_items(page, r'^payments?$|payment\\s*lookup|insurance\\s*payments?', click=True, exact=r'^payments?$')", p)
         self.assertIn('open it on the live screen (noVNC)', p)
         self.assertIn('that route belongs in PAYMENT_HASHES', p)
 

@@ -239,3 +239,24 @@ class TheDownloadIsTheFile(unittest.TestCase):
         self.assertTrue(looks_like('a.pdf', b'%PDF-1.7'))
         self.assertFalse(looks_like('a.pdf', b'<!DOCTYPE'))
         self.assertTrue(looks_like('a.heic', b'anything'))
+
+
+class TheEraMenuItemIsClickedWhereItsHandlerIs(unittest.TestCase):
+    """2026-09-24: Billing → ERA — "clicked menu item 'ERA' (hidden)" and the
+    screen never came. The click went to the wrapper of a hidden item; the
+    element with the handler, and the route inside it, are what count."""
+
+    def test_the_route_inside_a_handler(self):
+        from src.eob.post import route_in
+        self.assertEqual(route_in("javascript:openScreen('/mobiledoc/jsp/webemr/webpm/era/eraListView.jsp?x=1')"),
+                         '/mobiledoc/jsp/webemr/webpm/era/eraListView.jsp?x=1')
+        self.assertEqual(route_in('loadMenu("ERA")'), '')
+
+    def test_the_pick_prefers_the_label_visible_with_a_handler(self):
+        p = _read('src/eob/post.py')
+        self.assertIn("score: (ex.test(t) ? 4 : 0) + (vis(el) ? 2 : 0) + (handler ? 1 : 0)", p)
+        e = _read('src/checks/ecw_era.py')
+        self.assertIn("hit = _menu_items(page, ERA_ITEM_RX, click=True, exact=r'^era$')", e)
+        # The menu's ERA-looking items go to the log, and any route they name is tried.
+        self.assertIn("items = _menu_items(page, ERA_ITEM_RX) or []", e)
+        self.assertIn("routes.insert(0, route_in(hit['attrs']))", e)

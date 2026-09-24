@@ -30,13 +30,16 @@ Read only. Nothing here posts, imports or marks anything.
 import re
 import time
 
-from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where, _tick
+from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where, _tick, route_in
 from src.checks.ecw_payments import _read_grid, _grid_signature
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 ERA_MARKERS = ('ERA Process', 'Filter ERA', 'Posting Status', 'Import ERA')
+# The menu item, by its text or by the route in its handler.
+ERA_ITEM_RX = r'^era\b|electronic\s*remittance|/era/|era[A-Z_]\w*\.jsp'
+
 # Billing → ERA. The menu is tried first; a route that works is logged, so a
 # screen the bot could not reach today is one it can go to directly tomorrow.
 ERA_HASHES = [
@@ -74,18 +77,33 @@ def open_era(page, wait_for_person=90):
     if _page_has(page, ERA_MARKERS):
         logger.info(f"  ✅ the ERA screen is already up · {_where(page)}")
         return True
+    routes = list(ERA_HASHES)
     if _click_text(page, ['Billing'], timeout=6, what='menu'):
         time.sleep(1.5)
         _hover_text(page, 'Billing')
         if not _click_text(page, ['ERA'], timeout=4, what='menu'):
-            hit = _menu_items(page, r'^era$|electronic\s*remittance', click=True)
+            # The item is in the document before it is on screen. The click
+            # goes to the element with the handler; whatever route it names
+            # is tried directly too.
+            hit = _menu_items(page, ERA_ITEM_RX, click=True, exact=r'^era$')
             if hit:
-                logger.info(f"  ✅ clicked menu item {hit['text']!r} ({'showing' if hit['visible'] else 'hidden'})")
+                logger.info(f"  ✅ clicked menu item {hit['text']!r} <{hit.get('tag', '?')}> "
+                            f"({'showing' if hit['visible'] else 'hidden'}) {hit['attrs'][:120]}")
+                if route_in(hit['attrs']) and route_in(hit['attrs']) not in routes:
+                    routes.insert(0, route_in(hit['attrs']))
         time.sleep(4)
     if _page_has(page, ERA_MARKERS):
         logger.info(f"  ✅ the ERA screen is up · {_where(page)}")
         return True
-    for h in ERA_HASHES:
+    # What the menu holds, for the log: the route the bot should take is
+    # in one of these lines when the click above did not take it there.
+    items = _menu_items(page, ERA_ITEM_RX) or []
+    for it in items[:12]:
+        logger.info(f"  menu item {it['text']!r} <{it.get('tag', '?')}> {'showing' if it['visible'] else 'hidden'} · {it['attrs'][:140]}")
+        r = route_in(it['attrs'])
+        if r and r not in routes:
+            routes.append(r)
+    for h in routes:
         try:
             page.evaluate("(h) => { window.location.hash = h; }", h)
         except Exception:
