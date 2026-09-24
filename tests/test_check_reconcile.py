@@ -156,7 +156,7 @@ class TheUnpostedErasAreTheirOwnSource(unittest.TestCase):
 
     def test_the_run_reads_it_once_and_keeps_the_answer(self):
         r = _read('src/checks/run.py')
-        self.assertIn('got = list_unposted(get_page())', r)
+        self.assertIn('got = list_unposted(page)', r)
         self.assertIn("progress('era', 'not read — the earlier answer stands')", r)
         self.assertIn("if it.get('in_era')]", r)
         self.assertIn('eras=eras, tracker=tracker_rows)', r)
