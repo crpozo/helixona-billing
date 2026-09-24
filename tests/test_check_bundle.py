@@ -193,3 +193,49 @@ class TheTrackerHasAClaimColumnNow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TheDownloadIsTheFile(unittest.TestCase):
+    """2026-09-24: "No /Root object! - Is this really a PDF?" — the plain URL
+    of 12292025_EXPLANATION OF BENEFITS This is NOT aBill_004.pdf answered
+    with a page, not the PDF, and the reader blamed the file."""
+
+    def _page(self, answers):
+        class Resp:
+            def __init__(self, body, ctype='application/octet-stream', status=200):
+                self._b, self.status, self.ok = body, status, status < 400
+                self.headers = {'content-type': ctype}
+
+            def body(self):
+                return self._b
+        page = mock.Mock()
+        page.request.get = mock.Mock(side_effect=[Resp(*a) for a in answers])
+        return page
+
+    def test_a_page_instead_of_the_pdf_is_fetched_again_by_the_api(self):
+        import tempfile
+        from src.checks import sharepoint_browser as spb
+        item = {'name': 'x.pdf', 'path': 'Posted Checks/2025/x.pdf', 'download_url': 'https://sp/x.pdf', 'api_url': 'https://sp/_api/$value'}
+        page = self._page([(b'<!DOCTYPE html><html>viewer', 'text/html'), (b'%PDF-1.4 real', 'application/pdf')])
+        with tempfile.TemporaryDirectory() as d:
+            path = spb.download(page, item, d)
+            self.assertEqual(open(path, 'rb').read(), b'%PDF-1.4 real')
+        self.assertEqual(page.request.get.call_args_list[1].args[0], 'https://sp/_api/$value')
+
+    def test_neither_answer_being_the_file_names_what_came_back(self):
+        import tempfile
+        from src.checks import sharepoint_browser as spb
+        item = {'name': 'x.pdf', 'path': 'p/x.pdf', 'download_url': 'https://sp/x.pdf', 'api_url': 'https://sp/api'}
+        page = self._page([(b'<html>', 'text/html'), (b'', 'text/plain', 404)])
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(RuntimeError) as cm:
+            spb.download(page, item, d)
+        self.assertIn('HTTP 404', str(cm.exception))
+        self.assertIn('p/x.pdf', str(cm.exception))
+
+    def test_every_listed_file_carries_the_api_url(self):
+        from src.checks.sharepoint_browser import looks_like
+        s = _read('src/checks/sharepoint_browser.py')
+        self.assertIn("'api_url': (f\"{site}/_api/web/GetFileByServerRelativePath(decodedurl=@f)/$value\"", s)
+        self.assertTrue(looks_like('a.pdf', b'%PDF-1.7'))
+        self.assertFalse(looks_like('a.pdf', b'<!DOCTYPE'))
+        self.assertTrue(looks_like('a.heic', b'anything'))

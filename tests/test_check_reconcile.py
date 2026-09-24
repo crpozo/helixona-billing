@@ -540,7 +540,7 @@ class _Page:
                                           {'Name': '2026', 'ServerRelativeUrl': _Page.FOLDER + '/2026'},
                                           {'Name': "01'2026", 'ServerRelativeUrl': _Page.FOLDER + "/01'2026"}]})
             if u.endswith('Check 4022519.jpg'):
-                return _Resp(body=b'JPEGBYTES')
+                return _Resp(body=b'\xff\xd8\xff\xe0JPEGBYTES')
             return _Resp(status=404)
 
     got = []
@@ -687,7 +687,7 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = spb.download(_Page(), item, d)
             with open(path, 'rb') as fh:
-                self.assertEqual(fh.read(), b'JPEGBYTES')
+                self.assertEqual(fh.read(), b'\xff\xd8\xff\xe0JPEGBYTES')
 
     def test_the_run_prefers_it_over_the_s3_inbox_when_a_browser_is_there(self):
         r = _read('src/checks/run.py')

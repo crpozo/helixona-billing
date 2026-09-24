@@ -195,6 +195,10 @@ def list_folder(page, site, folder, skip=SKIP_FOLDERS, extensions=None):
                 'modified': it.get('TimeLastModified', ''),
                 'web_url': host + quote(it.get('ServerRelativeUrl', '')),
                 'download_url': host + quote(it.get('ServerRelativeUrl', '')),
+                # The file's bytes by the REST API, for when the plain URL
+                # answers with a page instead of the file.
+                'api_url': (f"{site}/_api/web/GetFileByServerRelativePath(decodedurl=@f)/$value"
+                            f"?@f='{quote(it.get('ServerRelativeUrl', '').replace(chr(39), chr(39) * 2), safe='')}'"),
             })
         for sf in subs.get('value', []):
             name = sf.get('Name', '')
@@ -213,12 +217,42 @@ def list_folder(page, site, folder, skip=SKIP_FOLDERS, extensions=None):
     return out
 
 
+MAGIC = {'.pdf': (b'%PDF',), '.png': (b'\x89PNG',), '.jpg': (b'\xff\xd8',), '.jpeg': (b'\xff\xd8',),
+         '.gif': (b'GIF8',), '.tif': (b'II*\x00', b'MM\x00*'), '.tiff': (b'II*\x00', b'MM\x00*'),
+         '.xlsx': (b'PK',), '.xlsm': (b'PK',)}
+
+
+def looks_like(name, body):
+    """Do the bytes start the way a file of that name should? True for a
+    type with no known signature."""
+    magic = MAGIC.get(os.path.splitext(name)[1].lower())
+    return True if not magic else any(body[:8].startswith(m) for m in magic)
+
+
 def download(page, item, dest_dir):
-    """The file's bytes through the browser's session."""
+    """The file's bytes through the browser's session. The plain URL of a
+    file sometimes answers with a page — the viewer, a sign-in, an error —
+    and not the file (2026-09-24: "No /Root object! - Is this really a
+    PDF?" of an EOB that opens fine in SharePoint). The bytes are checked
+    against the file's type and, when they are not it, fetched again by the
+    REST API's $value, which only ever returns the file."""
     path = os.path.join(dest_dir, re.sub(r'[^A-Za-z0-9._-]', '_', item['name']))
-    resp = page.request.get(item['download_url'])
-    if not resp.ok:
-        raise RuntimeError(f"download {resp.status} for {item['path']}")
+    body, what = b'', ''
+    for url in [u for u in (item.get('download_url'), item.get('api_url')) if u]:
+        resp = page.request.get(url)
+        if not resp.ok:
+            what = f"HTTP {resp.status}"
+            continue
+        body = resp.body()
+        if looks_like(item['name'], body):
+            break
+        ctype = (getattr(resp, 'headers', None) or {}).get('content-type', '?').split(';')[0]
+        what = (f"{ctype}, {len(body)} bytes, "
+                f"starting {body[:24]!r}")
+        logger.info(f"  (the plain URL of {item['name']} answered with {what} — asking the API for the file)")
+        body = b''
+    if not body:
+        raise RuntimeError(f"download of {item['path']} did not return the file: {what or 'no URL'}")
     with open(path, 'wb') as fh:
-        fh.write(resp.body())
+        fh.write(body)
     return path
