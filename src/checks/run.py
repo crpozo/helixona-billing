@@ -480,6 +480,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
                            | {norm_check(t.get('check_no')) for t in tracker_rows})
     to_check = {k for k in to_check if k}
     payments, checked = [], set()
+    ecw_in = False   # signed in to eCW this run
 
     def keep_earlier(ck):
         it = known[ck]
@@ -507,6 +508,7 @@ def run_check_reconcile(aws_client, body, login, get_page):
         page = get_page()
         creds = aws_client.get_secret('ecw_credentials')
         if login(page, creds, aws_client):
+            ecw_in = True
             failures, first = 0, True
             for i, ck in enumerate(ask, 1):
                 got = find_payments(page, ck, since, navigate=first, shot=bool(targets), spellings=spellings.get(ck))
@@ -543,7 +545,15 @@ def run_check_reconcile(aws_client, body, login, get_page):
     if do_era:
         progress('era', 'reading Billing → ERA, unposted…')
         try:
-            got = list_unposted(get_page())
+            page = get_page()
+            # An ERA-only run (ecw:false), or one with nothing to look up,
+            # reaches this step on a blank page: the hash routes led to
+            # about:blank#/mobiledoc/... (2026-09-24). Sign in first.
+            if not ecw_in:
+                if not login(page, aws_client.get_secret('ecw_credentials'), aws_client):
+                    raise RuntimeError('eCW login failed')
+                ecw_in = True
+            got = list_unposted(page)
         except Exception as e:
             logger.error(f"❌ the ERA screen could not be read: {e}")
             got = None

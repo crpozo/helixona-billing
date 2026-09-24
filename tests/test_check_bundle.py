@@ -279,5 +279,7 @@ class TheEraCanBeReadOnItsOwn(unittest.TestCase):
         # copies:false — the scans on file; tracker:false — the rows kept.
         self.assertIn("kept = sorted((to_check - checked) & set(known))", r)
         self.assertIn("progress('ecw', 'skipped (ecw:false)')", r)
+        # The ERA step signs in to eCW itself when the lookups did not (about:blank#/mobiledoc/… otherwise).
+        self.assertIn("if not ecw_in:\n                if not login(page, aws_client.get_secret('ecw_credentials'), aws_client):", r)
         self.assertIn("if not tracker_read:", r)
         self.assertIn("do_era = bool(body.get('era', do_ecw and not (body.get('check_eft') or body.get('limit_checks'))))", r)
