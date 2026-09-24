@@ -156,9 +156,13 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
             r['flags'].append('835 in eCW, not posted')
         if not r['in_blue_shield']:
             r['flags'].append('other payer')
+        # No scan: the check is in hand when the team logged it, when Blue
+        # Shield saw it cashed, or when eCW has the payment — a payment
+        # entered in eCW came off a check someone held (2026-09-24: 31127027,
+        # posted in eCW, no scan, read as "the three sources agree").
         if r['in_tracker'] and not r['has_copy']:
             r['flags'].append('in tracker, no scan found')
-        elif r['in_blue_shield'] and cashed and not r['has_copy']:
+        elif ((r['in_blue_shield'] and cashed) or r['in_ecw']) and not r['has_copy']:
             r['flags'].append('no copy of the check')
         amounts = {k: _d(r[k]) for k in ('copy_amount', 'bs_amount', 'ecw_amount', 'era_amount', 'tracker_amount') if _d(r[k]) is not None}
         if len(set(amounts.values())) > 1:

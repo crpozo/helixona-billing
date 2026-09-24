@@ -95,6 +95,20 @@ class TheTrackerMeetsTheScansOnTheNumber(unittest.TestCase):
         self.assertIn('no copy of the check', by['99999']['flags'])
         self.assertEqual((sm['in_tracker'], sm['tracker_no_scan'], sm['no_copy']), (2, 1, 1))
 
+    def test_a_payment_in_ecw_with_no_scan_is_a_missing_copy(self):
+        # 2026-09-24: 31127027 — Blue Shield "Check Number Assigned" (not
+        # cashed), posted in eCW, no scan: it read as "the three sources
+        # agree". A payment in eCW came off a check in hand; the scan is due.
+        rows, sm = reconcile(copies=[], checks=[{'check_eft': '31127027', 'check_amount': '585.38', 'check_status': 'Check Number Assigned',
+                                                 'check_date': '06/18/2026', 'cashed_date': ''}],
+                             payments=[{'check_no': '31127027', 'amount': '585.38', 'posted': '585.38', 'unposted': '0.00', 'payment_id': '4793'}])
+        self.assertEqual(rows[0]['verdict'], 'posted')
+        self.assertIn('no copy of the check', rows[0]['flags'])
+        self.assertEqual(sm['no_copy'], 1)
+        # Not cashed, not in eCW, not logged: nothing in hand yet — no scan expected.
+        rows, _ = reconcile(copies=[], checks=[{'check_eft': '1', 'check_amount': '1.00', 'check_status': 'Check Number Assigned'}], payments=[])
+        self.assertEqual((rows[0]['verdict'], rows[0]['flags']), ('not cashed', []))
+
     def test_a_logged_check_is_not_835_only(self):
         rows, _ = reconcile(copies=[], checks=[], payments=[], eras=[{'check_no': '31407766', 'amount': '10'}],
                             tracker=[{'check_no': '31407766', 'amount': '10'}])
