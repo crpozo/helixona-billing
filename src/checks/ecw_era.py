@@ -30,7 +30,7 @@ Read only. Nothing here posts, imports or marks anything.
 import re
 import time
 
-from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where, _tick, route_in
+from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where, route_in
 from src.checks.ecw_payments import _read_grid, _grid_signature
 from src.utils.logger import get_logger
 
@@ -53,10 +53,10 @@ ERA_HASHES = [
 STATUS_RX = r'posting\s*status|^status$'
 UNPOSTED_LABELS = ('UnPosted', 'Unposted', 'Un-Posted', 'UNPOSTED')
 FILTER_LABELS = ['Filter', 'Search', 'Lookup']
-# The filter carries a Posted Date range. 'All Posted Dates' makes it moot —
-# without it a fresh session would show only a window of the 835s and the run
-# would quietly conclude that the rest do not exist (2026-09-21).
-ALL_DATES_RX = r'all\s*posted\s*dates'
+# The filter is left as the team has it — Posting Status UnPosted and
+# nothing else touched (the operator, 2026-09-24: "no puedes modificar ese
+# filtro, déjalo como unposted y revisa las que hagan match").
+GRID_WAIT_S = 15
 NEXT_LABELS = ['Next', '>', 'Next Page']
 
 COLUMNS = {
@@ -262,15 +262,20 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
     if navigate and not open_era(page):
         return None
     set_posting_status(page)
-    if not _tick(page, ALL_DATES_RX, what='All Posted Dates'):
-        logger.warning("  ⚠️ 'All Posted Dates' was not ticked — the Posted Date range still applies, "
-                       "so 835s outside it are not in this answer")
-        _log_filter_controls(page)
     _click_text(page, FILTER_LABELS, timeout=6, what='filter', after_target=True)
-    time.sleep(2)
+    # The grid fills after the filter answers; an empty grid read too soon
+    # would be taken for "no unposted 835s" (2026-09-24: 0 rows in 2s).
+    deadline = time.time() + GRID_WAIT_S
+    hdrs, rows, recognised = [], [], False
+    while time.time() < deadline:
+        time.sleep(1)
+        hdrs, rows, recognised = _read_grid(page)
+        if rows:
+            break
     seen, out = set(), []
     for page_no in range(1, max_pages + 1):
-        hdrs, rows, recognised = _read_grid(page)
+        if page_no > 1:
+            hdrs, rows, recognised = _read_grid(page)
         if not recognised and not rows:
             if page_no == 1:
                 _shot(page, 'era_grid_unread')
@@ -286,6 +291,8 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
             logger.info(f"  ERA grid: {len(hdrs)} columns {hdrs[:16]} · {len(rows)} row(s) on the first page")
             if shot or not rows:
                 _shot(page, 'era_unposted' if rows else 'era_empty')
+            if not rows:
+                _log_filter_controls(page)
         if not fresh or not _next_page(page):
             break
         if page_no % 10 == 0:

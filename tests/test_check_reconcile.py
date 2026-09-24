@@ -162,10 +162,12 @@ class TheUnpostedErasAreTheirOwnSource(unittest.TestCase):
         self.assertIn('eras=eras, tracker=tracker_rows)', r)
         e = _read('src/checks/ecw_era.py')
         self.assertIn("UNPOSTED_LABELS = ('UnPosted', 'Unposted', 'Un-Posted', 'UNPOSTED')", e)
-        # Every page, and the whole history: the Posted Date range is made moot
-        # first, or 835s outside it would be quietly reported as non-existent.
-        self.assertIn("_tick(page, ALL_DATES_RX, what='All Posted Dates')", e)
-        self.assertIn("ALL_DATES_RX = r'all\\s*posted\\s*dates'", e)
+        # The filter is left as the team has it: Posting Status only (the
+        # operator, 2026-09-24). The grid is given time to fill before an
+        # empty one is believed.
+        self.assertNotIn("_tick(", e)
+        self.assertIn("GRID_WAIT_S = 15", e)
+        self.assertIn("        if rows:\n            break", e)
         self.assertIn('for page_no in range(1, max_pages + 1):', e)
         self.assertIn('if not fresh or not _next_page(page):', e)
         self.assertIn('stopped at the {max_pages}-page cap', e)
