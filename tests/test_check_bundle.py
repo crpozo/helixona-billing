@@ -260,3 +260,24 @@ class TheEraMenuItemIsClickedWhereItsHandlerIs(unittest.TestCase):
         # The menu's ERA-looking items go to the log, and any route they name is tried.
         self.assertIn("items = _menu_items(page, ERA_ITEM_RX) or []", e)
         self.assertIn("routes.insert(0, route_in(hit['attrs']))", e)
+
+
+class TheEraCanBeReadOnItsOwn(unittest.TestCase):
+    """2026-09-24, the operator: "no quiero correr otra vez los cheques" — a
+    run that reads only Billing → ERA and keeps every other answer."""
+
+    def test_the_cards(self):
+        d = _read('dashboard.py')
+        self.assertIn("title: 'Refresh the 835s (ERA) only', task: 'check_reconcile'", d)
+        self.assertIn("copies: false, tracker: false, limit_files: 0, ecw: false, era: true}", d)
+        self.assertIn("title: 'Compare again (no new reads)', task: 'check_reconcile'", d)
+        self.assertIn("copies: false, tracker: true, limit_files: 0, ecw: false, era: false}", d)
+
+    def test_the_run_keeps_the_other_answers(self):
+        r = _read('src/checks/run.py')
+        # ecw:false — every earlier eCW answer stands; blue_shield:false — the stored checks;
+        # copies:false — the scans on file; tracker:false — the rows kept.
+        self.assertIn("kept = sorted((to_check - checked) & set(known))", r)
+        self.assertIn("progress('ecw', 'skipped (ecw:false)')", r)
+        self.assertIn("if not tracker_read:", r)
+        self.assertIn("do_era = bool(body.get('era', do_ecw and not (body.get('check_eft') or body.get('limit_checks'))))", r)
