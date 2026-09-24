@@ -252,6 +252,14 @@ class TheEraMenuItemIsClickedWhereItsHandlerIs(unittest.TestCase):
                          '/mobiledoc/jsp/webemr/webpm/era/eraListView.jsp?x=1')
         self.assertEqual(route_in('loadMenu("ERA")'), '')
 
+    def test_the_route_the_menu_took_is_the_first_tried(self):
+        from src.checks.ecw_era import ERA_HASHES
+        self.assertEqual(ERA_HASHES[0], '/mobiledoc/jsp/webemr/webpm/era/ERAListView.jsp')
+        e = _read('src/checks/ecw_era.py')
+        # An empty grid is photographed and the filter's controls logged, so the next log says why.
+        self.assertIn("_shot(page, 'era_unposted' if rows else 'era_empty')", e)
+        self.assertIn("_log_filter_controls(page)", e)
+
     def test_the_pick_prefers_the_label_visible_with_a_handler(self):
         p = _read('src/eob/post.py')
         self.assertIn("score: (ex.test(t) ? 4 : 0) + (vis(el) ? 2 : 0) + (handler ? 1 : 0)", p)

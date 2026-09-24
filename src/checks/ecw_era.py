@@ -43,6 +43,9 @@ ERA_ITEM_RX = r'^era\b|electronic\s*remittance|/era/|era[A-Z_]\w*\.jsp'
 # Billing → ERA. The menu is tried first; a route that works is logged, so a
 # screen the bot could not reach today is one it can go to directly tomorrow.
 ERA_HASHES = [
+    # The route the Billing → ERA menu item took on 2026-09-24 (logged by
+    # open_era: openURL('#/mobiledoc/jsp/webemr/webpm/era/ERAListView.jsp')).
+    '/mobiledoc/jsp/webemr/webpm/era/ERAListView.jsp',
     '/mobiledoc/jsp/webemr/webpm/era/eraListView.jsp',
     '/mobiledoc/jsp/webemr/webpm/eraProcess.jsp',
     '/mobiledoc/jsp/webemr/webpm/era.jsp',
@@ -208,6 +211,37 @@ def rows_to_era(hdrs, rows):
     return out
 
 
+CONTROLS_JS = r"""() => {
+    const near = el => {
+        const id = el.getAttribute('id');
+        const lab = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+        if (lab) return txt(lab);
+        const p = el.closest('label, td, li, div');
+        return p ? txt(p).slice(0, 60) : '';
+    };
+    const boxes = Array.from(document.querySelectorAll('input[type="checkbox"], input[type="radio"]'))
+        .filter(vis).map(el => `${el.type}[${el.checked ? 'x' : ' '}] ${near(el)} (${el.getAttribute('ng-model') || el.id || el.name || ''})`);
+    const dates = Array.from(document.querySelectorAll('input'))
+        .filter(el => vis(el) && /date|dt/i.test((el.getAttribute('ng-model') || '') + (el.id || '') + (el.name || '') + (el.placeholder || '')))
+        .map(el => `${near(el)} = ${el.value} (${el.getAttribute('ng-model') || el.id || el.name || ''})`);
+    return {boxes: boxes.slice(0, 30), dates: dates.slice(0, 12)};
+}"""
+
+
+def _log_filter_controls(page):
+    """What the filter panel holds — for the log, when a control the bot
+    expected is not there: the checkboxes and date fields as labelled."""
+    for frm in [page] + list(page.frames):
+        try:
+            got = frm.evaluate(_js(CONTROLS_JS))
+        except Exception:
+            continue
+        if got and (got.get('boxes') or got.get('dates')):
+            logger.info(f"  filter controls · checkboxes: {got.get('boxes')}")
+            logger.info(f"  filter controls · dates: {got.get('dates')}")
+            return
+
+
 def _next_page(page):
     """Click Next and wait for the grid to answer. False when there is no
     next page, or the grid did not change."""
@@ -231,6 +265,7 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
     if not _tick(page, ALL_DATES_RX, what='All Posted Dates'):
         logger.warning("  ⚠️ 'All Posted Dates' was not ticked — the Posted Date range still applies, "
                        "so 835s outside it are not in this answer")
+        _log_filter_controls(page)
     _click_text(page, FILTER_LABELS, timeout=6, what='filter', after_target=True)
     time.sleep(2)
     seen, out = set(), []
@@ -248,9 +283,9 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
             seen.add((r['check_no'], r['era_file']))
         out.extend(fresh)
         if page_no == 1:
-            logger.info(f"  ERA grid: columns {hdrs[:11]}")
-            if shot:
-                _shot(page, 'era_unposted')
+            logger.info(f"  ERA grid: {len(hdrs)} columns {hdrs[:16]} · {len(rows)} row(s) on the first page")
+            if shot or not rows:
+                _shot(page, 'era_unposted' if rows else 'era_empty')
         if not fresh or not _next_page(page):
             break
         if page_no % 10 == 0:
