@@ -69,8 +69,12 @@ GRID_JS = r"""() => {
             return;
         }
         if (hdrs.length < 3) {
+            // The header table may follow the body in the document: the ERA
+            // screen's floating header (floatThead) is a clone inserted after
+            // the grid it belongs to (2026-09-25: 27 rows read as none). Same
+            // column count first, wherever it is; else the nearest above.
             const width = rows[0].length;
-            const same = headerTables.filter(h => h.i < i && h.hdrs.length === width);
+            const same = headerTables.filter(h => h.hdrs.length === width);
             const above = headerTables.filter(h => h.i < i);
             const pick = (same.length ? same : above).slice(-1)[0];
             hdrs = pick ? pick.hdrs : [];

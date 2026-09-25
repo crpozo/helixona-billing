@@ -267,6 +267,20 @@ class TheEraMenuItemIsClickedWhereItsHandlerIs(unittest.TestCase):
         self.assertIn("c.filter(x => x.length <= 120).length >= Math.max(3, c.length - 2)", p)
         self.assertIn("describe_screen(page, 'the ERA grid read empty')", _read('src/checks/ecw_era.py'))
 
+    def test_the_real_era_grid_maps_by_its_seventeen_columns(self):
+        # The screen as described on 2026-09-25: two blank leading columns
+        # (checkbox, spacer), the floating header cloned after the grid.
+        from src.checks.ecw_era import rows_to_era
+        hdrs = ['', '', 'STATUS', 'FILE', 'CHECK', 'PAYER', 'Payee Name', 'Tax Id', 'NPI', 'Imported Date', 'POSTED BY',
+                'POSTED DATE', 'METHOD', 'ACTION', 'DATED', 'TRACE#', 'AMOUNT']
+        rows = [['', '', 'U', '664', '664', 'BLUE SHIELD...', 'HELIXONA INC', '', '', '09/12/2026', '', '', 'Check',
+                 'Ready To Post Review ERA', '09/11/2026', '31407766', '425.32']]
+        got = rows_to_era(hdrs, rows)
+        self.assertEqual((got[0]['check_no'], got[0]['era_file'], got[0]['amount'], got[0]['dated'], got[0]['payer']),
+                         ('31407766', '664', '425.32', '09/11/2026', 'BLUE SHIELD...'))
+        p = _read('src/checks/ecw_payments.py')
+        self.assertIn("const same = headerTables.filter(h => h.hdrs.length === width);", p)
+
     def test_the_pick_prefers_the_label_visible_with_a_handler(self):
         p = _read('src/eob/post.py')
         self.assertIn("score: (ex.test(t) ? 4 : 0) + (vis(el) ? 2 : 0) + (handler ? 1 : 0)", p)
