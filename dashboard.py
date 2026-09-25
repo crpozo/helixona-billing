@@ -3380,12 +3380,13 @@ tr.row.open .caret{transform:rotate(90deg);color:var(--accent)}
 .dl{display:flex;gap:9px;font-size:12px;padding:3px 0;line-height:1.5}
 .dl .dt{color:var(--text-muted);min-width:96px;flex:none}
 .dl .dd{color:var(--text-primary);word-break:break-word}
-.doc{background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 11px;margin-bottom:7px}
-.doc .dn{display:block;font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:3px}
-.doc a.dn{transition:color .15s}
-.doc a.dn:hover{color:var(--accent)}
-.doc a.dn .ext{font-weight:500;font-size:10.5px;color:var(--text-muted);margin-left:5px}
-.doc a.dn:hover .ext{color:var(--accent)}
+.doc{display:block;background:var(--card);border:1px solid var(--bdr);border-radius:8px;padding:9px 11px;margin-bottom:7px;color:inherit;text-decoration:none}
+a.doc{transition:border-color .15s,background .15s;cursor:pointer}
+a.doc:hover{border-color:var(--accent);background:var(--hover,var(--card))}
+.doc .dn{display:block;font-weight:600;font-size:12px;color:var(--text-primary);margin-bottom:3px;transition:color .15s}
+a.doc:hover .dn{color:var(--accent)}
+.doc .dn .ext{font-weight:500;font-size:10.5px;color:var(--text-muted);margin-left:5px}
+a.doc:hover .dn .ext{color:var(--accent)}
 .doc .dm{font-size:10.5px;color:var(--text-muted);font-family:'JetBrains Mono','Monaco',monospace;word-break:break-all;line-height:1.5}
 .empty{padding:52px 20px;text-align:center;color:var(--text-muted)}
 .empty .big{font-size:15px;color:var(--text-secondary);margin-bottom:6px}
@@ -3545,15 +3546,18 @@ function detailHtml(r) {
   const docs = (r.documents || []).length ? (r.documents || []).map(d => {
     const name = esc(DOCN[d.document] || d.document);
     const url = DOC_URL[d.document] ? DOC_URL[d.document](r.claim_id) : '';
+    // The whole card is the link (the operator, 2026-09-25), not just the name.
     const title = url
-      ? `<a class="dn open" href="${url}" target="_blank" rel="noopener">${name} <span class="ext">open PDF &#8599;</span></a>`
+      ? `<div class="dn">${name} <span class="ext">open PDF &#8599;</span></div>`
       : `<div class="dn">${name}</div>`;
     const meta = [
       d.filename ? esc(d.filename) + (d.bytes ? ' · ' + Number(d.bytes).toLocaleString() + ' bytes' : '') : '',
       d.sha256 ? 'sha256 ' + esc(d.sha256).slice(0, 32) + '…' : '',
       esc(d.s3_path || ''),
     ].filter(Boolean).join('<br>');
-    return `<div class="doc">${title}<div class="dm">${meta}</div></div>`;
+    return url
+      ? `<a class="doc" href="${url}" target="_blank" rel="noopener" title="Open the PDF">${title}<div class="dm">${meta}</div></a>`
+      : `<div class="doc">${title}<div class="dm">${meta}</div></div>`;
   }).join('') : '<div class="dim">No documents were attached to this attempt.</div>';
 
   return `<div class="dwrap">
