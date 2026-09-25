@@ -3612,11 +3612,11 @@ function render() {
 
   const active = flag === 'unlinked' ? ' <span class="chip" onclick="setFlag(\\'unlinked\\')">not attached to prior claim &times;</span>'
               : flag === 'no-fln' ? ' <span class="chip" onclick="setFlag(\\'no-fln\\')">no payer acknowledgement &times;</span>' : '';
-  // Never hide rows silently — an audit log has to say what it is leaving out.
-  const hidden = showSuperseded ? 0 : ALL.filter(r => r.superseded).length;
+  // Retried attempts (a failure a later success made good) stay out of the
+  // list, without a chip saying so (the operator, 2026-09-25: "hide this").
+  // They are still in the export and in /api/audit-log?superseded=1.
   const supLabel = showSuperseded
-    ? ` <span class="chip" onclick="toggleSuperseded()">including retried attempts &times;</span>`
-    : (hidden ? ` <span class="chip" onclick="toggleSuperseded()">${hidden} retried attempt${hidden === 1 ? '' : 's'} hidden — show</span>` : '');
+    ? ` <span class="chip" onclick="toggleSuperseded()">including retried attempts &times;</span>` : '';
   const term = document.getElementById('q').value.trim().toLowerCase();
   const exactCount = term ? SHOWN.filter(r =>
       String(r.claim_id || '').toLowerCase() === term
