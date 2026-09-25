@@ -365,7 +365,8 @@ def run_check_reconcile(aws_client, body, login, get_page):
     limit_checks = int(body.get('limit_checks') or 0)
     only = norm_check(body.get('check_eft'))
     logger.info(f"Remittance — check reconciliation: since={since} blue_shield={blue_shield} "
-                f"limit_checks={limit_checks or 'none'} check_eft={only or 'any'} copies={do_copies} ecw={do_ecw}")
+                f"limit_checks={limit_checks or 'none'} check_eft={only or 'any'} copies={do_copies} tracker={do_tracker} "
+                f"ecw={do_ecw}{' (pending only)' if body.get('ecw_pending') else ''} era={do_era}")
     table = ensure_table(aws_client)
 
     run = {'mode': 'full', 'since': since, 'started_at': _now(), 'targets': [], 'steps': {}, 'order': []}
