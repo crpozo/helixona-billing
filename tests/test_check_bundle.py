@@ -302,6 +302,13 @@ class TheEraCanBeReadOnItsOwn(unittest.TestCase):
         self.assertIn("title: 'Compare again (no new reads)', task: 'check_reconcile'", d)
         self.assertIn("copies: false, tracker: true, limit_files: 0, ecw: false, era: false}", d)
 
+    def test_only_the_unchecked_can_be_looked_up(self):
+        d = _read('dashboard.py')
+        self.assertIn("title: 'Look up the unchecked in eCW', task: 'check_reconcile'", d)
+        self.assertIn("ecw: true, ecw_pending: true, era: false}", d)
+        r = _read('src/checks/run.py')
+        self.assertIn("if body.get('ecw_pending'):\n        ask = [ck for ck in ask if ck not in known]", r)
+
     def test_the_run_keeps_the_other_answers(self):
         r = _read('src/checks/run.py')
         # ecw:false — every earlier eCW answer stands; blue_shield:false — the stored checks;

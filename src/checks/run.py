@@ -493,6 +493,13 @@ def run_check_reconcile(aws_client, body, login, get_page):
         if not targets:   # a targeted run asks again; a full run trusts the settled answer
             keep_earlier(ck)
     ask = sorted(to_check - checked)
+    # ecw_pending:true — only the checks eCW has never answered for; every
+    # earlier answer (posted, unposted, not in eCW) stands. The 254 checks
+    # the batch scans and the 835s brought in (2026-09-25) get looked up
+    # without the thousand lookups a full pass would repeat.
+    if body.get('ecw_pending'):
+        ask = [ck for ck in ask if ck not in known]
+        logger.info(f"🔎 eCW: only the {len(ask)} check(s) never looked up (ecw_pending)")
     # Every way the number is written across the sources — the copy as
     # printed (zeros kept), the file name, Blue Shield — so eCW, which
     # matches Check # exactly, is asked the way the team typed it.
