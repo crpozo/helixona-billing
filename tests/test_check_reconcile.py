@@ -246,7 +246,7 @@ class TheEcwPaymentsGridIsReadByName(unittest.TestCase):
         self.assertNotIn("page.keyboard.press('Enter')\n                time.sleep(0.3)", p)
         self.assertIn('def _read_value(frm):', p)
         e2 = _read('src/checks/ecw_payments.py')
-        self.assertIn('c.every(x => x.length <= 120)', e2)
+        self.assertIn('c.filter(x => x.length <= 120).length >= Math.max(3, c.length - 2)', e2)
         self.assertIn("(!best || !best.right)) best = { hdrs, rows: [], score: 500, right: true }", e2)
 
     def test_a_grid_filtered_by_check_number_need_not_show_the_column(self):

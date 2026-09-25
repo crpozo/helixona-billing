@@ -260,6 +260,13 @@ class TheEraMenuItemIsClickedWhereItsHandlerIs(unittest.TestCase):
         self.assertIn("_shot(page, 'era_unposted' if rows else 'era_empty')", e)
         self.assertIn("_log_filter_controls(page)", e)
 
+    def test_a_row_with_one_long_action_cell_is_still_a_row(self):
+        # 2026-09-25: 26 unposted 835s on screen (checkERA664…689), 0 read —
+        # the ACTION cell's menu text ran past the per-cell cap and the row went.
+        p = _read('src/checks/ecw_payments.py')
+        self.assertIn("c.filter(x => x.length <= 120).length >= Math.max(3, c.length - 2)", p)
+        self.assertIn("describe_screen(page, 'the ERA grid read empty')", _read('src/checks/ecw_era.py'))
+
     def test_the_pick_prefers_the_label_visible_with_a_handler(self):
         p = _read('src/eob/post.py')
         self.assertIn("score: (ex.test(t) ? 4 : 0) + (vis(el) ? 2 : 0) + (handler ? 1 : 0)", p)

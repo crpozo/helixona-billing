@@ -48,10 +48,13 @@ GRID_JS = r"""() => {
     const tables = Array.from(document.querySelectorAll('table')).filter(vis);
     const headersOf = tb => Array.from(tb.querySelectorAll('th, thead td')).map(txt).filter(h => h !== undefined);
     // A filter form laid out as a table is not a grid: its "cells" are whole
-    // widgets (hundreds of characters). Grid cells are short.
+    // widgets (hundreds of characters). Grid cells are short — all but a
+    // couple: the ERA grid's ACTION cell is a menu of buttons a hundred
+    // characters long, and a row must not be lost for it (2026-09-25: 26
+    // unposted 835s on screen, 0 read).
     const rowsOf = tb => Array.from(tb.querySelectorAll('tbody tr, tr')).filter(tr => tr.querySelector('td') && !tr.querySelector('th'))
-        .map(tr => Array.from(tr.querySelectorAll('td')).map(txt))
-        .filter(c => c.length >= 3 && c.some(x => x) && c.every(x => x.length <= 120));
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(c => txt(c).slice(0, 200)))
+        .filter(c => c.length >= 3 && c.some(x => x) && c.filter(x => x.length <= 120).length >= Math.max(3, c.length - 2));
     const headerTables = tables.map((tb, i) => ({ i, hdrs: headersOf(tb) })).filter(h => h.hdrs.filter(x => x).length >= 3);
     const looksRight = hdrs => hdrs.some(h => /amount|amt/i.test(h)) && hdrs.some(h => /check|chk|posted|payment|pmt/i.test(h));
     let best = null;

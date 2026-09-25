@@ -31,7 +31,7 @@ import re
 import time
 
 from src.eob.post import _js, _click_text, _shot, _page_has, _menu_items, _hover_text, _where, route_in
-from src.checks.ecw_payments import _read_grid, _grid_signature
+from src.checks.ecw_payments import _read_grid, _grid_signature, describe_screen
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -293,6 +293,9 @@ def list_unposted(page, navigate=True, max_pages=60, shot=False):
                 _shot(page, 'era_unposted' if rows else 'era_empty')
             if not rows:
                 _log_filter_controls(page)
+                # Every table on screen, headers, row counts and first row:
+                # the next log says how the grid is built when it read empty.
+                describe_screen(page, 'the ERA grid read empty')
         if not fresh or not _next_page(page):
             break
         if page_no % 10 == 0:
