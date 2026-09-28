@@ -1378,7 +1378,8 @@ window.scrollToEl = function(sel){
         // (other payers), not-yet-cashed ones and an unread eCW are shown in
         // their own tiles, not counted here.
         const checkMismatch = r => ['not in eCW', 'unposted'].includes(r.verdict)
-            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('in tracker, no scan') || String(f).startsWith('amounts differ'));
+            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('in tracker, no scan') || String(f).startsWith('amounts differ')
+                                         || String(f).startsWith('cashed by patient') || String(f).startsWith('missing, ask Blue Shield'));
         // The rows the last run wrote: its targets (a test of 1), else
         // whatever carries the last reconciliation's timestamp.
         const inLastRun = (r, sm) => {
@@ -1445,6 +1446,10 @@ window.scrollToEl = function(sel){
                     tile('eCW not checked', sm.ecw_unchecked, 'eCW not checked', 'var(--info)', 'run again'),
                     tile('835 in eCW, not posted', sm.era_unposted, '835 unposted', 'var(--vio2)', 'payer sent it, nobody posted'),
                     tile('in the tracker', sm.in_tracker, 'in tracker', 'var(--info)', 'the team logged it as received'),
+                    tile('cashed by patient', sm.bs_cashed_patient, 'bs:cashed by patient', 'var(--bad)', 'Blue Shield check, bill the patient'),
+                    tile('missing, ask Blue Shield to reissue', sm.bs_missing, 'bs:missing, ask Blue Shield to reissue', 'var(--bad)', 'issued 45+ days ago, never cashed'),
+                    tile('cashed by Helixona', sm.bs_cashed_helixona, 'bs:cashed by Helixona', 'var(--success)', 'Blue Shield checks in hand'),
+                    tile('Blue Shield checks sent', sm.bs_sent, 'bs:all', 'var(--info)', 'listed in the portal'),
                     ...((lr.targets || []).length ? [tile('last run', data.rows.filter(r => inLastRun(r, sm)).length, 'last run', 'var(--vio2)', 'the test just run')] : []),
                     tile('all checks', data.rows.length, 'all', 'var(--text-secondary)', ''),
                 ].join('') : '';
@@ -1453,6 +1458,7 @@ window.scrollToEl = function(sel){
             if (!body) return;
             const f = window._checksFilter;
             const rows = data.rows.filter(r => f === 'all' ? true
+                : f.startsWith('bs:') ? (f === 'bs:all' ? !!r.in_blue_shield : r.bs_bucket === f.slice(3))
                 : f === 'last run' ? inLastRun(r, sm)
                 : f === 'mismatch' ? checkMismatch(r)
                 : f === 'posted' ? (r.verdict === 'posted' && !(r.flags || []).some(x => x !== 'other payer'))
@@ -1474,6 +1480,8 @@ window.scrollToEl = function(sel){
                 const flags = r.flags || [];
                 if (r.verdict === 'not in eCW') out.push(`<strong>Enter the payment in eCW</strong>${r.has_copy ? ` — the scan is in ${esc(r.copy_folder || 'SharePoint')}` : ''}.`);
                 if (r.verdict === 'unposted') out.push(`<strong>Finish posting</strong>${r.ecw_unposted ? ' ' + money(r.ecw_unposted) : ''} in eCW.`);
+                if (flags.some(x => x.startsWith('cashed by patient'))) out.push(`<strong>The patient cashed this check</strong>${r.bs_patients ? ' (' + esc(r.bs_patients) + ')' : ''} — bill the patient.`);
+                if (flags.some(x => x.startsWith('missing, ask Blue Shield'))) out.push(`Issued ${esc(r.bs_date || '')}, never cashed, not received — <strong>ask Blue Shield to reissue</strong>.`);
                 if (flags.some(x => x.startsWith('no copy'))) out.push('<strong>Scan the check</strong> into SharePoint › Insurance Checks — the tracker does not list it either.');
                 if (flags.some(x => x.startsWith('in tracker, no scan'))) out.push(`The tracker says it was received${r.tracker_received ? ' ' + esc(r.tracker_received) : ''}, but no folder holds its scan — <strong>find it or scan it</strong> into Insurance Checks.`);
                 if (flags.some(x => x.startsWith('amounts differ'))) out.push('<strong>Check which amount is right</strong>: copy, Blue Shield and eCW disagree.');
@@ -1498,8 +1506,11 @@ window.scrollToEl = function(sel){
                 const trackerCell = r.in_tracker
                     ? `<div style="font-size:11px;color:var(--info)" title="tracker ${esc(r.tracker_sheet || '')}${r.tracker_payer ? ' · ' + esc(r.tracker_payer) : ''}">📒 tracker${r.tracker_received ? ' · received ' + esc(r.tracker_received) : ''}${r.tracker_deposit ? ' · deposited ' + esc(r.tracker_deposit) : ''}${r.tracker_posted ? ' · posted: ' + esc(r.tracker_posted) : ''}</div>`
                     : '';
+                const bucketColor = /patient|missing/.test(r.bs_bucket || '') ? 'var(--bad)' : /not on file|sent to/.test(r.bs_bucket || '') ? 'var(--warning)' : r.bs_bucket === 'cashed by Helixona' ? 'var(--success)' : 'var(--text-muted)';
                 const bsCell = r.in_blue_shield
                     ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div style="font-size:11px;color:var(--text-muted)">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div style="font-size:11px;color:var(--text-muted)">issued ${esc(r.bs_date)}</div>` : ''}`
+                      + (r.bs_payee ? `<div style="font-size:11px;color:var(--text-muted)">paid to ${esc(r.bs_payee)}</div>` : '')
+                      + (r.bs_bucket ? `<div style="font-size:11px;color:${bucketColor};font-weight:600">${esc(r.bs_bucket)}</div>` : '')
                     : '<span style="color:var(--text-muted)">other payer</span>';
                 const eraCell = r.in_era
                     ? `<div style="font-size:11px;color:var(--vio2)" title="ERA file ${esc(r.era_file || '')} · ${esc(r.era_payer || '')}">835 unposted${r.era_amount ? ' ' + money(r.era_amount) : ''}${r.era_file ? ' · file ' + esc(r.era_file) : ''}</div>`
@@ -2588,7 +2599,7 @@ def api_checks_csv():
     import io
     from flask import Response
     cols = ['check_number', 'check_full', 'deposit_file', 'deposit_slip', 'deposit_total', 'copy_page', 'copy_claim', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
-            'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
+            'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'bs_payee', 'bs_paid_to_member', 'bs_patients', 'bs_bucket', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
             'ecw_posted', 'ecw_unposted', 'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer',
             'in_tracker', 'tracker_received', 'tracker_deposit', 'tracker_amount', 'tracker_payer', 'tracker_posted',
             'tracker_sheet', 'tracker_claim', 'reconciled_at']

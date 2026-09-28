@@ -608,7 +608,8 @@ def run_check_reconcile(aws_client, body, login, get_page):
                              'ecw_unposted = :eu, ecw_payment_id = :ei, has_copy = :hc, reconciled_at = :t, '
                              'in_era = :ir, era_amount = :ira, era_file = :irf, era_dated = :ird, era_payer = :irp, '
                              'in_tracker = :it, tracker_received = :itr, tracker_deposit = :itd, '
-                             'tracker_amount = :ita, tracker_payer = :itp, tracker_posted = :itpo, tracker_sheet = :its, tracker_claim = :itc',
+                             'tracker_amount = :ita, tracker_payer = :itp, tracker_posted = :itpo, tracker_sheet = :its, tracker_claim = :itc, '
+                             'bs_payee = :bp, bs_paid_to_member = :bpm, bs_patients = :bpa, bs_bucket = :bb',
             ExpressionAttributeValues={
                 ':v': r['verdict'], ':f': r['flags'], ':b': r['in_blue_shield'], ':ba': r['bs_amount'],
                 ':bs': r['bs_status'], ':bd': r['bs_date'], ':cd': r['cashed_date'], ':e': r['in_ecw'],
@@ -618,7 +619,8 @@ def run_check_reconcile(aws_client, body, login, get_page):
                 ':ird': r['era_dated'], ':irp': r['era_payer'],
                 ':it': r['in_tracker'], ':itr': r['tracker_received'], ':itd': r['tracker_deposit'],
                 ':ita': r['tracker_amount'], ':itp': r['tracker_payer'], ':itpo': r['tracker_posted'],
-                ':its': r['tracker_sheet'], ':itc': r['tracker_claim']})
+                ':its': r['tracker_sheet'], ':itc': r['tracker_claim'],
+                ':bp': r['bs_payee'], ':bpm': r['bs_paid_to_member'], ':bpa': r['bs_patients'], ':bb': r['bs_bucket']})
         if targets or len(rows) <= 25:
             logger.info(f"  ✅ {r['check_number']}: copy {'yes' if r['has_copy'] else 'NO'}"
                         f"{' $' + r['copy_amount'] if r['copy_amount'] else ''} · Blue Shield "

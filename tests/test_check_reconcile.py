@@ -94,7 +94,10 @@ class TheVerdictPerCheck(unittest.TestCase):
         self.assertEqual(summarize([]), {'checks': 0, 'posted': 0, 'unposted': 0, 'not_in_ecw': 0, 'not_cashed': 0,
                                          'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0,
                                          'era_only': 0, 'era_unposted': 0,
-                                         'in_tracker': 0, 'tracker_no_scan': 0})
+                                         'in_tracker': 0, 'tracker_no_scan': 0,
+                                         'bs_sent': 0, 'bs_cashed_helixona': 0, 'bs_cashed_patient': 0, 'bs_cashed_unknown': 0,
+                                         'bs_missing': 0, 'bs_in_transit': 0, 'bs_in_hand_uncleared': 0,
+                                         'bs_to_patient_uncashed': 0, 'bs_voided': 0})
 
 
 class TheUnpostedErasAreTheirOwnSource(unittest.TestCase):

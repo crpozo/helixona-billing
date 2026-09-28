@@ -45,6 +45,8 @@ Flags alongside: `no copy of the check` (Blue Shield cashed it, no scan),
 outside the search window; informational), `amounts differ: …`. Pure: no
 browser, no AWS.
 """
+import datetime
+import re
 from decimal import Decimal, InvalidOperation
 
 from src.eob.parse import money, norm_text
@@ -68,7 +70,50 @@ def _cashed(status):
     return 'cashed' in norm_text(status).lower()
 
 
-def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
+HELIXONA_RX = re.compile(r'helixona', re.I)
+REISSUE_AFTER_DAYS = 45   # a check issued this long ago, not cashed, not in hand: ask Blue Shield to reissue
+
+
+def _days_since(text, today):
+    m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', str(text or ''))
+    if not m:
+        return None
+    try:
+        return (today - datetime.date(int(m.group(3)), int(m.group(1)), int(m.group(2)))).days
+    except ValueError:
+        return None
+
+
+def bs_bucket(r, today):
+    """Who has Blue Shield's money — the operator's four buckets (2026-09-28):
+    checks sent · cashed by Helixona · cashed by the patient · missing, never
+    cashed. Blue Shield says whether the check was cashed and to whom it was
+    made out; the scans, the tracker and eCW say whether Helixona has it."""
+    if not r['in_blue_shield']:
+        return ''
+    status = norm_text(r['bs_status']).lower()
+    in_hand = r['has_copy'] or r['in_tracker'] or r['in_ecw']
+    payee = norm_text(r['bs_payee'])
+    to_patient = r['bs_paid_to_member'] or bool(payee and not HELIXONA_RX.search(payee))
+    if 'void' in status or 'stop' in status:
+        return 'voided'
+    if _cashed(status) or r['cashed_date']:
+        if in_hand:
+            return 'cashed by Helixona'
+        if to_patient:
+            return 'cashed by patient'
+        return 'cashed, not on file'
+    if in_hand:
+        return 'in hand, not cleared'
+    if to_patient:
+        return 'sent to patient, not cashed'
+    age = _days_since(r['bs_date'], today)
+    if age is not None and age > REISSUE_AFTER_DAYS:
+        return 'missing, ask Blue Shield to reissue'
+    return 'in transit'
+
+
+def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=(), today=None):
     """Rows keyed by check number, plus a summary.
 
     `ecw_checked`: True/False for every check, or the set of check numbers
@@ -86,6 +131,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
         return by.setdefault(key, {
             'check_number': key, 'has_copy': False, 'copy_amount': '', 'copy_file': '', 'copy_url': '',
             'copy_date': '', 'in_blue_shield': False, 'bs_amount': '', 'bs_status': '', 'bs_date': '',
+            'bs_payee': '', 'bs_paid_to_member': False, 'bs_patients': '', 'bs_bucket': '',
             'cashed_date': '', 'in_ecw': False, 'ecw_amount': '', 'ecw_posted': '', 'ecw_unposted': '',
             'ecw_payment_id': '', 'in_era': False, 'era_amount': '', 'era_file': '',
             'era_dated': '', 'era_payer': '', 'in_tracker': False, 'tracker_received': '',
@@ -105,8 +151,11 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
         if not key:
             continue
         r = row(key)
+        patients = sorted({norm_text(c.get('member_name')) for c in (q.get('claims') or []) if c.get('member_name')})
         r.update(in_blue_shield=True, bs_amount=money(q.get('check_amount')), bs_status=q.get('check_status', ''),
-                 bs_date=q.get('check_date', ''), cashed_date=q.get('cashed_date', ''))
+                 bs_date=q.get('check_date', ''), cashed_date=q.get('cashed_date', ''),
+                 bs_payee=norm_text(q.get('payee_name', '')), bs_paid_to_member=bool(q.get('paid_to_member')),
+                 bs_patients=', '.join(patients[:4]) + (' …' if len(patients) > 4 else ''))
     for p in payments:
         key = norm_check(p.get('check_no'))
         if not key:
@@ -136,8 +185,10 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
                      tracker_claim=t.get('claim_no', ''),
                      tracker_sheet=f"{t.get('sheet', '')}:{t.get('row', '')}".strip(':'))
 
+    today = today or datetime.date.today()
     for r in by.values():
         cashed = _cashed(r['bs_status']) or bool(r['cashed_date'])
+        r['bs_bucket'] = bs_bucket(r, today)
         if r['in_ecw']:
             unposted = _d(r['ecw_unposted'])
             r['verdict'] = 'unposted' if (unposted is not None and unposted > 0) else 'posted'
@@ -164,6 +215,10 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=()):
             r['flags'].append('in tracker, no scan found')
         elif ((r['in_blue_shield'] and cashed) or r['in_ecw']) and not r['has_copy']:
             r['flags'].append('no copy of the check')
+        if r['bs_bucket'] == 'cashed by patient':
+            r['flags'].append('cashed by patient, bill the patient')
+        elif r['bs_bucket'] == 'missing, ask Blue Shield to reissue':
+            r['flags'].append('missing, ask Blue Shield to reissue')
         amounts = {k: _d(r[k]) for k in ('copy_amount', 'bs_amount', 'ecw_amount', 'era_amount', 'tracker_amount') if _d(r[k]) is not None}
         if len(set(amounts.values())) > 1:
             r['flags'].append('amounts differ: ' + ', '.join(f"{k.split('_')[0]} {v:.2f}" for k, v in amounts.items()))
@@ -192,4 +247,14 @@ def summarize(rows):
         'other_payer': sum('other payer' in flags(r) for r in rows),
         'no_copy': sum('no copy of the check' in flags(r) for r in rows),
         'amount_mismatch': sum(any(f.startswith('amounts differ') for f in flags(r)) for r in rows),
+        # Blue Shield's checks by who has the money (bs_bucket).
+        'bs_sent': sum(bool(r.get('in_blue_shield')) for r in rows),
+        'bs_cashed_helixona': sum(r.get('bs_bucket') == 'cashed by Helixona' for r in rows),
+        'bs_cashed_patient': sum(r.get('bs_bucket') == 'cashed by patient' for r in rows),
+        'bs_cashed_unknown': sum(r.get('bs_bucket') == 'cashed, not on file' for r in rows),
+        'bs_missing': sum(r.get('bs_bucket') == 'missing, ask Blue Shield to reissue' for r in rows),
+        'bs_in_transit': sum(r.get('bs_bucket') == 'in transit' for r in rows),
+        'bs_in_hand_uncleared': sum(r.get('bs_bucket') == 'in hand, not cleared' for r in rows),
+        'bs_to_patient_uncashed': sum(r.get('bs_bucket') == 'sent to patient, not cashed' for r in rows),
+        'bs_voided': sum(r.get('bs_bucket') == 'voided' for r in rows),
     }

@@ -62,7 +62,20 @@ Check numbers are keyed bare (231282015) so Blue Shield, the copies and eCW meet
 
 | `eCW not checked` | eCW has never answered for this check; nothing can be said. An answer from an earlier run (posted, unposted, not in eCW) is kept when this run's lookup fails — a failed lookup is not a new answer |
 
-Flags alongside: `no copy of the check`; `in tracker, no scan found`; `other payer` (Blue Shield does not
+**Who has Blue Shield's money** (`bs_bucket`, 2026-09-28 — the operator's
+buckets: checks sent · cashed by Helixona · cashed by the patient · missing,
+never cashed). For every check the portal lists: `cashed by Helixona` (Blue
+Shield says cashed and a scan, the tracker or eCW has it), `cashed by
+patient` (cashed, nothing at Helixona, and the payee is not Helixona — bill
+the patient), `cashed, not on file` (cashed, payee Helixona, no trace —
+verify against the bank), `in hand, not cleared` (not cashed yet, but
+scanned or logged), `in transit` (issued within 45 days, not received),
+`missing, ask Blue Shield to reissue` (issued over 45 days ago, not cashed,
+not received), `sent to patient, not cashed`, `voided`. The payee and the
+patients on the check come from the portal's Check/EFT information
+(helixona-eobs: `payee_name`, `paid_to_member`, `claims[].member_name`).
+
+Flags alongside: `no copy of the check`; `in tracker, no scan found`; `cashed by patient, bill the patient`; `missing, ask Blue Shield to reissue`; `other payer` (Blue Shield does not
 list it — informational); `amounts differ: copy 275.09, bs 257.09`.
 
 Everything lands in the **✅ Checks** table on the Remittance tab (filters
