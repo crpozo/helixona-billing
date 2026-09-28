@@ -61,6 +61,8 @@ class WhoHasBlueShieldsMoney(unittest.TestCase):
     def test_the_run_and_the_pages_carry_it(self):
         r = _read('src/checks/run.py')
         self.assertIn("bs_payee = :bp, bs_paid_to_member = :bpm, bs_patients = :bpa, bs_bucket = :bb", r)
+        # The Blue Shield rows are read WITH the payee and the claims, or every bucket reads "not on file".
+        self.assertIn("'payee_name, paid_to_member, claims')", r)
         d = _read('dashboard.py')
         self.assertIn("'bs_payee', 'bs_paid_to_member', 'bs_patients', 'bs_bucket'", d)
         self.assertIn("tile('cashed by patient', sm.bs_cashed_patient, 'bs:cashed by patient'", d)

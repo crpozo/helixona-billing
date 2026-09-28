@@ -428,8 +428,12 @@ def run_check_reconcile(aws_client, body, login, get_page):
     else:
         progress('copies', 'skipped (copies:false)')
 
+    # payee_name, paid_to_member and the claims' member names decide who
+    # has Blue Shield's money (bs_bucket); left out of this projection, every
+    # payee read as blank (2026-09-28: 0 "cashed by patient", 32 "not on file").
     checks = scan_all(aws_client.dynamodb.Table(EOB_TABLE),
-                       ProjectionExpression='check_eft, check_amount, check_status, check_date, cashed_date')
+                       ProjectionExpression='check_eft, check_amount, check_status, check_date, cashed_date, '
+                                            'payee_name, paid_to_member, claims')
     if targets:
         checks = [q for q in checks if norm_check(q.get('check_eft')) in targets]
     logger.info(f"🧾 Blue Shield: {len(checks)} check(s)" + ('' if blue_shield else ' on file from earlier captures'))
