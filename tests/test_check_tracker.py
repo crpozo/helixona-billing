@@ -75,6 +75,19 @@ class TheSheetIsReadByItsHeaders(unittest.TestCase):
         self.assertEqual([r['check_no'] for r in since_filter(rows, '07/01/2025')], ['2', '3', '4'])
 
 
+class TheSiteComesFromEitherFormOfLink(unittest.TestCase):
+    def test_long_short_and_none(self):
+        from src.checks.sharepoint_browser import site_of
+        self.assertEqual(site_of('https://helixona.sharepoint.com/sites/BillingDepartment/_layouts/15/Doc.aspx?sourcedoc=x'),
+                         'https://helixona.sharepoint.com/sites/BillingDepartment')
+        # 2026-09-28: the tracker's own sharing link, before the redirect.
+        self.assertEqual(site_of('https://helixona.sharepoint.com/:x:/s/BillingDepartment/IQCRf7lyZ1jsQ7tLJujIe3IXAWYERQGIjiKgRZFHvkxUe34?e=AxylEt'),
+                         'https://helixona.sharepoint.com/sites/BillingDepartment')
+        self.assertEqual(site_of('https://login.microsoftonline.com/x', 'https://helixona.sharepoint.com/:f:/s/BillingDepartment/IgAY'),
+                         'https://helixona.sharepoint.com/sites/BillingDepartment')
+        self.assertEqual(site_of('about:blank', ''), '')
+
+
 class TheCopyOnTheMachineStandsInForSharePoint(unittest.TestCase):
     def test_the_local_file_is_read_when_sharepoint_is_not(self):
         import openpyxl

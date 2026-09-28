@@ -41,6 +41,24 @@ LOGIN_HOSTS = ('login.microsoftonline.com', 'login.live.com', 'login.microsoft.c
 # SharePoint's own Forms folder are skipped now.
 SKIP_FOLDERS = ('Forms', 'Insurance Check Tracker')
 SITE_RX = re.compile(r'^(https://[^/]+/sites/[^/?#]+)', re.I)
+# A sharing link's short form: https://host/:x:/s/<site>/<id> (a spreadsheet),
+# /:f:/s/ (a folder), /:b:/s/ (a PDF) — the site is the segment after /s/.
+SHORT_RX = re.compile(r'^(https://[^/]+)/:[a-z]:/s/([^/?#]+)', re.I)
+
+
+def site_of(*urls):
+    """The site URL — https://host/sites/<site> — from the first of `urls`
+    that names one, in either the long or the sharing-link form. '' if none
+    does (2026-09-28: the tracker's :x: link, read before Excel Online had
+    redirected it, matched neither and the read died on .group())."""
+    for u in urls:
+        m = SITE_RX.match(u or '')
+        if m:
+            return m.group(1)
+        m = SHORT_RX.match(u or '')
+        if m:
+            return f"{m.group(1)}/sites/{m.group(2)}"
+    return ''
 JSON_HEADERS = {'Accept': 'application/json;odata=nometadata'}
 
 
@@ -125,7 +143,9 @@ def open_folder(page, link=None, creds=None, wait_for_person=240):
         time.sleep(3)
     time.sleep(3)
     url = _url(page)
-    site = (SITE_RX.match(url) or SITE_RX.match(link)).group(1)
+    site = site_of(url, link)
+    if not site:
+        raise RuntimeError(f'no SharePoint site in {url[:80]!r} or the link')
     folder = unquote((parse_qs(urlparse(url).query).get('id') or [''])[0]) \
         or (creds or {}).get('folder_url') or DEFAULT_FOLDER
     logger.info(f"  ✅ signed in · site {site} · folder {folder}")
