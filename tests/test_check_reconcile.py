@@ -344,6 +344,7 @@ class TheTestOfOne(unittest.TestCase):
         with mock.patch('src.eob.capture.run_eob_capture', side_effect=fake_capture), \
                 mock.patch.object(run_mod, 'read_new_copies', side_effect=copies or fake_copies), \
                 mock.patch.object(run_mod, 'find_payments', side_effect=find), \
+                mock.patch.object(run_mod, 'read_tracker', side_effect=RuntimeError('no SharePoint in a test')), \
                 mock.patch.object(run_mod, 'list_payments', side_effect=AssertionError('a targeted run never lists every payment')):
             result = run_mod.run_check_reconcile(aws, body, login=lambda page, creds, aws_client: True,
                                                  get_page=lambda: object())
@@ -419,7 +420,11 @@ class TheTestOfOne(unittest.TestCase):
             asked.append(ck)
             return None
 
+        # The tracker is patched out: on the bot's own machine a copy of the
+        # sheet stands in for SharePoint (2026-09-28: the host's tests asked
+        # eCW for the tracker's checks and this assertion failed there).
         with mock.patch.object(run_mod, 'read_new_copies', return_value=(0, 4, 0)), \
+                mock.patch.object(run_mod, 'read_tracker', side_effect=RuntimeError('no SharePoint in a test')), \
                 mock.patch.object(run_mod, 'find_payments', side_effect=failing):
             run_mod.run_check_reconcile(aws, {'blue_shield': False, 'copies': True, 'ecw': True},
                                         login=lambda page, creds, aws_client: True, get_page=lambda: object())
