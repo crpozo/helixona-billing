@@ -35,9 +35,14 @@ class WhoHasBlueShieldsMoney(unittest.TestCase):
             _bs('4', 'Check Number Assigned', '06/01/2026'),                                   # 119 days, nobody has it
             _bs('5', 'Check Number Assigned', '09/20/2026'),                                   # 8 days: in the mail
             _bs('6', 'Check Number Assigned', '09/01/2026'),                                   # in the tracker, not cleared
-            _bs('7', 'Check Number Assigned', '06/01/2026', member=True),                      # sent to the patient, not cashed
+            _bs('7', 'Check Number Assigned', '06/01/2026', payee='DOE, JANE', member=True),   # sent to the patient, not cashed
             _bs('8', 'Void - Check Payment Stopped', '06/01/2026'),
             _bs('9', 'Check Cashed', '08/01/2026', payee='DOE, JANE', cashed='08/10/2026'),    # patient payee, but posted in eCW
+            # Paid by name to a clinician, not to the patient on the claim: not the patient's.
+            _bs('10', 'Check Cashed', '08/01/2026', payee='ALISON K. ETTER', cashed='08/10/2026', patient='THORNE, KARI'),
+            _bs('11', 'Check Number Assigned', '06/01/2026', payee='JEFFREY L. TAYLOR', patient='TAYLOR, EMMA'),
+            # The payee written differently from the claim's member name is still the patient.
+            _bs('12', 'Check Number Assigned', '09/20/2026', payee='NICOLE D. RUSSELL HERNANDEZ', patient='NICOLE D RUSSELL HERNANDEZ'),
         ]
         rows, sm = reconcile(copies=[{'check_number': '1', 'amount': '100.00'}], checks=checks,
                              payments=[{'check_no': '9', 'amount': '100.00', 'posted': '100.00', 'unposted': '0.00'}],
@@ -45,14 +50,21 @@ class WhoHasBlueShieldsMoney(unittest.TestCase):
         by = {r['check_number']: r['bs_bucket'] for r in rows}
         self.assertEqual(by, {'1': 'cashed by Helixona', '2': 'cashed by patient', '3': 'cashed, not on file',
                               '4': 'missing, ask Blue Shield to reissue', '5': 'in transit', '6': 'in hand, not cleared',
-                              '7': 'sent to patient, not cashed', '8': 'voided', '9': 'cashed by Helixona'})
+                              '7': 'sent to patient, not cashed', '8': 'voided', '9': 'cashed by Helixona',
+                              '10': 'cashed, not on file', '11': 'missing, ask Blue Shield to reissue', '12': 'sent to patient, not cashed'})
+        kinds = {r['check_number']: r['bs_payee_kind'] for r in rows}
+        self.assertEqual((kinds['1'], kinds['2'], kinds['10'], kinds['11'], kinds['12']), ('Helixona', 'patient', 'other', 'other', 'patient'))
         r2 = next(r for r in rows if r['check_number'] == '2')
         self.assertIn('cashed by patient, bill the patient', r2['flags'])
         self.assertEqual((r2['bs_payee'], r2['bs_patients']), ('DOE, JANE', 'DOE, JANE'))
+        # Two patients on one check are joined with ' · ', since names hold commas.
+        rows2, _ = reconcile(copies=[], checks=[{**_bs('20', 'Check Cashed', '08/01/2026'), 'claims': [{'member_name': 'THORNE, KARI'}, {'member_name': 'DOE, JANE'}]}],
+                             payments=[], today=TODAY)
+        self.assertEqual(rows2[0]['bs_patients'], 'DOE, JANE · THORNE, KARI')
         self.assertIn('missing, ask Blue Shield to reissue', next(r for r in rows if r['check_number'] == '4')['flags'])
         self.assertEqual((sm['bs_sent'], sm['bs_cashed_helixona'], sm['bs_cashed_patient'], sm['bs_cashed_unknown'],
                           sm['bs_missing'], sm['bs_in_transit'], sm['bs_in_hand_uncleared'], sm['bs_to_patient_uncashed'], sm['bs_voided']),
-                         (9, 2, 1, 1, 1, 1, 1, 1, 1))
+                         (12, 2, 1, 2, 2, 1, 1, 2, 1))
 
     def test_a_check_no_payer_lists_has_no_bucket(self):
         rows, _ = reconcile(copies=[{'check_number': '77', 'amount': '1.00'}], checks=[], payments=[], today=TODAY)
@@ -60,11 +72,11 @@ class WhoHasBlueShieldsMoney(unittest.TestCase):
 
     def test_the_run_and_the_pages_carry_it(self):
         r = _read('src/checks/run.py')
-        self.assertIn("bs_payee = :bp, bs_paid_to_member = :bpm, bs_patients = :bpa, bs_bucket = :bb", r)
+        self.assertIn("bs_payee = :bp, bs_paid_to_member = :bpm, bs_patients = :bpa, bs_bucket = :bb, bs_payee_kind = :bpk", r)
         # The Blue Shield rows are read WITH the payee and the claims, or every bucket reads "not on file".
         self.assertIn("'payee_name, paid_to_member, claims')", r)
         d = _read('dashboard.py')
-        self.assertIn("'bs_payee', 'bs_paid_to_member', 'bs_patients', 'bs_bucket'", d)
+        self.assertIn("'bs_payee', 'bs_payee_kind', 'bs_paid_to_member', 'bs_patients', 'bs_bucket'", d)
         self.assertIn("tile('cashed by patient', sm.bs_cashed_patient, 'bs:cashed by patient'", d)
         h = _read('dashboard_checks.html')
         self.assertIn("['bs:cashed by patient', 'Cashed by patient'", h)

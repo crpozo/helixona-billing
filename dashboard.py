@@ -1509,7 +1509,7 @@ window.scrollToEl = function(sel){
                 const bucketColor = /patient|missing/.test(r.bs_bucket || '') ? 'var(--bad)' : /not on file|sent to/.test(r.bs_bucket || '') ? 'var(--warning)' : r.bs_bucket === 'cashed by Helixona' ? 'var(--success)' : 'var(--text-muted)';
                 const bsCell = r.in_blue_shield
                     ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div style="font-size:11px;color:var(--text-muted)">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div style="font-size:11px;color:var(--text-muted)">issued ${esc(r.bs_date)}</div>` : ''}`
-                      + (r.bs_payee ? `<div style="font-size:11px;color:var(--text-muted)">paid to ${esc(r.bs_payee)}</div>` : '')
+                      + (r.bs_payee ? `<div style="font-size:11px;color:var(--text-muted)">paid to ${esc(r.bs_payee)}${r.bs_payee_kind && r.bs_payee_kind !== 'Helixona' ? ' (' + esc(r.bs_payee_kind) + ')' : ''}</div>` : '')
                       + (r.bs_bucket ? `<div style="font-size:11px;color:${bucketColor};font-weight:600">${esc(r.bs_bucket)}</div>` : '')
                     : '<span style="color:var(--text-muted)">other payer</span>';
                 const eraCell = r.in_era
@@ -2599,7 +2599,7 @@ def api_checks_csv():
     import io
     from flask import Response
     cols = ['check_number', 'check_full', 'deposit_file', 'deposit_slip', 'deposit_total', 'copy_page', 'copy_claim', 'verdict', 'flags', 'has_copy', 'copy_amount', 'copy_file', 'copy_url', 'in_blue_shield',
-            'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'bs_payee', 'bs_paid_to_member', 'bs_patients', 'bs_bucket', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
+            'bs_amount', 'bs_status', 'bs_date', 'cashed_date', 'bs_payee', 'bs_payee_kind', 'bs_paid_to_member', 'bs_patients', 'bs_bucket', 'in_ecw', 'ecw_payment_id', 'ecw_amount',
             'ecw_posted', 'ecw_unposted', 'in_era', 'era_amount', 'era_file', 'era_dated', 'era_payer',
             'in_tracker', 'tracker_received', 'tracker_deposit', 'tracker_amount', 'tracker_payer', 'tracker_posted',
             'tracker_sheet', 'tracker_claim', 'reconciled_at']

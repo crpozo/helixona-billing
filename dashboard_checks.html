@@ -294,8 +294,8 @@ const BS_TILES = [
   ['bs:all', 'Checks sent by Blue Shield', 'info', 'Listed in the portal since 07/01/2025', d => d.rows.filter(r => r.in_blue_shield).length],
   ['bs:cashed by Helixona', 'Cashed by Helixona', 'good', 'Scanned, logged in the tracker or posted in eCW', d => d.rows.filter(r => r.bs_bucket === 'cashed by Helixona').length],
   ['bs:cashed by patient', 'Cashed by patient', 'critical', 'Made out to the patient and cashed — bill the patient', d => d.rows.filter(r => r.bs_bucket === 'cashed by patient').length],
-  ['bs:cashed, not on file', 'Cashed, not on file', 'warning', 'Payee Helixona, cashed, no scan or record — verify with the bank', d => d.rows.filter(r => r.bs_bucket === 'cashed, not on file').length],
-  ['bs:missing, ask Blue Shield to reissue', 'Missing, ask Blue Shield to reissue', 'critical', 'Issued 45+ days ago, never cashed, not received', d => d.rows.filter(r => r.bs_bucket === 'missing, ask Blue Shield to reissue').length],
+  ['bs:cashed, not on file', 'Cashed, not on file', 'warning', 'Cashed, made out to Helixona or a provider, no scan or record — verify with the bank', d => d.rows.filter(r => r.bs_bucket === 'cashed, not on file').length],
+  ['bs:missing, ask Blue Shield to reissue', 'Missing, ask Blue Shield to reissue', 'critical', 'To Helixona or a provider, issued 45+ days ago, never cashed, not received', d => d.rows.filter(r => r.bs_bucket === 'missing, ask Blue Shield to reissue').length],
   ['bs:in transit', 'In transit', 'neutral', 'Issued within 45 days, not received yet', d => d.rows.filter(r => r.bs_bucket === 'in transit').length],
   ['bs:in hand, not cleared', 'In hand, not cleared', 'neutral', 'Received; the bank has not cleared it yet', d => d.rows.filter(r => r.bs_bucket === 'in hand, not cleared').length],
   ['bs:sent to patient, not cashed', 'Sent to patient, not cashed', 'warning', 'Made out to the patient, not cashed yet', d => d.rows.filter(r => r.bs_bucket === 'sent to patient, not cashed').length],
@@ -459,7 +459,7 @@ function rowHtml(r, inDeposit) {
     const bucketCls = /patient|missing/.test(r.bs_bucket || '') ? 'critical' : /not on file|sent to/.test(r.bs_bucket || '') ? 'warning' : r.bs_bucket === 'cashed by Helixona' ? 'good' : 'neutral';
     const bs = r.in_blue_shield
       ? `${esc(r.bs_status || '—')}${r.cashed_date ? `<div class="small">cashed ${esc(r.cashed_date)}</div>` : r.bs_date ? `<div class="small">issued ${esc(r.bs_date)}</div>` : ''}`
-        + (r.bs_payee ? `<div class="small muted" title="payee on the check">paid to ${esc(r.bs_payee)}</div>` : '')
+        + (r.bs_payee ? `<div class="small muted" title="payee on the check">paid to ${esc(r.bs_payee)}${r.bs_payee_kind && r.bs_payee_kind !== 'Helixona' ? ' (' + esc(r.bs_payee_kind) + ')' : ''}</div>` : '')
         + (r.bs_bucket ? `<div class="small"><span class="pill ${bucketCls}">${esc(r.bs_bucket)}</span></div>` : '')
       : `<span class="muted">other payer</span>`;
     const amounts = [r.ecw_posted !== '' && r.ecw_posted != null ? `posted ${money(r.ecw_posted)}` : '',

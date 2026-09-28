@@ -84,6 +84,32 @@ def _days_since(text, today):
         return None
 
 
+def _name_tokens(name):
+    return {t for t in re.split(r'[^a-z]+', str(name or '').lower()) if len(t) > 1}
+
+
+def payee_kind(r):
+    """Who the check is made out to: 'Helixona', 'patient' (the EOB says
+    paid to the member, or the payee is one of the patients on the check's
+    claims), 'other' (a provider, a subscriber — anyone else), or '' when
+    the portal gave no payee. 2026-09-28: 'not Helixona' was read as 'the
+    patient' and the clinicians Blue Shield pays by name became patients."""
+    payee = norm_text(r.get('bs_payee'))
+    if not payee:
+        return ''
+    if HELIXONA_RX.search(payee):
+        return 'Helixona'
+    if r.get('bs_paid_to_member'):
+        return 'patient'
+    pt = _name_tokens(payee)
+    for patient in re.split(r'[·|]', str(r.get('bs_patients') or '')):
+        st = _name_tokens(patient)
+        # First and last name both on the check, or the whole (short) name.
+        if st and (len(pt & st) >= 2 or (st <= pt and len(st) >= 2)):
+            return 'patient'
+    return 'other'
+
+
 def bs_bucket(r, today):
     """Who has Blue Shield's money — the operator's four buckets (2026-09-28):
     checks sent · cashed by Helixona · cashed by the patient · missing, never
@@ -93,8 +119,7 @@ def bs_bucket(r, today):
         return ''
     status = norm_text(r['bs_status']).lower()
     in_hand = r['has_copy'] or r['in_tracker'] or r['in_ecw']
-    payee = norm_text(r['bs_payee'])
-    to_patient = r['bs_paid_to_member'] or bool(payee and not HELIXONA_RX.search(payee))
+    to_patient = payee_kind(r) == 'patient'
     if 'void' in status or 'stop' in status:
         return 'voided'
     if _cashed(status) or r['cashed_date']:
@@ -131,7 +156,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=(), t
         return by.setdefault(key, {
             'check_number': key, 'has_copy': False, 'copy_amount': '', 'copy_file': '', 'copy_url': '',
             'copy_date': '', 'in_blue_shield': False, 'bs_amount': '', 'bs_status': '', 'bs_date': '',
-            'bs_payee': '', 'bs_paid_to_member': False, 'bs_patients': '', 'bs_bucket': '',
+            'bs_payee': '', 'bs_paid_to_member': False, 'bs_patients': '', 'bs_bucket': '', 'bs_payee_kind': '',
             'cashed_date': '', 'in_ecw': False, 'ecw_amount': '', 'ecw_posted': '', 'ecw_unposted': '',
             'ecw_payment_id': '', 'in_era': False, 'era_amount': '', 'era_file': '',
             'era_dated': '', 'era_payer': '', 'in_tracker': False, 'tracker_received': '',
@@ -155,7 +180,8 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=(), t
         r.update(in_blue_shield=True, bs_amount=money(q.get('check_amount')), bs_status=q.get('check_status', ''),
                  bs_date=q.get('check_date', ''), cashed_date=q.get('cashed_date', ''),
                  bs_payee=norm_text(q.get('payee_name', '')), bs_paid_to_member=bool(q.get('paid_to_member')),
-                 bs_patients=', '.join(patients[:4]) + (' …' if len(patients) > 4 else ''))
+                 # ' · ' between names: the portal writes them 'THORNE, KARI'.
+                 bs_patients=' · '.join(patients[:4]) + (' …' if len(patients) > 4 else ''))
     for p in payments:
         key = norm_check(p.get('check_no'))
         if not key:
@@ -188,6 +214,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=(), t
     today = today or datetime.date.today()
     for r in by.values():
         cashed = _cashed(r['bs_status']) or bool(r['cashed_date'])
+        r['bs_payee_kind'] = payee_kind(r)
         r['bs_bucket'] = bs_bucket(r, today)
         if r['in_ecw']:
             unposted = _d(r['ecw_unposted'])
