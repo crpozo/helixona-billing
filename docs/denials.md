@@ -13,11 +13,15 @@ encuentras los códigos y las razones."
    [...]` in the task names others). Lookup, and the grid's rows are read off
    their Angular scope: claim, patient, payer, DOS, CPT/HCPCS, charges, paid,
    balance, status.
-2. **The reason** — each claim is opened once (its popup) and the text read
-   for the payer's codes: CARC group codes (CO-16, PR-96), remark codes
-   (N846), the payer's letter codes (B16) and words (Duplicate, Non-Covered).
-   When the front page shows none, the popup's tabs (Payments, Claim Notes,
-   Notes, History) are tried. The popup is closed with Cancel. A claim whose
+   The screen shows 20 a page (709 ERA PAYER DENIED claims on 2026-09-30,
+   36 pages): No. of Result is set to its largest option and every page is
+   read. The grid has no CPT column.
+2. **The reason** — each claim is opened once (its popup): the **ICD & CPT**
+   tab for the codes billed, then **Insurances & Payment**, whose Payments /
+   Adjustments / Refunds grid carries the payer's reason in its Code column
+   (CARC group codes CO-16, PR-96; remark codes N846; letter codes B16;
+   words like Duplicate). When that grid shows no code, **View CPT Pmts**
+   is opened and read. The popup is closed with Cancel. A claim whose
    codes were read before keeps them (`redo: true` reads again). The first
    claim of a run is photographed (`/tmp/eob_post_denial_claim_<id>.png`).
 3. **The SOP** — `data/denial_cheatsheet.json`, the workbook's "Denial

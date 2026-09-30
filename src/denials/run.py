@@ -113,18 +113,22 @@ def run_claim_denials(aws_client, body, login, get_page, open_claim, close_claim
         prev = known.get(cid, {})
         codes = list(prev.get('denial_codes') or [])
         snippet = str(prev.get('denial_text') or '')
-        if do_reasons and (redo or not codes):
-            got, snip = read_reasons(page, cid, open_claim, close_claim, shot=(i == 1))
+        cpt = procedure_codes(c.get('cpt', '')) or list(prev.get('cpt_codes') or [])
+        if do_reasons and (redo or not codes or not cpt):
+            got = read_reasons(page, cid, open_claim, close_claim, shot=(i == 1))
             if got is None:
                 pass            # could not open: what an earlier run read stands
             else:
-                codes, snippet, read = got, snip or snippet, read + 1
+                codes, snippet, read = got['codes'], got['snippet'] or snippet, read + 1
+                cpt = got['cpt'] or cpt
         elif codes:
             kept += 1
+        # The grid has no CPT column: the codes billed come off the claim.
+        c = {**c, 'cpt': c.get('cpt') or ' '.join(cpt)}
         hits, kind, action = decide(c, codes, rules)
         _put(table, cid, {
             'patient': c.get('patient', ''), 'payer': c.get('payer', ''), 'dos': c.get('dos', ''), 'cpt': c.get('cpt', ''),
-            'cpt_codes': procedure_codes(c.get('cpt', '')), 'charges': c.get('charges', ''), 'paid': c.get('paid', ''),
+            'cpt_codes': cpt, 'charges': c.get('charges', ''), 'paid': c.get('paid', ''),
             'adjustment': c.get('adjustment', ''), 'balance': c.get('balance', ''), 'ecw_status': c.get('status', '') or c.get('ecw_status_filter', ''),
             'ecw_status_filter': c.get('ecw_status_filter', ''), 'denial_codes': codes, 'denial_text': snippet,
             'sop_rows': [h['sop_row'] for h in hits], 'sop_matches': hits, 'action_kind': kind, 'action': action,

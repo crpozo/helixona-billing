@@ -12,11 +12,20 @@ payer's ERA/EOB posted: CARC group codes (CO-16), remark codes (N846), the
 payer's letter codes (B16) and words like Duplicate or Non-Covered. The
 claim is opened (its popup), the popup's text is read for those codes, and
 the popup is closed with Cancel. Nothing is changed in eCW.
+
+As the operator showed it (2026-09-30): Claim Status "ERA PAYER DENIED" lists
+709 claims, 20 a page over 36 pages, and the grid has no CPT column (COLL ·
+CLAIM # · SERVICE DATE · PVDR · PATIENT · PAYER · STATUS · CHARGES · PMTS/ADJS
+· ADJUSTMENT · WITHHELD · BALANCE). Inside the claim, the "ICD & CPT" tab
+holds the codes billed and the "Insurances & Payment" tab the Payments /
+Adjustments / Refunds grid whose Code column is the payer's reason; "View
+CPT Pmts" opens the same per line. So every page of the grid is read, and
+every claim is opened for both tabs.
 """
 import re
 import time
 
-from src.denials.cheatsheet import codes_in
+from src.denials.cheatsheet import codes_in, procedure_codes
 from src.eob.post import _js, _click_text, _shot, _page_text
 from src.utils.logger import get_logger
 
@@ -27,9 +36,14 @@ CLAIMS_HASH = '/mobiledoc/jsp/webemr/webpm/claimLookup.jsp'
 # Codes sheet). The dropdown is read first; only the ones it has are used.
 DENIED_STATUSES = ['ERA Payer Denied', 'EOB Payer Denied', 'Waiting for Denial', 'Requires further review',
                    'Insurance Rejected', 'Clearinghouse Rejected', '277 Rejected', '997 Rejected', 'Denied', 'Rejected']
-# Tabs inside the claim popup that may hold the payer's codes, tried in
-# order when the front page shows none. Tabs only — never a button that acts.
-REASON_TABS = ['Payments', 'Claim Notes', 'Notes', 'History', 'Insurance']
+# Inside the claim popup: the tab with the codes billed, the tab with the
+# payments grid (its Code column is the payer's reason), and the view that
+# lists the same per CPT line. Tabs and views only — never a button that acts.
+CPT_TAB = ['ICD & CPT', 'ICD and CPT']
+PAYMENT_TABS = ['Insurances & Payment', 'Insurance & Payment', 'Payments']
+CPT_PMTS_VIEW = ['View CPT Pmts']
+CLOSE_VIEW = ['Close']
+MAX_PAGES = 60
 ROW_SEL = 'tr[ng-repeat*="lstClaimReport"]'
 
 
@@ -203,12 +217,78 @@ def read_rows(page):
     return out, hdrs
 
 
+PAGE_JS = r"""() => {
+    // 'Page [1] of 36' and the Next button, as the Claims grid shows them.
+    const body = (document.body && document.body.innerText) || '';
+    const m = body.match(/Page\s*(\d+)\s*of\s*(\d+)/i);
+    const next = Array.from(document.querySelectorAll('button, a, input[type="button"]'))
+        .find(b => /^next$/i.test((b.innerText || b.value || '').trim()) && vis(b));
+    return {page: m ? +m[1] : 0, pages: m ? +m[2] : 0, next: !!next && !next.disabled};
+}"""
+
+
+def set_page_size(page):
+    """No. of Result → its largest option, so 709 claims are 8 pages, not 36."""
+    try:
+        got = page.evaluate(_js(r"""() => {
+            for (const s of Array.from(document.querySelectorAll('select')).filter(vis)) {
+                const opts = Array.from(s.options).map(o => o.text.trim());
+                if (opts.length >= 2 && opts.every(t => /^\d+$/.test(t))) {
+                    const i = opts.map(Number).indexOf(Math.max(...opts.map(Number)));
+                    s.selectedIndex = i; s.dispatchEvent(new Event('change', {bubbles: true}));
+                    const ng = window.angular && window.angular.element(s);
+                    if (ng && ng.scope && ng.scope()) { try { ng.scope().$apply(); } catch (e) {} }
+                    return opts[i];
+                }
+            }
+            return '';
+        }"""))
+        if got:
+            logger.info(f"  ✅ No. of Result = {got}")
+            time.sleep(0.5)
+        return got
+    except Exception:
+        return ''
+
+
+def next_page(page):
+    """Click Next and wait for the grid to change. False on the last page."""
+    info = page.evaluate(_js(PAGE_JS)) or {}
+    if not info.get('next') or (info.get('pages') and info.get('page', 0) >= info['pages']):
+        return False
+    before = _grid_sig(page)
+    if not _click_text(page, ['Next'], timeout=3, what='next page'):
+        return False
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        time.sleep(0.4)
+        if _grid_sig(page) != before:
+            time.sleep(0.8)
+            return True
+    return False
+
+
+def read_all_pages(page):
+    rows, hdrs = read_rows(page)
+    info = page.evaluate(_js(PAGE_JS)) or {}
+    pages = info.get('pages') or 1
+    for _ in range(min(pages, MAX_PAGES) - 1):
+        if not next_page(page):
+            break
+        more, _h = read_rows(page)
+        rows.extend(more)
+    if pages > 1:
+        logger.info(f"  📄 {len(rows)} row(s) over {min(pages, MAX_PAGES)} page(s)")
+    return rows, hdrs
+
+
 def list_denied(page, since, statuses=None):
-    """Every claim under each denied status the dropdown offers. Returns
-    (claims, statuses_used, options)."""
+    """Every claim under each denied status the dropdown offers, every page
+    of the grid. Returns (claims, statuses_used, options)."""
     if not open_claims(page):
         return [], [], []
     set_dates(page, since)
+    set_page_size(page)
     options = status_options(page)
     logger.info(f"  Claim Status options ({len(options)}): {options[:40]}")
     wanted = statuses or DENIED_STATUSES
@@ -219,7 +299,7 @@ def list_denied(page, since, statuses=None):
         if not set_status(page, label):
             continue
         lookup(page)
-        rows, hdrs = read_rows(page)
+        rows, hdrs = read_all_pages(page)
         if not used:
             logger.info(f"  grid columns: {hdrs[:16]}")
         fresh = [r for r in rows if r.get('claim_id') and r['claim_id'] not in seen]
@@ -235,8 +315,10 @@ def list_denied(page, since, statuses=None):
 
 
 def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
-    """The denial codes on one claim: open its popup, read its text, try the
-    tabs that may hold the payer's codes, close it. (codes, text_snippet)."""
+    """One claim, opened once: the codes billed (ICD & CPT tab) and the
+    payer's reason codes (Insurances & Payment → the payments grid's Code
+    column, then View CPT Pmts). Closed with Cancel. Returns None when the
+    claim could not be opened, else {'codes', 'cpt', 'snippet', 'where'}."""
     ok = False
     try:
         got = open_claim(page, claim_id)
@@ -244,33 +326,59 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
     except Exception as e:
         logger.warning(f"  ⚠️ claim {claim_id}: could not be opened: {str(e)[:120]}")
     if not ok:
-        return None, ''
-    codes, snippet, where = [], '', 'claim'
+        return None
+    out = {'codes': [], 'cpt': [], 'snippet': '', 'where': ''}
     try:
-        text = _page_text(page)
-        codes = codes_in(text)
-        if not codes:
-            for tab in REASON_TABS:
-                if _click_text(page, [tab], timeout=1.5, what='tab'):
-                    time.sleep(1.2)
-                    text = _page_text(page)
-                    codes = codes_in(text)
-                    if codes:
-                        where = tab
-                        break
+        front = _page_text(page)
+        out['cpt'] = _cpts_on(_after(front, 'CPT'))
+        if _click_text(page, CPT_TAB, timeout=2, what='tab'):
+            time.sleep(1.0)
+            out['cpt'] = sorted(set(out['cpt']) | set(_cpts_on(_after(_page_text(page), 'CPT'))))
+        text = front
+        if _click_text(page, PAYMENT_TABS, timeout=2, what='tab'):
+            time.sleep(1.2)
+            text = _page_text(page)
+            out['where'] = 'payments'
+        out['codes'] = codes_in(_no_dates(_after(text, 'Payments / Adjustments')))
+        if not out['codes'] and _click_text(page, CPT_PMTS_VIEW, timeout=2, what='view'):
+            time.sleep(1.5)
+            view = _page_text(page)
+            out['codes'] = codes_in(_no_dates(_after(view, 'CPT')))
+            out['where'] = 'View CPT Pmts'
+            text = view
+            if not _click_text(page, CLOSE_VIEW, timeout=1.5, what='close view'):
+                page.keyboard.press('Escape')
+            time.sleep(0.5)
+        if not out['codes']:
+            out['codes'] = codes_in(_no_dates(front))
+            out['where'] = 'claim' if out['codes'] else ''
         if shot:
             _shot(page, f'denial_claim_{claim_id}')
-        snippet = _reason_snippet(text, codes)
-        if codes:
-            logger.info(f"  🧾 claim {claim_id}: {', '.join(codes[:8])} ({where})")
-        else:
-            logger.info(f"  🧾 claim {claim_id}: no reason code on the claim")
+        out['snippet'] = _reason_snippet(text, out['codes'])
+        logger.info(f"  🧾 claim {claim_id}: codes {', '.join(out['codes'][:8]) or 'none'} · billed {', '.join(out['cpt'][:6]) or '?'}"
+                    + (f" ({out['where']})" if out['where'] else ''))
     finally:
         try:
             close_claim(page)
         except Exception:
             pass
-    return codes, snippet
+    return out
+
+
+def _after(text, marker):
+    i = str(text or '').find(marker)
+    return str(text or '')[i:] if i >= 0 else str(text or '')
+
+
+def _no_dates(text):
+    """12/29/2025 would read as the code 29 (a number after a slash)."""
+    return re.sub(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b', ' ', str(text or ''))
+
+
+def _cpts_on(text):
+    """Procedure codes on a claim tab: HCPCS/CPT, not ICD (E11.9 has a dot)
+    and not the claim, account or subscriber numbers (they are longer)."""
+    return procedure_codes(re.sub(r'\b\d{6,}\b', ' ', str(text or '')))
 
 
 def _reason_snippet(text, codes):

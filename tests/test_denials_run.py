@@ -57,10 +57,12 @@ class TheRunLinksTheThreeSteps(unittest.TestCase):
         def open_claim(page, cid):
             opened.append(cid)
             return (True, None)
-        texts = {'8101': 'Claim 8101 ... CO252 Medical records requested N706', '8102': 'nothing here'}
-        with mock.patch.object(run, 'list_denied', return_value=(claims, ['ERA Payer Denied', 'Insurance Rejected'], ['A', 'ERA Payer Denied'])), \
+        # The claim popup: the codes billed on the ICD & CPT tab, the reason in the payments grid.
+        texts = {'8101': 'Claim 8101 · ICD & CPT · J3490 96365 96366 · E11.9\nPayments / Adjustments / Refunds (1)\n# Id Date From Allowed Paid Adjust Code\n1 715 12/29/2025 Anthem 0.00 0.00 0.00 CO252 N706',
+                 '8102': 'Claim 8102 · 96365 · nothing here'}
+        with mock.patch.object(run, 'list_denied', return_value=(claims, ['ERA PAYER DENIED', 'Insurance Rejected'], ['A', 'ERA PAYER DENIED'])), \
                 mock.patch.object(ecw, '_page_text', side_effect=lambda page: texts.get(opened[-1], '')), \
-                mock.patch.object(ecw, '_click_text', return_value=False), mock.patch.object(ecw, '_shot'):
+                mock.patch.object(ecw, '_click_text', return_value=True), mock.patch.object(ecw, '_shot'):
             out = run.run_claim_denials(_Aws(table), {'since': '07/01/2025'}, login=lambda p, c, a: True, get_page=lambda: object(),
                                         open_claim=open_claim, close_claim=lambda p: None)
         self.assertTrue(out['ok'])
@@ -72,7 +74,8 @@ class TheRunLinksTheThreeSteps(unittest.TestCase):
         r = table.items['8101']
         self.assertEqual((r['action_kind'], r['sop_rows']), ('medical records', ['15']))
         self.assertIn('CO-252', r['denial_codes'])
-        self.assertEqual(r['cpt_codes'], ['J3490'])
+        self.assertNotIn('29', r['denial_codes'])      # 12/29/2025 is a date, not a code
+        self.assertEqual(r['cpt_codes'], ['96365', '96366', 'J3490'])
         # 8102: no code read, no rule → a person.
         r = table.items['8102']
         self.assertEqual((r['action_kind'], r['sop_rows'], r['denial_codes']), ('review', [], []))
@@ -93,7 +96,11 @@ class TheRunLinksTheThreeSteps(unittest.TestCase):
     def test_the_status_names_and_the_read_only_promise(self):
         e = _read('src/denials/ecw.py')
         self.assertIn("DENIED_STATUSES = ['ERA Payer Denied', 'EOB Payer Denied', 'Waiting for Denial', 'Requires further review',", e)
-        self.assertIn("REASON_TABS = ['Payments', 'Claim Notes', 'Notes', 'History', 'Insurance']", e)
+        self.assertIn("PAYMENT_TABS = ['Insurances & Payment', 'Insurance & Payment', 'Payments']", e)
+        self.assertIn("CPT_TAB = ['ICD & CPT', 'ICD and CPT']", e)
+        # 709 claims, 20 a page: every page is read.
+        self.assertIn("rows, hdrs = read_all_pages(page)", e)
+        self.assertIn("def set_page_size(page):", e)
         # The popup is read and closed; nothing that saves, posts or deletes is clicked.
         for forbidden in ('Delete', 'ePost', 'Mark as Post', 'Save', "'OK'"):
             self.assertNotIn(forbidden, e)
