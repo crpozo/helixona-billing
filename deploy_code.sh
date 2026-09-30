@@ -42,6 +42,13 @@ printf '%s\n%s\n%s\n' \
     "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)" \
     "$(date -u '+%Y-%m-%d %H:%M UTC')" > DEPLOYED
 
+# The bots run as root and write under /opt/helixona-agent (data/, the
+# tracker copy, screenshots), which leaves root-owned files the ubuntu user
+# of rsync cannot replace ("mkstemp ... Permission denied"). Hand the tree
+# back to ubuntu first; root keeps reading and writing it regardless.
+ssh -i $KEY_FILE -o StrictHostKeyChecking=no ubuntu@$EC2_IP \
+    "sudo chown -R ubuntu:ubuntu $REMOTE_DIR --no-dereference 2>/dev/null; sudo chmod -R u+rwX $REMOTE_DIR/data $REMOTE_DIR/docs 2>/dev/null || true"
+
 # Sync source code.
 # .git and .claude are excluded deliberately: they can carry worktrees and
 # local scratch that have no business on a host holding patient data.
