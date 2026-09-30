@@ -72,6 +72,11 @@ scp -i $KEY_FILE -o StrictHostKeyChecking=no \
     infra/helixona-agent-eob.service ubuntu@$EC2_IP:/tmp/helixona-agent-eob.service
 scp -i $KEY_FILE -o StrictHostKeyChecking=no \
     infra/helixona-agent-denials.service ubuntu@$EC2_IP:/tmp/helixona-agent-denials.service
+# The Denials bot's one-time host setup (display :103, noVNC 6084, its queue);
+# infra/ is not synced, so the script travels on its own. Run it once on the
+# host: sudo bash /opt/helixona-agent/setup_denials_host.sh
+scp -i $KEY_FILE -o StrictHostKeyChecking=no \
+    infra/setup_denials_host.sh ubuntu@$EC2_IP:$REMOTE_DIR/setup_denials_host.sh
 
 # Install deps, verify, then restart the agent services
 ssh -i $KEY_FILE -o StrictHostKeyChecking=no ubuntu@$EC2_IP << 'ENDSSH'

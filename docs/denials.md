@@ -58,14 +58,19 @@ profile.
     denials   helixona-agent-denials   :103     6084   SQS_QUEUE_URL_DENIALS   browser-profile-denials
 
 One-time setup on the host, once (the deploy installs and enables the unit,
-which idles until the queue is configured):
+which idles until the queue is configured). After the first deploy that
+carries the bot:
 
-1. An SQS queue `helixona-agent-tasks-denials` (same settings as the eob
-   queue) and its URL in `/opt/helixona-agent/.env` as
-   `SQS_QUEUE_URL_DENIALS=…` — for the dashboard too.
-2. Display :103 and its noVNC on 6084, the way :102 / 6083 were set up for
-   the Remittance bot (`systemctl enable --now xvfb@103` plus the vnc /
-   websockify unit for the new display and port).
-3. `sudo systemctl restart helixona-agent-denials helixona-dashboard`, then
-   the first eCW login of the new profile on the live screen if the captcha
-   flow asks for it.
+    sudo bash /opt/helixona-agent/setup_denials_host.sh
+
+The script creates display :103 (`xvfb@103`), `x11vnc` on 5904 and noVNC on
+6084 (units `x11vnc-103`, `novnc-6084`, same `.vncpass` as the other bots),
+creates the SQS queue `helixona-agent-tasks-denials` and writes its URL to
+`/opt/helixona-agent/.env` as `SQS_QUEUE_URL_DENIALS`, then restarts the bot
+and the dashboard. It is idempotent. Two steps stay in the AWS console: open
+inbound TCP 6084 on the instance's security group (the browser reaches noVNC
+directly, as it does 6083), and create the queue by hand if the host has no
+permission to. Without the display and the port, the Live screen for the
+Denials tab stays blank — the dashboard already points it at 6084. Then the
+first eCW login of the new profile on the live screen, if the captcha flow
+asks for it.
