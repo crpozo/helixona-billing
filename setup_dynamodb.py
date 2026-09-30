@@ -76,6 +76,17 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # One item per denied claim: what eCW shows, the payer's reason codes
+        # read off the claim, and the SOP cheat sheet's action for it.
+        # Created on first use by src/denials/run.py too.
+        "TableName": "helixona-denials",
+        "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "claim_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

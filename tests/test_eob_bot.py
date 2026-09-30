@@ -404,11 +404,11 @@ class RemittanceHasItsPlaceOnTheDashboard(unittest.TestCase):
     def test_every_bot_has_a_name(self):
         d = self._dash()
         self.assertEqual({k: v['name'] for k, v in d.BOT_ROUTING.items()},
-                         {'submissions': 'Intake', 'resubmissions': 'Follow-up', 'eob': 'Remittance'})
+                         {'submissions': 'Intake', 'resubmissions': 'Follow-up', 'eob': 'Remittance', 'denials': 'Denials'})
 
     def test_the_names_are_on_the_tabs(self):
         html = self._dash().DASHBOARD_HTML
-        for label in ('📋 Intake', '🩺 Follow-up', '🧾 Remittance'):
+        for label in ('📋 Intake', '🩺 Follow-up', '🧾 Remittance', '🚫 Denials'):
             self.assertIn(label, html)
 
     def test_marea_routes_to_its_own_unit_queue_and_screen(self):

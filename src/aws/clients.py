@@ -12,12 +12,14 @@ QUEUE_BY_ROLE = {
     'submissions':   lambda s: s.sqs_queue_url,
     'resubmissions': lambda s: s.sqs_queue_url_resub,
     'eob':           lambda s: s.sqs_queue_url_eob,
+    'denials':       lambda s: s.sqs_queue_url_denials,
 }
 
 ROLE_ENV_VAR = {
     'submissions':   'SQS_QUEUE_URL',
     'resubmissions': 'SQS_QUEUE_URL_RESUB',
     'eob':           'SQS_QUEUE_URL_EOB',
+    'denials':       'SQS_QUEUE_URL_DENIALS',
 }
 
 

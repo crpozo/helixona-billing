@@ -11594,6 +11594,28 @@ def process_message(message: dict, aws_client: AWSClient):
             if holder.get('manager'):
                 holder['manager'].stop()
 
+    elif task_type == 'claim_denials':
+        # Denials: the claims eCW shows as denied, each one's reason codes,
+        # and the SOP's answer for it (src/denials). Read-only in eCW: the
+        # claim popup is opened for its text and closed with Cancel.
+        logger.info("═══ Denials — denied claims, reasons and the SOP's actions ═══")
+        from src.denials.run import run_claim_denials
+        holder = {}
+
+        def get_page():
+            if not holder.get('manager'):
+                holder['manager'] = BrowserManager().start(proxy_config=None)
+            return holder['manager'].new_page()
+
+        try:
+            run_claim_denials(aws_client, body, login=_perform_ecw_login, get_page=get_page,
+                              open_claim=_open_claim_popup_via_lookup, close_claim=_close_claim_popup)
+        except Exception as e:
+            logger.error(f"Denials review failed: {e}")
+        finally:
+            if holder.get('manager'):
+                holder['manager'].stop()
+
     elif task_type == 'ecw_status_update':
         # ─── Standalone ECW Status Update Task ───
         # Updates claim status in ECW from "Ready to Submit to Symplisend" to "Claim sent via Symplisend"

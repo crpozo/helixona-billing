@@ -13,12 +13,13 @@ from src.aws.clients import QUEUE_BY_ROLE, ROLE_ENV_VAR
 from src.config import Settings
 from src.ecw.browser import profile_dir_for
 
-ROLES = ('submissions', 'resubmissions', 'eob')
+ROLES = ('submissions', 'resubmissions', 'eob', 'denials')
 
 QUEUES = dict(
     sqs_queue_url='https://sqs/helixona-agent-tasks',
     sqs_queue_url_resub='https://sqs/helixona-agent-tasks-resub',
     sqs_queue_url_eob='https://sqs/helixona-agent-tasks-eob',
+    sqs_queue_url_denials='https://sqs/helixona-agent-tasks-denials',
 )
 
 
@@ -51,6 +52,7 @@ class EachRoleHasItsOwnQueue(unittest.TestCase):
             self.assertIn(role, ROLE_ENV_VAR, role)
         self.assertEqual(ROLE_ENV_VAR['resubmissions'], 'SQS_QUEUE_URL_RESUB')
         self.assertEqual(ROLE_ENV_VAR['eob'], 'SQS_QUEUE_URL_EOB')
+        self.assertEqual(ROLE_ENV_VAR['denials'], 'SQS_QUEUE_URL_DENIALS')
 
 
 class SettingsReadTheResubmissionQueue(unittest.TestCase):
@@ -93,6 +95,9 @@ class EachRoleHasItsOwnBrowserProfile(unittest.TestCase):
     def test_the_eob_bot_has_its_own_profile(self):
         # A third Chrome on either existing profile would corrupt it.
         self.assertEqual(profile_dir_for('eob'), '/opt/helixona-agent/browser-profile-eob')
+
+    def test_the_denials_bot_has_its_own_profile(self):
+        self.assertEqual(profile_dir_for('denials'), '/opt/helixona-agent/browser-profile-denials')
 
     def test_an_unknown_role_gets_its_own_directory(self):
         d = profile_dir_for('something_new')

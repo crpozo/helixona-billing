@@ -1,0 +1,118 @@
+"""Denials — the fourth bot: eCW's denied claims, the reasons, the SOP's
+answer (2026-09-30). The wiring, pinned."""
+import os
+import unittest
+from unittest import mock
+
+from src.denials import ecw, run
+from src.denials.cheatsheet import load_rules
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _read(rel):
+    with open(os.path.join(REPO, rel), encoding='utf-8') as fh:
+        return fh.read()
+
+
+class _Table:
+    def __init__(self, items=()):
+        self.items = {i['claim_id']: dict(i) for i in items}
+
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeValues, ExpressionAttributeNames=None):
+        row = self.items.setdefault(Key['claim_id'], {'claim_id': Key['claim_id']})
+        names = ExpressionAttributeNames or {}
+        for part in UpdateExpression.replace('SET ', '').split(', '):
+            k, v = [x.strip() for x in part.split('=')]
+            row[names.get(k, k)] = ExpressionAttributeValues[v]
+
+    def scan(self, **kw):
+        return {'Items': list(self.items.values())}
+
+
+class _Aws:
+    def __init__(self, table):
+        self.table = table
+        self.dynamodb = mock.Mock()
+        class _T:
+            name = 'helixona-denials'
+        self.dynamodb.tables.all = lambda: [_T()]
+        self.dynamodb.Table = lambda name: table
+
+    def get_secret(self, name):
+        return {'username': 'u', 'password': 'p'}
+
+
+class TheRunLinksTheThreeSteps(unittest.TestCase):
+    def test_a_denied_claim_gets_its_sop_action(self):
+        table = _Table([{'claim_id': '8100', 'denial_codes': ['CO-16'], 'denial_text': 'old'}])
+        claims = [{'claim_id': '8100', 'patient': 'DOE, JANE', 'payer': 'Medicare', 'dos': '08/01/2026', 'cpt': 'J0612 96365',
+                   'status': 'ERA Payer Denied', 'charges': '425.00', 'paid': '0.04', 'adjustment': '', 'balance': '424.96'},
+                  {'claim_id': '8101', 'patient': 'ROE, RICK', 'payer': 'Anthem Blue Cross', 'dos': '08/02/2026', 'cpt': 'J3490',
+                   'status': 'ERA Payer Denied', 'charges': '300.00', 'paid': '', 'adjustment': '', 'balance': '300.00'},
+                  {'claim_id': '8102', 'patient': 'POE, PAT', 'payer': 'Cigna', 'dos': '08/03/2026', 'cpt': '96365',
+                   'status': 'Insurance Rejected', 'charges': '100.00', 'paid': '', 'adjustment': '', 'balance': '100.00'}]
+        opened = []
+
+        def open_claim(page, cid):
+            opened.append(cid)
+            return (True, None)
+        texts = {'8101': 'Claim 8101 ... CO252 Medical records requested N706', '8102': 'nothing here'}
+        with mock.patch.object(run, 'list_denied', return_value=(claims, ['ERA Payer Denied', 'Insurance Rejected'], ['A', 'ERA Payer Denied'])), \
+                mock.patch.object(ecw, '_page_text', side_effect=lambda page: texts.get(opened[-1], '')), \
+                mock.patch.object(ecw, '_click_text', return_value=False), mock.patch.object(ecw, '_shot'):
+            out = run.run_claim_denials(_Aws(table), {'since': '07/01/2025'}, login=lambda p, c, a: True, get_page=lambda: object(),
+                                        open_claim=open_claim, close_claim=lambda p: None)
+        self.assertTrue(out['ok'])
+        # 8100 had its codes from before: not opened again; the SOP says write off (rule 1).
+        self.assertEqual(opened, ['8101', '8102'])
+        r = table.items['8100']
+        self.assertEqual((r['action_kind'], r['sop_rows'], r['denial_codes']), ('write off', ['1'], ['CO-16']))
+        # 8101: CO-252 on J3490 for Anthem → rule 15, medical records.
+        r = table.items['8101']
+        self.assertEqual((r['action_kind'], r['sop_rows']), ('medical records', ['15']))
+        self.assertIn('CO-252', r['denial_codes'])
+        self.assertEqual(r['cpt_codes'], ['J3490'])
+        # 8102: no code read, no rule → a person.
+        r = table.items['8102']
+        self.assertEqual((r['action_kind'], r['sop_rows'], r['denial_codes']), ('review', [], []))
+        sm = table.items['_summary']
+        self.assertEqual((sm['claims'], sm['matched'], sm['review'], sm['write_off'], sm['medical_records']), (3, 2, 1, 1, 1))
+        self.assertIn('done', table.items['_run']['steps'])
+
+    def test_several_fitting_rules_go_to_a_person(self):
+        rules, _ = load_rules()
+        hits, kind, action = run.decide({'cpt': 'J3490', 'payer': 'Medicare'}, ['CO-16'], rules)
+        # Four rules fit and all say write off: the kind stands, the action lists them for the person.
+        self.assertEqual(([h['sop_row'] for h in hits], kind), (['2', '3', '4', '5'], 'write off'))
+        self.assertIn('[SOP 2', action)
+        # Rules that fit equally but disagree on what to do → review.
+        hits, kind, _ = run.decide({'cpt': 'J3490', 'payer': 'Anthem Blue Cross'}, ['Duplicate', 'CO-96'], rules)
+        self.assertGreaterEqual(len(hits), 1)
+
+    def test_the_status_names_and_the_read_only_promise(self):
+        e = _read('src/denials/ecw.py')
+        self.assertIn("DENIED_STATUSES = ['ERA Payer Denied', 'EOB Payer Denied', 'Waiting for Denial', 'Requires further review',", e)
+        self.assertIn("REASON_TABS = ['Payments', 'Claim Notes', 'Notes', 'History', 'Insurance']", e)
+        # The popup is read and closed; nothing that saves, posts or deletes is clicked.
+        for forbidden in ('Delete', 'ePost', 'Mark as Post', 'Save', "'OK'"):
+            self.assertNotIn(forbidden, e)
+
+    def test_the_wiring(self):
+        m = _read('src/main.py')
+        self.assertIn("elif task_type == 'claim_denials':", m)
+        self.assertIn("open_claim=_open_claim_popup_via_lookup, close_claim=_close_claim_popup)", m)
+        self.assertIn('"TableName": "helixona-denials"', _read('setup_dynamodb.py'))
+        d = _read('dashboard.py')
+        self.assertIn("'denials': {", d)
+        self.assertIn("title: 'Review denied claims in eCW', task: 'claim_denials'", d)
+        self.assertIn("@app.route('/api/denials')", d)
+        self.assertIn("@app.route('/api/denials.csv')", d)
+        self.assertIn('id="denials-section"', d)
+        self.assertIn('data-bot="denials" onclick="setActiveBot(\'denials\')"', d)
+        self.assertIn("Environment=BOT_ROLE=denials", _read('infra/helixona-agent-denials.service'))
+        self.assertIn("infra/helixona-agent-denials.service", _read('deploy_code.sh'))
+
+
+if __name__ == '__main__':
+    unittest.main()

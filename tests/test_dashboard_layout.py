@@ -36,7 +36,7 @@ def _fn(name):
 
 class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_remittance_hides_the_claims_table(self):
-        self.assertIn("claimsSec.hidden = (bot === 'eob')", _fn('setActiveBot'))
+        self.assertIn("claimsSec.hidden = (bot === 'eob' || bot === 'denials')", _fn('setActiveBot'))
 
     def test_the_other_tabs_hide_the_checks_table(self):
         self.assertIn("chkSec.hidden = (bot !== 'eob')", _fn('setActiveBot'))
@@ -44,7 +44,7 @@ class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_the_panels_are_pinned_to_their_columns(self):
         # Defense in depth: even with both panels visible, the rail keeps its column.
         src = _src()
-        self.assertIn('.main > #checks-section, .main > #folders-section, .main > #claims-section-submissions{grid-column:1}', src)
+        self.assertIn('.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #claims-section-submissions{grid-column:1}', src)
         self.assertIn('.main > .task-panel{grid-column:2;grid-row:1}', src)
 
     def test_single_column_screens_release_the_pin(self):
@@ -130,7 +130,7 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
                      "renderActions(bot);"):
             self.assertIn(want, src)
         # The checks tab: the headline is what needs attention, the tiles are the only filter, seven columns.
-        self.assertIn("if (window.activeBot === 'eob') return;   // renderChecks writes that headline", src)
+        self.assertIn("if (window.activeBot === 'eob' || window.activeBot === 'denials') return;   // those tabs write their own headline", src)
         self.assertIn("set('hero-pct-label', 'posted & matching');", src)
         self.assertNotIn('id="checks-filters"', src)
         self.assertIn("tile('need attention', mism, 'mismatch', 'var(--bad)', 'a person must act')", src)

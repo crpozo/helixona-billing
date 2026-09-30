@@ -29,6 +29,7 @@ sqs = session.client('sqs')
 SQS_URL = os.environ['SQS_QUEUE_URL']
 SQS_URL_RESUB = os.environ.get('SQS_QUEUE_URL_RESUB', '')
 SQS_URL_EOB = os.environ.get('SQS_QUEUE_URL_EOB', '')
+SQS_URL_DENIALS = os.environ.get('SQS_QUEUE_URL_DENIALS', '')
 S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '')
 EC2_IP = "54.189.175.233"
 KEY_FILE = "infra/helixona-agent-key.pem"
@@ -66,6 +67,17 @@ BOT_ROUTING = {
         'emoji': '🧾',
         'label': 'Check reconciliation',
         'novnc_port': 6083,
+    },
+    # Denials (2026-09-30): eCW's denied claims, each one's reason codes,
+    # and the SOP cheat sheet's action. Its own unit, display :103, queue
+    # and Chrome profile, like the others.
+    'denials': {
+        'queue_url': SQS_URL_DENIALS,
+        'service': 'helixona-agent-denials',
+        'name': 'Denials',
+        'emoji': '🚫',
+        'label': 'Claim denials',
+        'novnc_port': 6084,
     },
 }
 
@@ -314,7 +326,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
    the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #checks-section, .main > #folders-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #claims-section-submissions{grid-column:1}
 .ftree details{margin:2px 0 2px 14px;border-left:1px solid var(--bdr);padding-left:10px}
 .ftree > details{margin-left:0;border-left:none;padding-left:0}
 .ftree summary{cursor:pointer;padding:6px 4px;list-style:none;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -516,6 +528,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="subtab on" data-bot="submissions" onclick="setActiveBot('submissions')">📋 Intake · Blue Shield Submissions</div>
       <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🩺 Follow-up · Blue Shield Resubmissions</div>
       <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · Checks</div>
+      <div class="subtab" data-bot="denials" onclick="setActiveBot('denials')">🚫 Denials · Claim denials</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -556,6 +569,28 @@ tbody tr:last-child td{border-bottom:none}
 
     <!-- MAIN: claims + admin rail -->
     <div class="main">
+
+      <!-- DENIALS — eCW's denied claims, the payer's reason codes, the SOP's action -->
+      <div class="claims-section" id="denials-section" hidden>
+        <div class="section-title">
+          🚫 Denied claims
+          <span id="denials-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <a class="btn" href="/api/denials.csv" style="margin-left:auto">⬇ CSV</a>
+          <button class="btn btn-refresh" onclick="loadDenials()">↻ Refresh</button>
+        </div>
+        <div id="denials-run" style="font-size:12px;color:var(--text-muted);margin:8px 14px 0;line-height:1.7"></div>
+        <div class="chk-tiles" id="denials-tiles"></div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Claim</th><th>Patient · DOS</th><th>Payer</th><th>Codes billed</th><th class="num">Charges · Balance</th><th>eCW status</th><th>Denial reason</th><th>SOP action</th>
+              </tr>
+            </thead>
+            <tbody id="denials-body"><tr><td colspan="8" class="empty-state">No review yet. Use <strong>▶ Run → Review denied claims in eCW</strong> on the right. The bot lists the claims eCW shows as denied, reads the reason codes on each, and looks the answer up in the SOP cheat sheet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
 
       <!-- CHEQUES (Remittance) — posted / unposted / not in eCW / no copy -->
       <div class="claims-section" id="checks-section" hidden>
@@ -648,6 +683,9 @@ tbody tr:last-child td{border-bottom:none}
                 <option value="bs_missing_docs" data-bot="submissions resubmissions">📋 ECW Obtain Claims Documentation</option>
                 <option value="blueshield_submissions" data-bot="submissions resubmissions">📤 Blue Shield Submissions</option>
                 <option value="ecw_status_update" data-bot="submissions resubmissions">📝 ECW Status Update</option>
+              </optgroup>
+              <optgroup label="🚫 Denials" data-bot="denials">
+                <option value="claim_denials" data-bot="denials">🚫 Review denied claims: eCW reasons + SOP action</option>
               </optgroup>
               <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
                 <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
@@ -889,6 +927,13 @@ window.scrollToEl = function(sel){
             ecw_status_update: JSON.stringify({
                 note: "Updates claim status in ECW from 'Ready to Submit to Symplisend' to 'Claim sent via Symplisend' for all submitted claims."
             }, null, 2),
+            claim_denials: JSON.stringify({
+                since: "07/01/2025",
+                statuses: ["ERA Payer Denied", "EOB Payer Denied", "Waiting for Denial", "Requires further review", "Insurance Rejected"],
+                limit_claims: 0,
+                reasons: true,
+                redo: false
+            }, null, 2),
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
                 blue_shield: false,
@@ -982,6 +1027,17 @@ window.scrollToEl = function(sel){
                  input: {key: 'check_eft', placeholder: 'Check #, e.g. 766832992 (empty = the next new check)'}},
             ],
         };
+        ACTIONS.denials = [
+            {icon: '🚫', title: 'Review denied claims in eCW', task: 'claim_denials',
+             desc: 'Lists the claims eCW shows as denied (Billing → Claims, the denied statuses), opens each one for the payer reason codes, and matches them to the SOP cheat sheet: write off, inquiry, appeal, medical records, recode. Reads only; nothing in eCW changes.',
+             payload: {since: '07/01/2025', limit_claims: 0, reasons: true, redo: false}},
+            {icon: '🧪', title: 'Test on 5 claims', task: 'claim_denials',
+             desc: 'The same review on the first five denied claims, with a screenshot of the first claim popup for a look at where the codes are.',
+             payload: {since: '07/01/2025', limit_claims: 5, reasons: true, redo: true}},
+            {icon: '📋', title: 'List only (no reasons)', task: 'claim_denials',
+             desc: 'Lists the denied claims and their status without opening any claim. Minutes. Claims whose codes were read before keep them.',
+             payload: {since: '07/01/2025', limit_claims: 0, reasons: false}},
+        ];
         ACTIONS.resubmissions = ACTIONS.submissions;
 
         function renderActions(bot) {
@@ -1088,7 +1144,7 @@ window.scrollToEl = function(sel){
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             renderActions(bot);
             const df = document.getElementById('date-filter');
-            if (df) df.hidden = (bot === 'eob');
+            if (df) df.hidden = (bot === 'eob' || bot === 'denials');
             const numLabel = document.getElementById('hero-num-label');
             if (numLabel) { numLabel.hidden = false; numLabel.textContent = bot === 'eob' ? ' need attention,' : ' claims to send'; }
             const heroOf = document.getElementById('hero-of');
@@ -1109,8 +1165,19 @@ window.scrollToEl = function(sel){
             const chkSec = document.getElementById('checks-section');
             if (chkSec) chkSec.hidden = (bot !== 'eob');
             const claimsSec = document.getElementById('claims-section-submissions');
-            if (claimsSec) claimsSec.hidden = (bot === 'eob');
+            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials');
             if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
+            // Denials: eCW's denied claims with the SOP's answer, one panel.
+            const denSec = document.getElementById('denials-section');
+            if (denSec) denSec.hidden = (bot !== 'denials');
+            if (bot === 'denials') {
+                if (numLabel) numLabel.textContent = ' denied claims,';
+                if (heroOf) heroOf.hidden = false;
+                if (denom) denom.textContent = 'with an SOP action';
+                if (pctLabel) pctLabel.textContent = 'covered by the cheat sheet';
+                if (remLabel) remLabel.textContent = 'need a person';
+                if (typeof loadDenials === 'function') loadDenials();
+            }
             const fldSec = document.getElementById('folders-section');
             if (fldSec) fldSec.hidden = (bot !== 'eob');
             if (bot === 'eob' && typeof loadFolders === 'function') loadFolders();
@@ -1304,7 +1371,7 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
-            if (window.activeBot === 'eob') return [];  // Remittance shows checks, not claims
+            if (window.activeBot === 'eob' || window.activeBot === 'denials') return [];  // those tabs show their own tables
             return claims;
         }
 
@@ -1530,6 +1597,90 @@ window.scrollToEl = function(sel){
                 </tr>`;
             }).join('');
         }
+        // ---- Denials ----
+        // One row per denied claim: what eCW shows, the reason codes read off
+        // the claim, and the SOP cheat sheet's action. Filters are client-side.
+        window._denialsFilter = window._denialsFilter || 'all';
+        const DENIAL_KINDS = [['write off', 'Write off', 'var(--text-muted)', 'the SOP says write off the balance'],
+                              ['inquiry', 'Send an inquiry', 'var(--info)', 'ask the payer to reprocess'],
+                              ['appeal', 'Appeal', 'var(--warning)', 'send an appeal with the SOP letter'],
+                              ['medical records', 'Send medical records', 'var(--warning)', 'medical necessity / documentation'],
+                              ['recode', 'Recode and rebill', 'var(--vio2)', 'a coding change'],
+                              ['review', 'Needs a person', 'var(--bad)', 'no rule fits, or several do']];
+        function setDenialsFilter(f) { window._denialsFilter = f; renderDenials(); }
+        function renderDenials() {
+            const data = window._denials;
+            if (!data) return;
+            const sm = data.summary || {};
+            const nf = n => Number(n || 0).toLocaleString('en-US');
+            const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+            const meta = document.getElementById('denials-meta');
+            if (meta) meta.textContent = data.rows.length ? `${nf(sm.claims)} denied claims · ${sm.run_at ? 'last reviewed ' + sm.run_at : ''}` : '';
+            if (window.activeBot === 'denials') {
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+                const total = data.rows.length, matched = Number(sm.matched || 0);
+                set('hero-submitted', nf(total));
+                set('hero-total', nf(matched));
+                set('hero-pct', (total ? Math.round(matched / total * 100) : 0) + '%');
+                set('hero-remaining', nf(total - matched));
+                const fill = document.getElementById('hero-progress-fill');
+                if (fill) fill.style.width = (total ? Math.round(matched / total * 100) : 0) + '%';
+            }
+            const run = document.getElementById('denials-run');
+            if (run) {
+                const lr = sm.last_run || {};
+                const steps = lr.steps || {}, order = lr.order || [];
+                run.innerHTML = order.length ? `<strong>Last run</strong> ${esc(lr.started_at || '')} · ` + order.map(k => `<strong>${esc(k)}:</strong> ${esc(steps[k])}`).join(' · ') : '';
+            }
+            const tiles = document.getElementById('denials-tiles');
+            if (tiles) {
+                const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._denialsFilter === f ? ' on' : ''}" onclick="setDenialsFilter('${f}')" style="border-color:${window._denialsFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
+                tiles.innerHTML = data.rows.length ? [
+                    tile('denied claims', data.rows.length, 'all', 'var(--text-secondary)', 'in eCW since ' + (sm.since || '')),
+                    ...DENIAL_KINDS.map(([k, label, color, meaning]) => tile(label, data.rows.filter(r => r.action_kind === k).length, k, color, meaning)),
+                    tile('no reason code read', data.rows.filter(r => !(r.denial_codes || []).length).length, 'no codes', 'var(--info)', 'open the claim in eCW'),
+                ].join('') : '';
+            }
+            const body = document.getElementById('denials-body');
+            if (!body) return;
+            const f = window._denialsFilter;
+            const rows = data.rows.filter(r => f === 'all' ? true : f === 'no codes' ? !(r.denial_codes || []).length : r.action_kind === f);
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="8" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'No review yet. Use <strong>▶ Run → Review denied claims in eCW</strong> on the right.'}</td></tr>`;
+                return;
+            }
+            const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '') || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const kindColor = k => (DENIAL_KINDS.find(x => x[0] === k) || [])[2] || 'var(--text-muted)';
+            body.innerHTML = rows.map(r => {
+                // The bare number of a group code (16 next to CO-16) is for matching, not for reading.
+                const codes = (r.denial_codes || []).filter((c, i, all) => !/^\d+$/.test(c) || !all.some(g => g.endsWith('-' + c)));
+                const hits = r.sop_matches || [];
+                const sop = hits.length
+                    ? hits.map(h => `<div style="margin-bottom:4px"><span style="color:${kindColor(h.kind)};font-weight:600">${esc(h.kind)}</span> <span style="color:var(--text-muted);font-size:11px">SOP ${esc(h.sop_row)} · ${esc(h.drug || h.codes)} · ${esc(h.payer)}</span><div style="font-size:12px" title="${esc(h.action)}">${esc(String(h.action).slice(0, 220))}${String(h.action).length > 220 ? '…' : ''}</div></div>`).join('')
+                    : `<span style="color:var(--bad);font-weight:600">no rule fits</span><div style="font-size:11px;color:var(--text-muted)">${codes.length ? 'a person decides' : 'read the reason on the claim first'}</div>`;
+                return `
+                <tr>
+                  <td><strong>${esc(r.claim_id)}</strong></td>
+                  <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}</div></td>
+                  <td>${esc(r.payer || '—')}</td>
+                  <td>${esc((r.cpt_codes || []).join(', ') || r.cpt || '—')}</td>
+                  <td class="num">${money(r.charges)}<div style="font-size:11px;color:var(--text-muted)">${r.balance ? 'balance ' + money(r.balance) : ''}</div></td>
+                  <td>${esc(r.ecw_status || r.ecw_status_filter || '—')}</td>
+                  <td>${codes.length ? codes.map(c => `<span class="verdict-pill" style="color:var(--warning)">${esc(c)}</span>`).join(' ') : '<span style="color:var(--text-muted)">not read</span>'}${r.denial_text ? `<div style="font-size:11px;color:var(--text-muted)" title="${esc(r.denial_text)}">${esc(String(r.denial_text).slice(0, 120))}</div>` : ''}</td>
+                  <td>${sop}</td>
+                </tr>`;
+            }).join('');
+        }
+        async function loadDenials() {
+            try {
+                const res = await fetch('/api/denials');
+                const data = await res.json();
+                if (data.error) { console.warn('denials', data.error); return; }
+                window._denials = data;
+                renderDenials();
+            } catch (e) { console.warn('denials', e); }
+        }
+
         async function loadChecks() {
             try {
                 const res = await fetch('/api/checks');
@@ -1660,7 +1811,7 @@ window.scrollToEl = function(sel){
         }
 
         async function loadCounts() {
-            if (window.activeBot === 'eob') return;   // renderChecks writes that headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials') return;   // those tabs write their own headline
             // With a date filter on, the headline is computed from the cached
             // claims with the SAME state definition the server uses
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
@@ -1773,7 +1924,7 @@ window.scrollToEl = function(sel){
         }
 
         function renderStats(claims) {
-            if (window.activeBot === 'eob') return;   // renderChecks writes that headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials') return;   // those tabs write their own headline
             const live = claims.filter(c => !isSent(c));
             window._archivedCount = live.filter(isArchived).length;
             const pending = live.filter(c => !isArchived(c));
@@ -2316,6 +2467,7 @@ window.scrollToEl = function(sel){
         setInterval(loadData, 15000);
         // The checks table is small; keep it live while a run is going.
         setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 15000);
+        setInterval(() => { if (window.activeBot === 'denials') loadDenials(); }, 15000);
         setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
 
         // ---- SharePoint folders (Remittance) ----
@@ -2579,6 +2731,48 @@ def checks_client_view():
     # (2026-09-20).
     resp.headers['Cache-Control'] = 'no-store, must-revalidate'
     return resp
+
+
+def _denials_rows():
+    from src.denials.run import summarize as _sum
+    table = dynamodb.Table('helixona-denials')
+    items = scan_all(table)
+    meta = next((it for it in items if it.get('claim_id') == '_summary'), {})
+    run = next((it for it in items if it.get('claim_id') == '_run'), {})
+    rows = [it for it in items if not str(it.get('claim_id', '')).startswith('_')]
+    rows.sort(key=lambda r: (str(r.get('action_kind') == 'review'), str(r.get('dos') or '')), reverse=True)
+    summary = {**_sum(rows), **{k: meta[k] for k in ('since', 'run_at', 'statuses', 'status_options', 'run_claims') if k in meta},
+               'last_run': {k: v for k, v in run.items() if k != 'claim_id'}}
+    return rows, summary
+
+
+@app.route('/api/denials')
+def api_denials():
+    try:
+        rows, summary = _denials_rows()
+        return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'summary': {}})
+
+
+@app.route('/api/denials.csv')
+def api_denials_csv():
+    import csv
+    import io
+    from flask import Response
+    cols = ['claim_id', 'patient', 'dos', 'payer', 'cpt', 'charges', 'paid', 'adjustment', 'balance', 'ecw_status', 'ecw_status_filter',
+            'denial_codes', 'denial_text', 'action_kind', 'sop_rows', 'action', 'reviewed_at']
+    try:
+        rows, _ = _denials_rows()
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction='ignore')
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: (' | '.join(map(str, r[k])) if isinstance(r.get(k), list) else r.get(k, '')) for k in cols})
+        return Response(buf.getvalue(), mimetype='text/csv',
+                        headers={'Content-Disposition': 'attachment; filename="denials.csv"'})
+    except Exception as e:
+        return Response(f'error,{e}', mimetype='text/csv')
 
 
 @app.route('/api/checks')

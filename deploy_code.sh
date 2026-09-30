@@ -70,6 +70,8 @@ fi
 # was retired (its unit stays on the host, disabled) and is not touched here.
 scp -i $KEY_FILE -o StrictHostKeyChecking=no \
     infra/helixona-agent-eob.service ubuntu@$EC2_IP:/tmp/helixona-agent-eob.service
+scp -i $KEY_FILE -o StrictHostKeyChecking=no \
+    infra/helixona-agent-denials.service ubuntu@$EC2_IP:/tmp/helixona-agent-denials.service
 
 # Install deps, verify, then restart the agent services
 ssh -i $KEY_FILE -o StrictHostKeyChecking=no ubuntu@$EC2_IP << 'ENDSSH'
@@ -88,16 +90,22 @@ fi
 echo
 echo "─── Restarting services ───"
 sudo mv /tmp/helixona-agent-eob.service /etc/systemd/system/helixona-agent-eob.service
+sudo mv /tmp/helixona-agent-denials.service /etc/systemd/system/helixona-agent-denials.service
 sudo systemctl daemon-reload
 sudo systemctl enable helixona-agent-eob
+# The Denials bot needs SQS_QUEUE_URL_DENIALS in .env and display :103 (see
+# docs/denials.md); until then it starts, finds no queue, and idles.
+sudo systemctl enable helixona-agent-denials
 sudo systemctl restart helixona-agent
 sudo systemctl restart helixona-agent-resub
 sudo systemctl restart helixona-agent-eob
+sudo systemctl restart helixona-agent-denials
 sudo systemctl restart helixona-dashboard
 sleep 2
 sudo systemctl status helixona-agent --no-pager
 sudo systemctl status helixona-agent-resub --no-pager
 sudo systemctl status helixona-agent-eob --no-pager
+sudo systemctl status helixona-agent-denials --no-pager || true
 sudo systemctl status helixona-dashboard --no-pager
 echo "Deploy complete."
 ENDSSH
