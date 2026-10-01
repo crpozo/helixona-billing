@@ -7,10 +7,13 @@ import re
 from decimal import Decimal
 import subprocess
 from datetime import datetime
-from flask import Flask, render_template_string, jsonify, request, send_file, redirect
+from flask import Flask, render_template_string, jsonify, request, send_file, redirect, make_response, abort
 import boto3
 import os
+import secrets
+from itsdangerous import URLSafeSerializer, BadSignature
 from src.aws.clients import scan_all
+from src import usage as claude_usage
 from src.rules.submission_gate import evaluate_claim
 from dotenv import load_dotenv
 
@@ -32,6 +35,58 @@ SQS_URL_EOB = os.environ.get('SQS_QUEUE_URL_EOB', '')
 SQS_URL_DENIALS = os.environ.get('SQS_QUEUE_URL_DENIALS', '')
 S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '')
 EC2_IP = "54.189.175.233"
+
+# The super admin (2026-10-01): the one person who sees the Claude credits
+# meter — what the bots spend on the Anthropic API and how long the balance
+# lasts. The dashboard has no sign-in, so the proof is a key: visiting
+# /admin?key=<DASHBOARD_ADMIN_KEY> once sets a signed cookie naming the
+# admin's e-mail; /api/usage answers only to that cookie. The key comes from
+# .env (DASHBOARD_ADMIN_KEY) or, failing that, is generated once into
+# data/.admin_key on the host (git-ignored) and printed in the dashboard log.
+ADMIN_EMAIL = os.environ.get('DASHBOARD_ADMIN_EMAIL', 'carlos@mindfultech.ec').strip().lower()
+ADMIN_KEY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '.admin_key')
+ADMIN_COOKIE = 'hx_admin'
+
+
+def admin_key():
+    key = os.environ.get('DASHBOARD_ADMIN_KEY', '').strip()
+    if key:
+        return key
+    try:
+        with open(ADMIN_KEY_FILE, encoding='utf-8') as fh:
+            key = fh.read().strip()
+    except FileNotFoundError:
+        key = ''
+    if not key:
+        key = secrets.token_urlsafe(24)
+        os.makedirs(os.path.dirname(ADMIN_KEY_FILE), exist_ok=True)
+        with open(ADMIN_KEY_FILE, 'w', encoding='utf-8') as fh:
+            fh.write(key + '\n')
+        try:
+            os.chmod(ADMIN_KEY_FILE, 0o600)
+        except OSError:
+            pass
+    return key
+
+
+def _admin_serializer():
+    return URLSafeSerializer(admin_key(), salt='helixona-admin')
+
+
+def admin_email():
+    """The admin's e-mail when the request carries the signed cookie, else ''."""
+    raw = request.cookies.get(ADMIN_COOKIE, '')
+    if not raw:
+        return ''
+    try:
+        who = str(_admin_serializer().loads(raw)).strip().lower()
+    except BadSignature:
+        return ''
+    return who if who == ADMIN_EMAIL else ''
+
+
+def is_admin():
+    return bool(admin_email())
 KEY_FILE = "infra/helixona-agent-key.pem"
 
 # Per-bot routing: which SQS queue + systemd unit each tab targets.
@@ -519,6 +574,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="status-badge"><div class="status-dot"></div>Agent Running · 54.189.175.233</div>
         <span style="font-size:10px;color:var(--text-muted)" id="ts">—</span>
         <a href="/audit" class="novnc-link" title="Every submission the bot made, with its documents">🧾 Audit Log</a>
+        <a id="usage-pill" class="novnc-link" href="#" hidden onclick="toggleUsage();return false" title="Claude API credits — super admin only">💳 Claude credits · <b id="usage-left" style="color:var(--text-primary)">—</b></a>
         <div class="icbtn" onclick="loadData();loadLogs()" title="Refresh">↻</div>
       </div>
     </div>
@@ -565,6 +621,25 @@ tbody tr:last-child td{border-bottom:none}
         <button class="btn" onclick="toggleLiveScreen()">✕ Hide</button>
       </div>
       <iframe id="live-screen-frame" title="Bot screen (noVNC)"></iframe>
+    </div>
+
+    <!-- CLAUDE CREDITS — the super admin's meter; filled by loadUsage() when /api/usage answers -->
+    <div class="live-screen" id="usage-panel" hidden>
+      <div class="live-screen-bar">
+        <span>💳 Claude credits · what the bots spend on the Anthropic API</span>
+        <span id="usage-who" style="font-size:11px;color:var(--text-muted)"></span>
+        <button class="btn" onclick="toggleUsage()" style="margin-left:auto">✕ Hide</button>
+      </div>
+      <div style="padding:14px 16px">
+        <div id="usage-tiles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px"></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:12px">
+          <span>Balance the Anthropic console shows today: $</span>
+          <input id="usage-balance" type="number" step="0.01" min="0" placeholder="e.g. 250.00" style="width:120px;padding:7px 9px;border-radius:8px;border:1px solid var(--bdr);background:var(--bg2);color:var(--text-primary)">
+          <button class="btn" onclick="saveCredits()" style="border:1px solid var(--bdr)">Save</button>
+          <span id="usage-note" style="color:var(--text-muted)">The meter counts from that moment; remaining = balance − spend since. Prices are the list rates per model.</span>
+        </div>
+        <div id="usage-days" style="font-size:12px"></div>
+      </div>
     </div>
 
     <!-- MAIN: claims + admin rail -->
@@ -2522,6 +2597,66 @@ window.scrollToEl = function(sel){
         }
         setInterval(loadLogs, 5000);
         setInterval(loadBSClaims, 30000);
+
+        // ---- Claude credits (super admin only) ----
+        // /api/usage answers 403 to everyone but the admin cookie; then the
+        // pill stays hidden and nothing else changes on the page.
+        const usd = v => '$' + (Number(v) || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const ktok = v => (Number(v) || 0).toLocaleString('en-US');
+        function toggleUsage() {
+            const p = document.getElementById('usage-panel');
+            if (p) p.hidden = !p.hidden;
+        }
+        async function loadUsage() {
+            try {
+                const res = await fetch('/api/usage');
+                if (res.status !== 200) return;
+                const u = await res.json();
+                const pill = document.getElementById('usage-pill');
+                const left = document.getElementById('usage-left');
+                if (pill) pill.hidden = false;
+                const c = u.credits;
+                if (left) left.textContent = c ? usd(c.remaining_usd) + ' left' + (c.days_left !== null && c.days_left !== undefined ? ' · ~' + c.days_left + ' days' : '') : usd(u.month_cost_usd) + ' this month';
+                const who = document.getElementById('usage-who');
+                if (who) who.textContent = 'visible only to ' + (u.admin || '');
+                const tile = (label, value, sub) => `<div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:12px 14px"><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)">${label}</div><div style="font-size:22px;font-weight:600;margin:4px 0 2px">${value}</div><div style="font-size:11px;color:var(--text-muted)">${sub || ''}</div></div>`;
+                const t = u.total || {};
+                const tiles = [];
+                if (c) {
+                    tiles.push(tile('Remaining', usd(c.remaining_usd), 'of ' + usd(c.balance_usd) + ' entered ' + String(c.as_of || '').slice(0, 10)));
+                    tiles.push(tile('Runs out in', c.days_left === null || c.days_left === undefined ? '—' : '~' + c.days_left + ' days', 'at ' + usd(c.per_day_usd) + ' a day (last 14 days)'));
+                } else {
+                    tiles.push(tile('Remaining', '—', 'enter the console balance below'));
+                }
+                tiles.push(tile('Spent today', usd(u.today_cost_usd), u.today || ''));
+                tiles.push(tile('Spent this month', usd(u.month_cost_usd), ''));
+                tiles.push(tile('All time', usd(t.cost_usd), ktok(t.calls) + ' calls · ' + ktok(t.input_tokens) + ' in · ' + ktok(t.output_tokens) + ' out tokens'));
+                const models = Object.entries(t.models || {}).sort((a, b) => b[1] - a[1]);
+                if (models.length) tiles.push(tile('By model', models.map(([m, v]) => m.replace(/_/g, '-') + ' ' + usd(v)).join(' · '), 'list prices per million tokens'));
+                const el = document.getElementById('usage-tiles');
+                if (el) el.innerHTML = tiles.join('');
+                const days = (u.days || []).slice(-14).reverse();
+                const dl = document.getElementById('usage-days');
+                if (dl) dl.innerHTML = days.length
+                    ? '<table style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:right;padding:6px 8px">Calls</th><th style="text-align:right;padding:6px 8px">Tokens in</th><th style="text-align:right;padding:6px 8px">Tokens out</th><th style="text-align:right;padding:6px 8px">Cost</th></tr></thead><tbody>'
+                      + days.map(d => `<tr style="border-top:1px solid var(--bdr)"><td style="padding:6px 8px">${d.day}</td><td style="text-align:right;padding:6px 8px">${ktok(d.calls)}</td><td style="text-align:right;padding:6px 8px">${ktok(d.input_tokens)}</td><td style="text-align:right;padding:6px 8px">${ktok(d.output_tokens)}</td><td style="text-align:right;padding:6px 8px">${usd(d.cost_usd)}</td></tr>`).join('')
+                      + '</tbody></table>'
+                    : '<div class="empty-state">No API call has been tallied yet. The meter starts with the next check the bot reads.</div>';
+            } catch (e) {
+                console.error('usage', e);
+            }
+        }
+        async function saveCredits() {
+            const inp = document.getElementById('usage-balance');
+            const note = document.getElementById('usage-note');
+            const v = parseFloat(inp && inp.value);
+            if (!(v >= 0)) { if (note) note.textContent = 'Enter the balance in dollars first.'; return; }
+            const res = await fetch('/api/usage/credits', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({balance_usd: v})});
+            if (note) note.textContent = res.ok ? 'Saved. The meter counts from now.' : 'Could not save (' + res.status + ').';
+            loadUsage();
+        }
+        loadUsage();
+        setInterval(loadUsage, 60000);
     </script>
 </body>
 </html>
@@ -2744,6 +2879,56 @@ def _denials_rows():
     summary = {**_sum(rows), **{k: meta[k] for k in ('since', 'run_at', 'statuses', 'status_options', 'run_claims') if k in meta},
                'last_run': {k: v for k, v in run.items() if k != 'claim_id'}}
     return rows, summary
+
+
+@app.route('/admin')
+def admin_login():
+    """One visit with the key sets the admin cookie; the page then shows the
+    credits meter. A wrong key is a plain 403."""
+    key = (request.args.get('key') or '').strip()
+    if not key or not secrets.compare_digest(key, admin_key()):
+        abort(403)
+    resp = make_response(redirect('/'))
+    resp.set_cookie(ADMIN_COOKIE, _admin_serializer().dumps(ADMIN_EMAIL), max_age=365 * 24 * 3600,
+                    httponly=True, samesite='Lax')
+    return resp
+
+
+@app.route('/admin/logout')
+def admin_logout():
+    resp = make_response(redirect('/'))
+    resp.delete_cookie(ADMIN_COOKIE)
+    return resp
+
+
+@app.route('/api/usage')
+def api_usage():
+    """The Claude credits meter — super admin only (403 to everyone else)."""
+    who = admin_email()
+    if not who:
+        abort(403)
+    out = claude_usage.read(dynamodb)
+    out['admin'] = who
+    resp = jsonify(out)
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@app.route('/api/usage/credits', methods=['POST'])
+def api_usage_credits():
+    who = admin_email()
+    if not who:
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    try:
+        balance = float(body.get('balance_usd'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'balance_usd must be a number'}), 400
+    if balance < 0:
+        return jsonify({'ok': False, 'error': 'balance_usd must be zero or more'}), 400
+    claude_usage.ensure_table(dynamodb)
+    item = claude_usage.set_credits(dynamodb, balance, who)
+    return jsonify({'ok': True, 'balance_usd': float(item['balance_usd']), 'as_of': item['as_of']})
 
 
 @app.route('/api/denials')
@@ -3951,5 +4136,6 @@ if __name__ == '__main__':
     print("\n" + "="*50)
     print("  Helixona Dashboard — http://localhost:5050")
     print("  Audit log      — http://localhost:5050/audit")
+    print(f"  Super admin    — http://localhost:5050/admin?key={admin_key()}  ({ADMIN_EMAIL}; sets the cookie for the Claude credits meter)")
     print("="*50 + "\n")
     app.run(host='0.0.0.0', port=5050, debug=True)

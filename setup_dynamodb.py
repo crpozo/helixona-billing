@@ -87,6 +87,17 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # The Claude credits meter: _total, day:YYYY-MM-DD and _credits rows
+        # with tokens and dollars per model (docs/claude_credits.md).
+        # Created on first use by src/usage.py too.
+        "TableName": "helixona-usage",
+        "KeySchema": [{"AttributeName": "k", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "k", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

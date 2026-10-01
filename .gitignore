@@ -45,3 +45,6 @@ Thumbs.db
 *.log
 DEPLOYED
 deleted_claims_*.json
+
+# --- Dashboard super-admin key (generated on the host) ---
+data/.admin_key

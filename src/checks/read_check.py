@@ -32,6 +32,7 @@ import re
 
 from src.eob.parse import money, norm_text
 from src.utils.logger import get_logger
+from src.usage import record as record_usage
 
 logger = get_logger(__name__)
 
@@ -290,6 +291,7 @@ def read_with_vision(aws_client, path, model_id=VISION_MODEL_ID, page_no=0):
             {'type': 'text', 'text': PROMPT},
         ]}],
     )
+    record_usage(aws_client, response, 'checks')
     if response.stop_reason == 'refusal':
         raise RuntimeError('the model declined to read this image')
     text = ''.join(getattr(b, 'text', '') for b in response.content if getattr(b, 'type', '') == 'text')
@@ -312,6 +314,7 @@ def read_page(aws_client, path, page_no, model_id=VISION_MODEL_ID):
             {'type': 'text', 'text': PROMPT},
         ]}],
     )
+    record_usage(aws_client, response, 'checks')
     if response.stop_reason == 'refusal':
         raise RuntimeError('the model declined to read this image')
     text = ''.join(getattr(b, 'text', '') for b in response.content if getattr(b, 'type', '') == 'text')
