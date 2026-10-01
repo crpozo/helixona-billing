@@ -31,6 +31,7 @@ from src.documents.cover_letter import generate_cover_letter_pdf
 from src.symplisend.submission import SympliSendSubmission
 from src.symplisend import form_types
 from src.ecw.claim_status import ecw_status_for
+from src.denials.ecw import set_status as set_claim_status_filter, status_options as claim_status_options
 from src.rules.engine import RulesEngine
 from src.rules.submission_gate import (
     OFFICE_VISIT_CPTS,
@@ -3837,12 +3838,12 @@ def process_message(message: dict, aws_client: AWSClient):
                         options_text = sel.evaluate('''el => {
                             return Array.from(el.options).map(o => o.text.trim()).join('|');
                         }''')
-                        if 'Ready to Submit' in options_text or 'Symplisend' in options_text or 'claimStatus' in ng_model.lower():
+                        if 'ready to submit' in options_text.lower() or 'symplisend' in options_text.lower() or 'claimstatus' in ng_model.lower():
                             logger.info(f"  Found status dropdown: id={sel_id} ng-model={ng_model}")
-                            # Find the matching option value
+                            # Find the matching option value — eCW's case varies.
                             target_value = sel.evaluate('''el => {
                                 for (const opt of el.options) {
-                                    if (opt.text.includes('Ready to Submit to Symplisend')) {
+                                    if ((opt.text || '').toLowerCase().includes('ready to submit to symplisend')) {
                                         return opt.value;
                                     }
                                 }
@@ -3879,7 +3880,7 @@ def process_message(message: dict, aws_client: AWSClient):
                             selected_text = sel.evaluate('''el => {
                                 return el.options[el.selectedIndex]?.text?.trim() || '';
                             }''')
-                            if 'Ready to Submit' in selected_text:
+                            if 'ready to submit' in selected_text.lower():
                                 logger.info(f"✅ Status dropdown verified: {selected_text}")
                             else:
                                 logger.warning(f"⚠️ Status dropdown shows: '{selected_text}' — expected 'Ready to Submit to Symplisend'")
@@ -4948,41 +4949,22 @@ def process_message(message: dict, aws_client: AWSClient):
             # every claim in the second was invisible to the extractor.
             target_status = ecw_status_for(_settings.bot_role)
             logger.info(f"Setting claim status filter to '{target_status}'...")
+            # eCW shows the statuses in whatever case it likes (2026-10-01: the
+            # whole list came back in capitals, "READY TO SUBMIT TO SYMPLISEND",
+            # and a case-sensitive match found nothing in 20 ms). The shared
+            # setter matches case-insensitively; the form may also still be
+            # rendering, so it gets three tries.
             status_filter_set = False
-            try:
-                selects = page.locator('select:visible').all()
-                for sel in selects:
-                    try:
-                        ng_model = sel.get_attribute('ng-model') or ''
-                        options_text = sel.evaluate('''el => {
-                            return Array.from(el.options).map(o => o.text.trim()).join('|');
-                        }''')
-                        if 'Ready to' in options_text or 'Symplisend' in options_text or 'claimStatus' in ng_model.lower():
-                            target_value = sel.evaluate(
-                                '''(el, target) => {
-                                    for (const opt of el.options) {
-                                        if ((opt.text || '').trim() === target) return opt.value;
-                                    }
-                                    for (const opt of el.options) {
-                                        if ((opt.text || '').includes(target)) return opt.value;
-                                    }
-                                    return null;
-                                }''', target_status)
-                            if target_value:
-                                sel.select_option(value=target_value)
-                                time.sleep(0.3)
-                                sel.dispatch_event('change')
-                                logger.info(f"✅ Status set to '{target_status}'")
-                                status_filter_set = True
-                                break
-                            else:
-                                logger.warning(
-                                    f"⚠️ '{target_status}' is not an option in this dropdown. "
-                                    f"Available: {options_text[:300]}")
-                    except Exception:
-                        continue
-            except Exception as e:
-                logger.warning(f"Status filter failed: {e}")
+            seen_options = []
+            for _attempt in range(3):
+                try:
+                    if set_claim_status_filter(page, target_status):
+                        status_filter_set = True
+                        break
+                    seen_options = claim_status_options(page)
+                except Exception as e:
+                    logger.warning(f"Status filter failed: {e}")
+                time.sleep(2)
 
             if not status_filter_set:
                 # Without the filter ECW returns its own default set, which is
@@ -4990,7 +4972,9 @@ def process_message(message: dict, aws_client: AWSClient):
                 # process the wrong claims.
                 logger.error(
                     f"❌ Could not set the claim status filter to '{target_status}' — "
-                    f"aborting so we do not pull the wrong claims.")
+                    f"aborting so we do not pull the wrong claims. "
+                    + (f"Claim Status options on screen: {' | '.join(seen_options)[:600]}" if seen_options
+                       else "No Claim Status dropdown was on screen."))
                 return
 
             time.sleep(1)
@@ -5104,7 +5088,7 @@ def process_message(message: dict, aws_client: AWSClient):
                         else if (t.includes(',') && !patient && t.length > 3 && !/\d/.test(t)) patient = t;
                         else if (t.includes('Blue Shield') || t.includes('Shield')) payer = t;
                         else if (/^\s*[\d,]+\.\d{2}\s*$/.test(t) && !charges) charges = t.trim().replace(',','');
-                        else if (t.includes('Ready to Sub') || t.includes('Symplisend')) status = t;
+                        else if (/ready to sub|symplisend/i.test(t)) status = t;
                     }
                     claims.push({ claimId, serviceDate, patient, payer, charges, status, pageNum: window._currentPage || 1 });
                 }

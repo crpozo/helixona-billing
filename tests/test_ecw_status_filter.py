@@ -73,6 +73,23 @@ class TheExtractorUsesTheMapping(unittest.TestCase):
         self.assertNotIn("'Ready to Submit to Symplisend'", block)
         self.assertNotIn('"Ready to Submit to Symplisend"', block)
 
+    def test_the_filter_matches_ecw_in_any_case(self):
+        # 2026-10-01: eCW listed the statuses in capitals ("READY TO SUBMIT TO
+        # SYMPLISEND") and the case-sensitive match found nothing, so the
+        # extractor aborted every run. The shared setter lower-cases both
+        # sides, is retried while the form renders, and the abort names the
+        # options it saw.
+        block = self._generate_hcfa_block()
+        self.assertIn('set_claim_status_filter(page, target_status)', block)
+        self.assertIn('for _attempt in range(3):', block)
+        self.assertIn('Claim Status options on screen:', block)
+        ecw = _read(os.path.join(os.path.dirname(MAIN), 'denials', 'ecw.py'))
+        self.assertIn('opts.findIndex(t => t.toLowerCase() === want)', ecw)
+        self.assertIn('/symplisend|denied|ready to submit/i.test(t)', ecw)
+        src = _read(MAIN)
+        self.assertNotIn("opt.text.includes('Ready to Submit to Symplisend')", src)
+        self.assertIn("/ready to sub|symplisend/i.test(t)", src)
+
     def test_a_failed_filter_aborts_instead_of_extracting_defaults(self):
         # With no filter applied ECW returns its own default set, which is not
         # this bot's work; processing it would pull the wrong claims.
