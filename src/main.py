@@ -4829,7 +4829,16 @@ def process_message(message: dict, aws_client: AWSClient):
                 if 'login' not in post_url.lower():
                     logger.info("🎉 ECW LOGIN SUCCESS!")
                 else:
-                    logger.warning("Login may have failed — still on login page")
+                    # Going on from here only walks an unauthenticated page:
+                    # no Claims screen, no Claim Status dropdown, and a
+                    # confusing abort two minutes later. Stop now and say why.
+                    logger.error("❌ eCW login did not go through — still on the login page "
+                                 f"({post_url[:100]}). Stopping this run; see the lines above for the captcha or the lockout message.")
+                    try:
+                        page.screenshot(path='/tmp/ecw_login_failed.png')
+                    except Exception:
+                        pass
+                    return
             else:
                 logger.info("🎉 Already logged in via persistent session!")
 
