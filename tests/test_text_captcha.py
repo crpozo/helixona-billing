@@ -49,7 +49,14 @@ class FakeFrame:
     def evaluate(self, js, *args):
         if 'const bad = []' in js:
             return self.error
+        return ''
+
+    def evaluate_handle(self, js, *args):
         return None
+
+    @property
+    def frames(self):
+        return [self]
 
     def query_selector(self, sel):
         if sel.startswith('img['):
@@ -109,6 +116,25 @@ class SolveOne(unittest.TestCase):
         self.assertEqual(refresh.clicks, 1)
         self.assertEqual(pwd.value, 's3cret')        # re-entered: eCW clears it after a miss
         self.assertTrue(any(g.get('action') == 'reportbad' and g.get('id') == 'task-1' for g in req.gets))
+
+
+class LateCaptcha(unittest.TestCase):
+    def test_the_box_is_waited_for_and_found_by_its_label(self):
+        # Found by name after a moment, as the re-auth page draws it late.
+        inp = FakeEl()
+        frame = FakeFrame(None, FakeEl())
+        calls = {'n': 0}
+        real = frame.query_selector
+
+        def late(sel):
+            if 'placeholder*="aptcha"' in sel:
+                calls['n'] += 1
+                return inp if calls['n'] >= 3 else None
+            return real(sel)
+        frame.query_selector = late
+        with mock.patch.object(tc.time, 'sleep'):
+            self.assertIs(tc.wait_for_captcha(frame, 6.0), inp)
+        self.assertIn('captcha\\s*text', tc.BY_LABEL_JS)
 
 
 class Lockout(unittest.TestCase):

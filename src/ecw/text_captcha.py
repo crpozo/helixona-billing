@@ -28,13 +28,55 @@ TWO_CAPTCHA_IN = "https://2captcha.com/in.php"
 TWO_CAPTCHA_RES = "https://2captcha.com/res.php"
 
 
+BY_LABEL_JS = '''() => {
+    // "Enter Captcha text here" is a label above the box, not a placeholder:
+    // the first visible text input after that label in document order.
+    const vis = el => el && el.offsetParent !== null;
+    const all = Array.from(document.querySelectorAll('*'));
+    const lab = all.find(el => el.children.length === 0 && /captcha\\s*text/i.test(el.textContent || ''));
+    if (!lab) return null;
+    let after = false;
+    for (const el of all) {
+        if (el === lab) { after = true; continue; }
+        if (after && el.tagName === 'INPUT' && !['password', 'hidden', 'submit', 'button', 'checkbox'].includes((el.type || '').toLowerCase()) && vis(el)) return el;
+    }
+    return null;
+}'''
+
+INPUTS_JS = '''() => Array.from(document.querySelectorAll('input')).filter(el => el.offsetParent !== null)
+    .map(el => `${el.tagName.toLowerCase()}[type=${el.type}${el.id ? ' id=' + el.id : ''}${el.name ? ' name=' + el.name : ''}${el.placeholder ? ' ph=' + el.placeholder : ''}]`).join(' ')'''
+
+
 def captcha_input(frame):
-    """The text box for the captcha, or None when the page has no text captcha."""
+    """The text box for the captcha, or None when the page has no text captcha.
+    By name first, then by the label "Enter Captcha text here" above it."""
     try:
         el = frame.query_selector(INPUT_SEL)
+        if el and el.is_visible():
+            return el
+        handle = frame.evaluate_handle(BY_LABEL_JS)
+        el = handle.as_element() if handle else None
         return el if el and el.is_visible() else None
     except Exception:
         return None
+
+
+def wait_for_captcha(frame, timeout_s=6.0):
+    """The captcha box once the page has drawn it; None after `timeout_s`.
+    The re-auth page renders the captcha a moment after the password box."""
+    deadline = time.time() + timeout_s
+    while True:
+        inp = captcha_input(frame)
+        if inp is not None or time.time() >= deadline:
+            return inp
+        time.sleep(0.5)
+
+
+def describe_inputs(frame):
+    try:
+        return frame.evaluate(INPUTS_JS) or ''
+    except Exception:
+        return ''
 
 
 def captcha_image(frame, inp=None):
@@ -113,11 +155,11 @@ def refresh(frame):
     return False
 
 
-def solve_text_captcha(frame, aws_client, req, where='login page'):
+def solve_text_captcha(frame, aws_client, req, where='login page', wait_s=0.0):
     """Fill the text captcha on `frame` when there is one. Returns
     ('filled', task_id) / ('none', '') when the page has no text captcha /
     ('failed', task_id)."""
-    inp = captcha_input(frame)
+    inp = wait_for_captcha(frame, wait_s) if wait_s else captcha_input(frame)
     if inp is None:
         return 'none', ''
     img = captcha_image(frame, inp)
@@ -202,7 +244,9 @@ def submit_with_captcha(frame, page, aws_client, req, submit_selector, where='re
             logger.error(f"❌ eCW has locked the account: \"{msg[:160]}\" — no more attempts; wait 15 minutes before the next run")
             return False
         refill_password(frame, password)
-        state, task_id = solve_text_captcha(frame, aws_client, req, where)
+        state, task_id = solve_text_captcha(frame, aws_client, req, where, wait_s=6.0 if attempt == 1 else 2.0)
+        if state == 'none':
+            logger.info(f"  (no text captcha on the {where}; inputs: {describe_inputs(frame)[:300] or 'none visible'})")
         if state == 'failed' and attempt < attempts:
             refresh(frame)
             continue
@@ -221,9 +265,10 @@ def submit_with_captcha(frame, page, aws_client, req, submit_selector, where='re
         url = (page.url or '').lower()
         if 'login' not in url and 'getpwdpage' not in url:
             return True
-        if state != 'filled':
+        if state != 'filled' and captcha_input(frame) is None and not any(
+                f for f in page.frames if captcha_input(f) is not None):
             return False
-        # Still here with a captcha box: the text was wrong. Say so, get a new image.
+        # Still here with a captcha box: the text was wrong (or the box came late). Get a new image.
         if not key:
             try:
                 key = aws_client.get_secret("captcha_api_key").get('api_key', '')
