@@ -24,6 +24,8 @@ from src.utils.logger import get_logger
 from src.aws.clients import AWSClient, scan_all
 from src.ecw.browser import BrowserManager
 from src.ecw.login import perform_ecw_login
+from src.ecw.text_captcha import solve_text_captcha, submit_with_captcha
+import requests as _http   # the text-captcha calls; the local `req` imports are conditional
 from src.ecw.claims import process_nightly_bulk_claims
 from src.blueshield.portal import BlueShieldPortal
 from src.ai.verification import IVVerificationService
@@ -1963,6 +1965,12 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
     if not token_found:
         logger.warning("⚠️ Turnstile not solved — login will likely fail")
 
+    # STEP 3b: eCW's own text captcha, when the login page shows one.
+    try:
+        solve_text_captcha(login_frame, aws_client, _http, where='login page')
+    except Exception as e:
+        logger.warning(f"text captcha on the login page: {e}")
+
     # STEP 4: Click the "Log In" button
     login_btn = login_frame.query_selector(
         '#Login, input[value="Log In"], input[type="submit"], button:has-text("Log In")'
@@ -2052,18 +2060,13 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
                 except Exception as e:
                     logger.warning(f"Turnstile handling on re-auth page: {e}")
 
-                time.sleep(0.5)
-                submit_btn = reauth_frame.query_selector(
+                # The re-auth page shows eCW's text captcha ("Enter Captcha
+                # text here") since 2026-10; solve it, submit, retry on a
+                # wrong answer. Without a captcha this is just the submit.
+                submit_with_captcha(
+                    reauth_frame, page, aws_client, _http,
                     '#Login, input[type="submit"], button:has-text("Log In"), '
-                    'button:has-text("Continue"), input[value="Log In"]'
-                )
-                if submit_btn:
-                    submit_btn.click()
-                    logger.info("✅ Clicked submit on re-auth page")
-                else:
-                    reauth_frame.evaluate('(f => f && HTMLFormElement.prototype.submit.call(f))(document.querySelector("form"))')
-                    logger.info("✅ Submitted re-auth form programmatically")
-                time.sleep(random.uniform(3, 5))
+                    'button:has-text("Continue"), input[value="Log In"]', where='re-auth page')
                 post_url = page.url
                 logger.info(f"After re-auth: {page.title()} | {post_url[:120]}")
             else:
@@ -3554,20 +3557,11 @@ def process_message(message: dict, aws_client: AWSClient):
                             except Exception as e:
                                 logger.warning(f"Turnstile handling on re-auth page: {e}")
 
-                            # Click submit/login button
-                            time.sleep(0.5)
-                            submit_btn = reauth_frame.query_selector(
+                            # Text captcha (if shown) + submit, retried on a wrong answer.
+                            submit_with_captcha(
+                                reauth_frame, page, aws_client, _http,
                                 '#Login, input[type="submit"], button:has-text("Log In"), '
-                                'button:has-text("Continue"), input[value="Log In"]'
-                            )
-                            if submit_btn:
-                                submit_btn.click()
-                                logger.info("✅ Clicked submit on re-auth page")
-                            else:
-                                reauth_frame.evaluate('(f => f && HTMLFormElement.prototype.submit.call(f))(document.querySelector("form"))')
-                                logger.info("✅ Submitted re-auth form programmatically")
-
-                            time.sleep(random.uniform(3, 5))
+                                'button:has-text("Continue"), input[value="Log In"]', where='re-auth page')
                             post_url = page.url
                             post_title = page.title()
                             logger.info(f"After re-auth: {post_title} | {post_url[:120]}")
@@ -4814,15 +4808,10 @@ def process_message(message: dict, aws_client: AWSClient):
                             }}''', creds['password'])
                         except Exception:
                             pass
-                        time.sleep(0.5)
-                        submit_btn = reauth_frame.query_selector(
-                            '#Login, input[type="submit"], button:has-text("Log In")'
-                        )
-                        if submit_btn:
-                            submit_btn.click()
-                        else:
-                            reauth_frame.evaluate('(f => f && HTMLFormElement.prototype.submit.call(f))(document.querySelector("form"))')
-                        time.sleep(random.uniform(3, 5))
+                        # Text captcha (if shown) + submit, retried on a wrong answer.
+                        submit_with_captcha(
+                            reauth_frame, page, aws_client, _http,
+                            '#Login, input[type="submit"], button:has-text("Log In")', where='re-auth page')
 
                 # Handle V12 Plugin popup
                 try:
