@@ -255,8 +255,10 @@ class ReadyMeansWhatSympliSendNeeds(unittest.TestCase):
     """2026-09-20, the operator: "si tienen el IV Note + HCFA ya estan listos
     para hacer submission". The gate already said so; the dashboard did not."""
 
+    # ...and, since 2026-10-02, the IV Note must be locked in eCW (Tom: the
+    # unsigned notes were the unlocked ones).
     READY = {'claim_id': '2535', 'hcfa_s3_path': 's3://b/h.pdf', 'prog_notes_s3_path': 's3://b/iv.pdf',
-             'subscriber_id': 'XEM911575499', 'cpt': '96365'}
+             'subscriber_id': 'XEM911575499', 'cpt': '96365', 'iv_note_locked': True}
 
     def test_a_claim_with_hcfa_and_iv_note_needs_no_more_work(self):
         import dashboard
@@ -271,6 +273,9 @@ class ReadyMeansWhatSympliSendNeeds(unittest.TestCase):
         self.assertTrue(dashboard._claim_needs_work({**self.READY, 'subscriber_id': ''}))
         self.assertTrue(dashboard._claim_needs_work({**self.READY, 'subscriber_id_unverified': True}))
         self.assertTrue(dashboard._claim_needs_work({**self.READY, 'iv_note_patient_mismatch': True}))
+        self.assertTrue(dashboard._claim_needs_work({**self.READY, 'iv_note_locked': False}))
+        unchecked = dict(self.READY); del unchecked['iv_note_locked']
+        self.assertTrue(dashboard._claim_needs_work(unchecked))
 
     def test_the_gate_and_the_dashboard_are_one_rule(self):
         import dashboard

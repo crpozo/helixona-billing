@@ -25,11 +25,30 @@ def claim(**overrides):
         'subscriber_id': 'XEA914555915',
         'subscriber_id_unverified': 0,
         'iv_note_patient_mismatch': 0,
+        'iv_note_locked': True,
         'encounter_revision_needed': 0,
         'symplisend_submitted': 0,
     }
     base.update(overrides)
     return base
+
+
+class TheNoteMustBeLocked(unittest.TestCase):
+    """2026-10-02: unsigned notes were unlocked notes. None may leave."""
+
+    def test_an_unlocked_note_holds_the_claim(self):
+        v = evaluate_claim(claim(iv_note_locked=False))
+        self.assertFalse(v['ready'])
+        self.assertIn('IV Note not locked in eCW', v['blockers'])
+
+    def test_a_note_never_checked_is_held_until_read_again(self):
+        c = claim(); del c['iv_note_locked']
+        v = evaluate_claim(c)
+        self.assertFalse(v['ready'])
+        self.assertTrue(any(b.startswith('IV Note lock not verified') for b in v['blockers']))
+
+    def test_a_locked_note_passes(self):
+        self.assertTrue(ready_to_submit(claim(iv_note_locked=True)))
 
 
 class CompleteClaimPasses(unittest.TestCase):

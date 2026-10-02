@@ -84,6 +84,10 @@ scp -i $KEY_FILE -o StrictHostKeyChecking=no \
 # host: sudo bash /opt/helixona-agent/setup_denials_host.sh
 scp -i $KEY_FILE -o StrictHostKeyChecking=no \
     infra/setup_denials_host.sh ubuntu@$EC2_IP:$REMOTE_DIR/setup_denials_host.sh
+# The unlocked-notes timers: weekday notices and the Monday summary (docs/unlocked_notes.md).
+scp -i $KEY_FILE -o StrictHostKeyChecking=no \
+    infra/helixona-unlocked-notes.service infra/helixona-unlocked-notes.timer \
+    infra/helixona-unlocked-notes-weekly.service infra/helixona-unlocked-notes-weekly.timer ubuntu@$EC2_IP:/tmp/
 
 # Install deps, verify, then restart the agent services
 ssh -i $KEY_FILE -o StrictHostKeyChecking=no ubuntu@$EC2_IP << 'ENDSSH'
@@ -103,7 +107,10 @@ echo
 echo "─── Restarting services ───"
 sudo mv /tmp/helixona-agent-eob.service /etc/systemd/system/helixona-agent-eob.service
 sudo mv /tmp/helixona-agent-denials.service /etc/systemd/system/helixona-agent-denials.service
+sudo cp /tmp/helixona-unlocked-notes.service /tmp/helixona-unlocked-notes.timer \
+        /tmp/helixona-unlocked-notes-weekly.service /tmp/helixona-unlocked-notes-weekly.timer /etc/systemd/system/
 sudo systemctl daemon-reload
+sudo systemctl enable --now helixona-unlocked-notes.timer helixona-unlocked-notes-weekly.timer
 sudo systemctl enable helixona-agent-eob
 # The Denials bot needs SQS_QUEUE_URL_DENIALS in .env and display :103 (see
 # docs/denials.md); until then it starts, finds no queue, and idles.

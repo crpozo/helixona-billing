@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly unlocked-notes summary, Mondays at 8:00 Pacific (15:00 UTC)
+
+[Timer]
+OnCalendar=Mon *-*-* 15:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

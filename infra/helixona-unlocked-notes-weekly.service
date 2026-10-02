@@ -1,0 +1,8 @@
+[Unit]
+Description=Helixona — queue the weekly unlocked-notes summary for the Intake bot
+After=network.target helixona-dashboard.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl -sS -X POST http://127.0.0.1:5050/api/send-task -H 'Content-Type: application/json' \
+    -d '{"bot": "submissions", "task_type": "unlocked_notes", "weekly": true, "remind": false, "dry_run": false}'

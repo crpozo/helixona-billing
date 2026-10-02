@@ -48,3 +48,6 @@ deleted_claims_*.json
 
 # --- Dashboard super-admin key (generated on the host) ---
 data/.admin_key
+
+# --- Staff roster for the unlocked-notes notices (host only) ---
+data/note_lock_roster.json

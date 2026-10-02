@@ -21,6 +21,12 @@ The rule
    not need it, so it no longer gates a submission. It is still attached when
    there is a good one; see submit_documents in main.py, which leaves out a
    note flagged for revision rather than sending a known-bad document.
+3b. The IV Note must be LOCKED in eCW (2026-10-02). Tom traced the notes
+   that went out unsigned: every one was a note nobody had locked. A locked
+   note carries its electronic signature; the extractor records whether it
+   saw one (iv_note_locked). A note read and found unlocked is held; a note
+   captured before the check existed is held too, until the next
+   documentation run reads it again.
 4. A subscriber ID is required, and must have been confirmed from HCFA box 1a
    — a DOM-scraped value alone is held back so an unconfirmed member number is
    never auto-submitted to a payer.
@@ -69,6 +75,7 @@ def evaluate_claim(claim: dict) -> dict:
     has_subscriber = bool(subscriber) and not subscriber_unverified
 
     iv_note_mismatch = bool(claim.get('iv_note_patient_mismatch'))
+    iv_note_locked = claim.get('iv_note_locked')          # True / False / None (never checked)
     progress_note_needs_review = bool(claim.get('encounter_revision_needed'))
 
     office = is_office_visit(claim.get('cpt'))
@@ -82,6 +89,10 @@ def evaluate_claim(claim: dict) -> dict:
         blockers.append('IV Note')
     if iv_note_mismatch:
         blockers.append('IV Note has patient mismatch')
+    elif has_iv_note and iv_note_locked is False:
+        blockers.append('IV Note not locked in eCW')
+    elif has_iv_note and iv_note_locked is None:
+        blockers.append('IV Note lock not verified (re-read on the next documentation run)')
     # The Progress Note no longer blocks. `progress_note_needs_review` still
     # matters, but as an instruction not to ATTACH that file — not as a reason
     # to hold the whole packet.
@@ -99,6 +110,7 @@ def evaluate_claim(claim: dict) -> dict:
             'office visit' if office else 'reviewer override' if manual_exempt else ''
         ),
         'attach_progress_note': bool(has_progress_note and not progress_note_needs_review),
+        'iv_note_locked': iv_note_locked,
     }
 
 

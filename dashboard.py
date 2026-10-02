@@ -1082,6 +1082,15 @@ window.scrollToEl = function(sel){
                  payload: {sync_only: true}},
                 {icon: '📝', title: 'Mark sent claims in eCW', task: 'ecw_status_update',
                  desc: "Sets each submitted claim to 'Claim sent via Symplisend' in eCW."},
+                {icon: '🔓', title: 'Notify about unlocked notes', task: 'unlocked_notes',
+                 desc: 'E-mails each person whose IV Note is still not locked 3 business days after the visit, with their manager copied. Each note is told once. Runs on its own every weekday morning.',
+                 payload: {weekly: false, remind: false, dry_run: false}},
+                {icon: '📬', title: 'Weekly unlocked-notes summary', task: 'unlocked_notes',
+                 desc: 'One e-mail to the billing team with every note still unlocked: eCW chart number, DOS, appointment type, who is responsible. Also sends the notices due. Runs on its own every Monday.',
+                 payload: {weekly: true, remind: false, dry_run: false}},
+                {icon: '🧪', title: 'Unlocked notes — dry run', task: 'unlocked_notes',
+                 desc: 'Composes the notices and the summary and writes them to the log. Sends nothing.',
+                 payload: {weekly: true, remind: false, dry_run: true}},
             ],
             eob: [
                 {icon: '✅', title: 'Reconcile all checks', task: 'check_reconcile',
@@ -1855,6 +1864,9 @@ window.scrollToEl = function(sel){
             !c.hcfa_s3_path ? 'HCFA' : '',
             !c.prog_notes_s3_path ? 'IV Note' : '',
             (c.prog_notes_s3_path && c.iv_note_patient_mismatch) ? 'IV Note is another patient' : '',
+            // The note must be locked in eCW (2026-10-02): unsigned notes were unlocked notes.
+            (c.prog_notes_s3_path && !c.iv_note_patient_mismatch && c.iv_note_locked === false) ? 'IV Note not locked' : '',
+            (c.prog_notes_s3_path && !c.iv_note_patient_mismatch && c.iv_note_locked === undefined) ? 'IV Note lock not verified' : '',
             !c.subscriber_id ? 'Subscriber ID' : c.subscriber_id_unverified ? 'Subscriber ID unverified' : '',
         ].filter(Boolean);
         const needsWork = c => missingFor(c).length > 0;
@@ -2225,8 +2237,12 @@ window.scrollToEl = function(sel){
                 }
                 // Progress Notes — clickable if captured
                 const hasProgNotes = !!c.prog_notes_s3_path;
+                const lockPill = !hasProgNotes ? ''
+                    : c.iv_note_locked === true ? `<span style="font-size:10px;color:#4ade80;margin-left:4px" title="Locked in eCW${c.iv_note_signed_by ? ' — signed by ' + c.iv_note_signed_by : ''}">🔒</span>`
+                    : c.iv_note_locked === false ? `<span style="font-size:10px;color:var(--warning);margin-left:4px;font-weight:600" title="Not locked in eCW${c.note_owner ? ' — to be locked by ' + c.note_owner : ''}${c.unlock_notice_sent_at ? ' · notice sent ' + String(c.unlock_notice_sent_at).slice(0, 10) : ''}">🔓 not locked</span>`
+                    : `<span style="font-size:10px;color:var(--text-muted);margin-left:4px" title="Lock not verified yet — read again on the next documentation run">🔓?</span>`;
                 const progNotesCell = hasProgNotes
-                    ? `<span class="hcfa-link" onclick="window.open('/api/prog_notes/${c.claim_id}', '_blank')" title="Captured: ${c.prog_notes_captured_at || ''}">📝 IV Note</span>`
+                    ? `<span class="hcfa-link" onclick="window.open('/api/prog_notes/${c.claim_id}', '_blank')" title="Captured: ${c.prog_notes_captured_at || ''}">📝 IV Note</span>${lockPill}`
                     : '<span class="doc-missing">IV Note —</span>';
                 // Office visit (E/M CPT 99201-99205 / 99211-99215) → only HCFA + IV Note,
                 // no Progress Note required. Honor the persisted flag or detect from CPT.

@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy to /opt/helixona-agent/data/note_lock_roster.json on the host (git-ignored). Names as eCW shows them; the surname must match, the first initial too when both sides have one.",
+  "from": "billing-bot@helixona.com",
+  "weekly_to": ["billing@helixona.com", "clinic-manager@helixona.com"],
+  "default_manager": "clinic-manager@helixona.com",
+  "people": {
+    "Doe, Jane": {"email": "jane.doe@helixona.com", "manager": "clinic-manager@helixona.com"},
+    "Smith, John": {"email": "john.smith@helixona.com"}
+  }
+}

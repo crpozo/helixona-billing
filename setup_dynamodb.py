@@ -98,6 +98,16 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # Unlocked-notes notices: notice:<claim>:<ts>, weekly:<date>, _last
+        # (docs/unlocked_notes.md). Created on first use by src/notes/unlocked.py too.
+        "TableName": "helixona-notices",
+        "KeySchema": [{"AttributeName": "k", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "k", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

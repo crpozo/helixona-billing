@@ -25,6 +25,8 @@ from src.aws.clients import AWSClient, scan_all
 from src.ecw.browser import BrowserManager
 from src.ecw.login import perform_ecw_login
 from src.ecw.text_captcha import solve_text_captcha, submit_with_captcha
+from src.ecw.note_lock import lock_status as _note_lock_status, signer as _note_signer, responsible as _note_owner
+from src.notes.unlocked import run_unlocked_notes
 import requests as _http   # the text-captcha calls; the local `req` imports are conditional
 from src.ecw.claims import process_nightly_bulk_claims
 from src.blueshield.portal import BlueShieldPortal
@@ -5250,7 +5252,10 @@ def process_message(message: dict, aws_client: AWSClient):
                             # guard will skip the save if the content is still wrong.
                             needs_pn = (not has_prog_notes
                                         or bool(item.get('iv_note_patient_mismatch'))
-                                        or (not bool(item.get('office_visit')) and not bool(item.get('iv_note_rx_start_date'))))
+                                        or (not bool(item.get('office_visit')) and not bool(item.get('iv_note_rx_start_date')))
+                                        # Notes captured before the lock check (2026-10-02) are
+                                        # read again once so the gate knows whether they are locked.
+                                        or (has_prog_notes and 'iv_note_locked' not in item))
                             reasons = []
                             
                             # Check HCFA PDF quality
@@ -9372,6 +9377,27 @@ def process_message(message: dict, aws_client: AWSClient):
                                                 _iv_verified = True
                                                 logger.info(f"  ✓ IV Note iframe patient verified: {_iv_expected_surname}")
 
+                                        # Is the note locked? A locked note carries its
+                                        # electronic signature; an unlocked one does not, and
+                                        # the gate holds the claim until someone locks it
+                                        # (src/ecw/note_lock, 2026-10-02).
+                                        if _iv_verified:
+                                            _lock = _note_lock_status(frame_text)
+                                            _owner = _note_owner(frame_text, claim_record.get('provider', ''))
+                                            logger.info(f"  {'🔒' if _lock == 'locked' else '🔓'} IV Note {_lock}"
+                                                        + (f" — signed by {_note_signer(frame_text)}" if _lock == 'locked' and _note_signer(frame_text) else '')
+                                                        + (f" — to be locked by {_owner}" if _lock != 'locked' and _owner else ''))
+                                            try:
+                                                aws_client.update_claim_status(claim_id, {
+                                                    'iv_note_locked': _lock == 'locked',
+                                                    'iv_note_lock_status': _lock,
+                                                    'iv_note_signed_by': _note_signer(frame_text) if _lock == 'locked' else '',
+                                                    'note_owner': _owner,
+                                                    'iv_note_lock_checked_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
+                                                })
+                                            except Exception as _lk:
+                                                logger.warning(f"could not record the lock status: {_lk}")
+
                                         # Only parse DOS / Rx Start Date if we verified the
                                         # iframe is this patient's note. Stale (wrong-patient)
                                         # content gets dropped without contaminating DDB.
@@ -11597,6 +11623,13 @@ def process_message(message: dict, aws_client: AWSClient):
         finally:
             if holder.get('manager'):
                 holder['manager'].stop()
+
+    elif task_type == 'unlocked_notes':
+        # ─── Unlocked notes: the 3-business-day notices and the weekly summary ───
+        # No browser: reads what the extractor recorded on each claim and
+        # e-mails through SES (src/notes/unlocked, docs/unlocked_notes.md).
+        logger.info("═══ Unlocked notes — notices to the people who must lock them ═══")
+        run_unlocked_notes(aws_client, body)
 
     elif task_type == 'ecw_status_update':
         # ─── Standalone ECW Status Update Task ───
