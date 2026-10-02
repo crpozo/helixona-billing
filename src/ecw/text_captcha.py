@@ -13,6 +13,7 @@ and tries again.
 Nothing here is specific to a bot: the same page serves all four roles.
 """
 import base64
+import re
 import time
 
 from src.utils.logger import get_logger
@@ -145,12 +146,62 @@ def solve_text_captcha(frame, aws_client, req, where='login page'):
     return 'filled', task_id
 
 
-def submit_with_captcha(frame, page, aws_client, req, submit_selector, where='re-auth page', attempts=3, settle=(3, 5)):
+PASSWORD_SEL = '#passwordField, input[type="password"]'
+LOCKOUT_RX = re.compile(r'exceeded your login attempts|account (is )?locked|try again in \d+ minutes', re.I)
+
+
+def page_error(frame):
+    """The red message eCW shows after a failed attempt, if any."""
+    try:
+        return frame.evaluate('''() => {
+            const bad = [];
+            for (const el of document.querySelectorAll('div, span, p, label, li')) {
+                if (el.children.length > 2) continue;
+                const t = (el.innerText || '').trim();
+                if (!t || t.length > 300) continue;
+                const c = getComputedStyle(el).color;
+                if (/exceeded|locked|invalid|incorrect|captcha|wrong|expired|not match/i.test(t) && /rgb\((2[0-9][0-9]|1[89][0-9]), ?([0-9]{1,2}), ?([0-9]{1,2})\)/.test(c)) bad.push(t);
+            }
+            return bad.join(' | ').slice(0, 300);
+        }''') or ''
+    except Exception:
+        return ''
+
+
+def refill_password(frame, password):
+    """eCW empties the password box after a failed attempt; a retry with the
+    captcha alone is another failed attempt, and five of those lock the
+    account for 15 minutes."""
+    if not password:
+        return False
+    try:
+        box = frame.query_selector(PASSWORD_SEL)
+        if box and not (box.input_value() or '').strip():
+            box.fill(password)
+            try:
+                frame.evaluate('(pwd) => { const h = document.querySelector("#password"); if (h) h.value = pwd; }', password)
+            except Exception:
+                pass
+            logger.info("✅ Re-entered the password (the page had cleared it)")
+            return True
+    except Exception as e:
+        logger.warning(f"could not re-enter the password: {e}")
+    return False
+
+
+def submit_with_captcha(frame, page, aws_client, req, submit_selector, where='re-auth page', attempts=3, settle=(3, 5), password=None):
     """Solve the text captcha (if any), submit, and on a wrong answer refresh
-    and try again. Returns True when the page left the login flow."""
+    and try again — re-entering the password each time, since eCW clears it.
+    Stops at once when eCW says the account is locked. Returns True when the
+    page left the login flow."""
     import random
     key = ''
     for attempt in range(1, attempts + 1):
+        msg = page_error(frame)
+        if msg and LOCKOUT_RX.search(msg):
+            logger.error(f"❌ eCW has locked the account: \"{msg[:160]}\" — no more attempts; wait 15 minutes before the next run")
+            return False
+        refill_password(frame, password)
         state, task_id = solve_text_captcha(frame, aws_client, req, where)
         if state == 'failed' and attempt < attempts:
             refresh(frame)
@@ -178,12 +229,17 @@ def submit_with_captcha(frame, page, aws_client, req, submit_selector, where='re
                 key = aws_client.get_secret("captcha_api_key").get('api_key', '')
             except Exception:
                 pass
-        report_bad(req, key, task_id)
-        logger.warning(f"⚠️ {where}: still on the login page after captcha attempt {attempt}/{attempts}")
         try:
             frame = next((f for f in page.frames if f.query_selector(INPUT_SEL)), frame)
         except Exception:
             pass
+        msg = page_error(frame)
+        logger.warning(f"⚠️ {where}: still on the login page after captcha attempt {attempt}/{attempts}"
+                       + (f' — the page says: "{msg[:160]}"' if msg else ''))
+        if msg and LOCKOUT_RX.search(msg):
+            logger.error("❌ eCW has locked the account for 15 minutes — stopping; the next run after that will log in again")
+            return False
+        report_bad(req, key, task_id)
         if captcha_input(frame) is None:
             return False
         refresh(frame)

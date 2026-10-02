@@ -2066,7 +2066,7 @@ def _perform_ecw_login(page, creds, aws_client) -> bool:
                 submit_with_captcha(
                     reauth_frame, page, aws_client, _http,
                     '#Login, input[type="submit"], button:has-text("Log In"), '
-                    'button:has-text("Continue"), input[value="Log In"]', where='re-auth page')
+                    'button:has-text("Continue"), input[value="Log In"]', where='re-auth page', password=creds['password'])
                 post_url = page.url
                 logger.info(f"After re-auth: {page.title()} | {post_url[:120]}")
             else:
@@ -3561,7 +3561,7 @@ def process_message(message: dict, aws_client: AWSClient):
                             submit_with_captcha(
                                 reauth_frame, page, aws_client, _http,
                                 '#Login, input[type="submit"], button:has-text("Log In"), '
-                                'button:has-text("Continue"), input[value="Log In"]', where='re-auth page')
+                                'button:has-text("Continue"), input[value="Log In"]', where='re-auth page', password=creds['password'])
                             post_url = page.url
                             post_title = page.title()
                             logger.info(f"After re-auth: {post_title} | {post_url[:120]}")
@@ -4811,7 +4811,7 @@ def process_message(message: dict, aws_client: AWSClient):
                         # Text captcha (if shown) + submit, retried on a wrong answer.
                         submit_with_captcha(
                             reauth_frame, page, aws_client, _http,
-                            '#Login, input[type="submit"], button:has-text("Log In")', where='re-auth page')
+                            '#Login, input[type="submit"], button:has-text("Log In")', where='re-auth page', password=creds['password'])
 
                 # Handle V12 Plugin popup
                 try:
