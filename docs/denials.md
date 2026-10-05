@@ -7,10 +7,10 @@ encuentras los códigos y las razones."
 ## What a run does (`claim_denials`, src/denials/run.py)
 
 1. **eCW › Billing › Claims** — Service Dt from `since` (07/01/2025), Claim
-   Status set to each denied status the dropdown offers (`DENIED_STATUSES`:
-   ERA Payer Denied, EOB Payer Denied, Waiting for Denial, Requires further
-   review, Insurance Rejected, …; the options are logged, and `statuses:
-   [...]` in the task names others). Lookup, and the grid's rows are read off
+   Status = **ERA Payer Denied**, the one status the operator named; eCW's
+   other denied or rejected statuses (EOB Payer Denied, Waiting for Denial,
+   997 Rejected, …) are read only when the task says `statuses: [...]` or
+   `statuses: "all"`. The dropdown's options are logged. Lookup, and the grid's rows are read off
    their Angular scope: claim, patient, payer, DOS, CPT/HCPCS, charges, paid,
    balance, status.
    The screen shows 20 a page (709 ERA PAYER DENIED claims on 2026-09-30,

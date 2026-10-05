@@ -95,7 +95,9 @@ class TheRunLinksTheThreeSteps(unittest.TestCase):
 
     def test_the_status_names_and_the_read_only_promise(self):
         e = _read('src/denials/ecw.py')
-        self.assertIn("DENIED_STATUSES = ['ERA Payer Denied', 'EOB Payer Denied', 'Waiting for Denial', 'Requires further review',", e)
+        # The operator named one status (2026-09-30: "ERA PAYER DENIED"); the rest are opt-in.
+        self.assertIn("DENIED_STATUSES = ['ERA Payer Denied']", e)
+        self.assertIn("OTHER_DENIED_STATUSES = ['EOB Payer Denied', 'Waiting for Denial', 'Requires further review',", e)
         self.assertIn("PAYMENT_TABS = ['Insurances & Payment', 'Insurance & Payment', 'Payments']", e)
         self.assertIn("CPT_TAB = ['ICD & CPT', 'ICD and CPT']", e)
         # 709 claims, 20 a page: every page is read.

@@ -1004,7 +1004,7 @@ window.scrollToEl = function(sel){
             }, null, 2),
             claim_denials: JSON.stringify({
                 since: "07/01/2025",
-                statuses: ["ERA Payer Denied", "EOB Payer Denied", "Waiting for Denial", "Requires further review", "Insurance Rejected"],
+                statuses: ["ERA Payer Denied"],
                 limit_claims: 0,
                 reasons: true,
                 redo: false
@@ -1113,7 +1113,7 @@ window.scrollToEl = function(sel){
         };
         ACTIONS.denials = [
             {icon: '🚫', title: 'Review denied claims in eCW', task: 'claim_denials',
-             desc: 'Lists the claims eCW shows as denied (Billing → Claims, the denied statuses), opens each one for the payer reason codes, and matches them to the SOP cheat sheet: write off, inquiry, appeal, medical records, recode. Reads only; nothing in eCW changes.',
+             desc: 'Lists the claims under Claim Status ERA Payer Denied (Billing → Claims), opens each one for the payer reason codes, and matches them to the SOP cheat sheet: write off, inquiry, appeal, medical records, recode. Reads only; nothing in eCW changes.',
              payload: {since: '07/01/2025', limit_claims: 0, reasons: true, redo: false}},
             {icon: '🧪', title: 'Test on 5 claims', task: 'claim_denials',
              desc: 'The same review on the first five denied claims, with a screenshot of the first claim popup for a look at where the codes are.',

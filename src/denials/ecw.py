@@ -32,10 +32,13 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 CLAIMS_HASH = '/mobiledoc/jsp/webemr/webpm/claimLookup.jsp'
-# eCW's own words for a denied or rejected claim (the SOP's Claim Status
-# Codes sheet). The dropdown is read first; only the ones it has are used.
-DENIED_STATUSES = ['ERA Payer Denied', 'EOB Payer Denied', 'Waiting for Denial', 'Requires further review',
-                   'Insurance Rejected', 'Clearinghouse Rejected', '277 Rejected', '997 Rejected', 'Denied', 'Rejected']
+# The status the operator named (2026-09-30): "ERA PAYER DENIED, y se entra
+# al claim". That one alone is read by default. eCW's other denied or
+# rejected statuses (the SOP's Claim Status Codes sheet) are read only when
+# the task names them: statuses: [...] or statuses: "all".
+DENIED_STATUSES = ['ERA Payer Denied']
+OTHER_DENIED_STATUSES = ['EOB Payer Denied', 'Waiting for Denial', 'Requires further review',
+                         'Insurance Rejected', 'Clearinghouse Rejected', '277 Rejected', '997 Rejected', 'Denied', 'Rejected']
 # Inside the claim popup: the tab with the codes billed, the tab with the
 # payments grid (its Code column is the payer's reason), and the view that
 # lists the same per CPT line. Tabs and views only — never a button that acts.
@@ -291,7 +294,10 @@ def list_denied(page, since, statuses=None):
     set_page_size(page)
     options = status_options(page)
     logger.info(f"  Claim Status options ({len(options)}): {options[:40]}")
-    wanted = statuses or DENIED_STATUSES
+    if statuses == 'all':
+        wanted = DENIED_STATUSES + OTHER_DENIED_STATUSES
+    else:
+        wanted = statuses or DENIED_STATUSES
     used, out, seen = [], [], set()
     for label in wanted:
         if options and not any(label.lower() == o.lower() or label.lower() in o.lower() for o in options):
