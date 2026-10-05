@@ -141,10 +141,13 @@ class Wiring(unittest.TestCase):
         self.assertIn("title: 'Weekly unlocked-notes summary', task: 'unlocked_notes'", d)
         dep = _read('deploy_code.sh')
         self.assertIn('helixona-unlocked-notes.timer helixona-unlocked-notes-weekly.timer', dep)
+        self.assertIn('data/note_lock_roster.json', _read('.gitignore'))
+        # infra/ is deliberately not deployed; on the host these have nothing to read.
+        if not os.path.exists(os.path.join(REPO, 'infra', 'helixona-unlocked-notes.timer')):
+            raise unittest.SkipTest('infra/ is not deployed to this host')
         self.assertIn('OnCalendar=Mon..Fri *-*-* 16:00:00 UTC', _read('infra/helixona-unlocked-notes.timer'))
         self.assertIn('OnCalendar=Mon *-*-* 15:00:00 UTC', _read('infra/helixona-unlocked-notes-weekly.timer'))
         self.assertIn('"task_type": "unlocked_notes", "weekly": true', _read('infra/helixona-unlocked-notes-weekly.service'))
-        self.assertIn('data/note_lock_roster.json', _read('.gitignore'))
 
 
 if __name__ == '__main__':
