@@ -185,8 +185,21 @@ ROWS_JS = r"""(sel) => {
             out.push({cells});
         }
     }
-    const hdrs = Array.from(document.querySelectorAll('th')).map(th => (th.innerText || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
-    return {rows: out, hdrs};
+    // Headers: the rows' own table first; else the header table (floatThead
+    // clone) with as many columns as a row has cells. Every <th> on the page
+    // mixed in a session table ("Device · Login Time · Log Out Time") and
+    // shifted every column by three.
+    const clean = th => (th.innerText || '').replace(/\s+/g, ' ').trim();
+    const width = rows.length ? rows[0].querySelectorAll('td').length : 0;
+    let hdrs = [];
+    const own = rows.length ? rows[0].closest('table') : null;
+    if (own) hdrs = Array.from(own.querySelectorAll('th')).map(clean);
+    if (!hdrs.some(Boolean) || (width && hdrs.length !== width)) {
+        const tables = Array.from(document.querySelectorAll('table')).map(t => Array.from(t.querySelectorAll('th')).map(clean)).filter(h => h.length);
+        const same = tables.find(h => h.length === width) || tables.find(h => h.some(x => /claim\s*#/i.test(x)));
+        if (same) hdrs = same;
+    }
+    return {rows: out, hdrs, width};
 }"""
 
 COLS = {'claim_id': re.compile(r'claim\s*#|claim\s*no|invoice', re.I), 'patient': re.compile(r'patient|pat\s*name', re.I),
@@ -195,38 +208,119 @@ COLS = {'claim_id': re.compile(r'claim\s*#|claim\s*no|invoice', re.I), 'patient'
         'balance': re.compile(r'balance', re.I)}
 
 
-def read_rows(page):
-    """The grid's claims: {'claim_id', 'patient', 'payer', 'dos', 'cpt',
-    'status', 'charges', 'paid', 'adjustment', 'balance'}. From each row's
-    Angular scope; from the cells by header name when the scope gives none."""
-    got = page.evaluate(_js(ROWS_JS), ROW_SEL) or {}
-    hdrs = got.get('hdrs', [])
+KEYS = ('claim_id', 'patient', 'payer', 'dos', 'cpt', 'status', 'charges', 'paid', 'adjustment', 'balance')
+CLAIM_RX = re.compile(r'^\d{1,8}$')
+DATE_RX = re.compile(r'^\d{1,2}/\d{1,2}/\d{2,4}$')
+MONEY_RX = re.compile(r'^-?\$?\s*[\d,]*\.\d{2}$')
+NAME_RX = re.compile(r'^[A-Za-z][A-Za-z\'\-. ]+,\s*[A-Za-z]')
+
+
+def header_map(hdrs):
     idx = {}
     for key, rx in COLS.items():
         for i, h in enumerate(hdrs):
             if i not in idx.values() and rx.search(h):
                 idx[key] = i
                 break
-    out = []
-    for r in got.get('rows', []):
-        if r.get('claim_id') or r.get('patient'):
-            out.append({k: r.get(k, '') for k in ('claim_id', 'patient', 'payer', 'dos', 'cpt', 'status', 'charges', 'paid', 'adjustment', 'balance')})
+    return idx
+
+
+def infer_cols(cell_rows):
+    """Which cell is which, from what the cells hold — the claim number is
+    the integer column, the DOS the date column, the patient the "Last,
+    First" column, the payer the text after it, the status the text after
+    the payer, the money columns charges · paid · adjustment · withheld ·
+    balance in the grid's order. Used when the headers do not line up."""
+    rows = [r for r in cell_rows if r]
+    if not rows:
+        return {}
+    width = max(len(r) for r in rows)
+    def share(i, rx):
+        vals = [r[i] for r in rows if i < len(r) and r[i]]
+        return (sum(1 for v in vals if rx.match(v)) / len(vals)) if vals else 0
+    idx = {}
+    ints = [i for i in range(width) if share(i, CLAIM_RX) >= 0.6]
+    if ints:
+        idx['claim_id'] = ints[0]
+    dates = [i for i in range(width) if share(i, DATE_RX) >= 0.6]
+    if dates:
+        idx['dos'] = dates[0]
+    names = [i for i in range(width) if share(i, NAME_RX) >= 0.5 and i not in idx.values()]
+    if names:
+        idx['patient'] = names[0]
+        texts = [i for i in range(names[0] + 1, width) if i not in idx.values() and share(i, MONEY_RX) < 0.3
+                 and sum(1 for r in rows if i < len(r) and r[i]) >= len(rows) * 0.5]
+        if texts:
+            idx['payer'] = texts[0]
+        if len(texts) > 1:
+            idx['status'] = texts[1]
+    money = [i for i in range(width) if share(i, MONEY_RX) >= 0.6 and i not in idx.values()]
+    for key, i in zip(('charges', 'paid', 'adjustment', 'withheld', 'balance'), money):
+        if key == 'withheld':
             continue
-        cells = r.get('cells', [])
-        row = {k: (cells[i] if i < len(cells) else '') for k, i in idx.items()}
-        row.setdefault('adjustment', '')
-        if row.get('claim_id') or row.get('patient'):
-            out.append({k: row.get(k, '') for k in ('claim_id', 'patient', 'payer', 'dos', 'cpt', 'status', 'charges', 'paid', 'adjustment', 'balance')})
-    return out, hdrs
+        idx[key] = i
+    if len(money) >= 2:
+        idx['balance'] = money[-1]
+    return idx
+
+
+def read_rows(page):
+    """The grid's claims: {'claim_id', 'patient', 'payer', 'dos', 'cpt',
+    'status', 'charges', 'paid', 'adjustment', 'balance'}. From each row's
+    Angular scope; else from the cells by header name; else by what the
+    cells hold (infer_cols) when the headers do not line up with the cells."""
+    got = page.evaluate(_js(ROWS_JS), ROW_SEL) or {}
+    hdrs = got.get('hdrs', [])
+    raw = got.get('rows', [])
+    scoped = [{k: r.get(k, '') for k in KEYS} for r in raw if r.get('claim_id')]
+    if scoped and len(scoped) >= len(raw) * 0.8:
+        return scoped, hdrs
+    cell_rows = [r.get('cells', []) for r in raw]
+    idx = header_map(hdrs)
+    def apply(idx):
+        out = []
+        for cells in cell_rows:
+            row = {k: (cells[i] if i < len(cells) else '') for k, i in idx.items()}
+            out.append({k: row.get(k, '') for k in KEYS})
+        return out
+    rows = apply(idx)
+    good = sum(1 for r in rows if CLAIM_RX.match(r['claim_id']))
+    if cell_rows and good < len(cell_rows) * 0.6:
+        inferred = infer_cols(cell_rows)
+        if inferred.get('claim_id') is not None:
+            logger.info(f"  (headers {hdrs[:16]} do not line up with {got.get('width')} cells — columns taken from the cells: {inferred})")
+            idx = inferred
+            rows = apply(idx)
+    rows = [r for r in rows if r['claim_id'] or r['patient']]
+    if rows:
+        logger.info(f"  first row: {rows[0]}")
+    return rows, hdrs
 
 
 PAGE_JS = r"""() => {
-    // 'Page [1] of 36' and the Next button, as the Claims grid shows them.
+    // 'Page [1] of 36' (the page number may sit in an <input>), '1 - 50 of 709',
+    // and the Next control — a button, a link, an icon with a title, or '»' / '>'.
     const body = (document.body && document.body.innerText) || '';
-    const m = body.match(/Page\s*(\d+)\s*of\s*(\d+)/i);
-    const next = Array.from(document.querySelectorAll('button, a, input[type="button"]'))
-        .find(b => /^next$/i.test((b.innerText || b.value || '').trim()) && vis(b));
-    return {page: m ? +m[1] : 0, pages: m ? +m[2] : 0, next: !!next && !next.disabled};
+    let page = 0, pages = 0;
+    let m = body.match(/Page\s*(\d+)?\s*of\s*(\d+)/i);
+    if (m) { pages = +m[2]; page = m[1] ? +m[1] : 0; }
+    if (!page) {
+        const inp = Array.from(document.querySelectorAll('input')).find(i => vis(i) && /^\d{1,4}$/.test((i.value || '').trim())
+            && /of\s*\d+/i.test(((i.parentElement && i.parentElement.innerText) || '')));
+        if (inp) page = +inp.value;
+    }
+    if (!pages) {
+        const r = body.match(/(\d+)\s*-\s*(\d+)\s*of\s*(\d+)/i);
+        if (r) { const per = +r[2] - +r[1] + 1; pages = per > 0 ? Math.ceil(+r[3] / per) : 0; page = per > 0 ? Math.ceil(+r[2] / per) : 0; }
+    }
+    const isNext = el => {
+        const t = ((el.innerText || el.value || '') + ' ' + (el.title || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.className || '') + ' ' + (el.id || '')).toLowerCase();
+        return /\bnext\b|»|^\s*>\s*$|chevron-right|angle-right|fa-forward|pagination-next|nextpage/.test(t) && !/last|prev|previous|«/.test(t.replace(/next/g, ''));
+    };
+    const cands = Array.from(document.querySelectorAll('button, a, input[type="button"], span[ng-click], i[ng-click], li[ng-click] > a, [class*="next"]')).filter(vis).filter(isNext);
+    const next = cands[0] || null;
+    const disabled = !!next && (next.disabled || /disabled/.test(next.className || '') || /disabled/.test((next.parentElement && next.parentElement.className) || ''));
+    return {page, pages, next: !!next && !disabled, pager: body.match(/[^\n]*\bof\s+\d+[^\n]*/i) ? body.match(/[^\n]*\bof\s+\d+[^\n]*/i)[0].trim().slice(0, 120) : ''};
 }"""
 
 
@@ -254,13 +348,25 @@ def set_page_size(page):
         return ''
 
 
+NEXT_JS = r"""() => {
+    const isNext = el => {
+        const t = ((el.innerText || el.value || '') + ' ' + (el.title || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.className || '') + ' ' + (el.id || '')).toLowerCase();
+        return /\bnext\b|»|^\s*>\s*$|chevron-right|angle-right|fa-forward|pagination-next|nextpage/.test(t) && !/last|prev|previous|«/.test(t.replace(/next/g, ''));
+    };
+    const el = Array.from(document.querySelectorAll('button, a, input[type="button"], span[ng-click], i[ng-click], li[ng-click] > a, [class*="next"]')).filter(vis).find(isNext);
+    if (!el) return false;
+    el.click();
+    return true;
+}"""
+
+
 def next_page(page):
     """Click Next and wait for the grid to change. False on the last page."""
     info = page.evaluate(_js(PAGE_JS)) or {}
     if not info.get('next') or (info.get('pages') and info.get('page', 0) >= info['pages']):
         return False
     before = _grid_sig(page)
-    if not _click_text(page, ['Next'], timeout=3, what='next page'):
+    if not _click_text(page, ['Next'], timeout=2, what='next page') and not page.evaluate(_js(NEXT_JS)):
         return False
     deadline = time.time() + 15
     while time.time() < deadline:
@@ -274,14 +380,17 @@ def next_page(page):
 def read_all_pages(page):
     rows, hdrs = read_rows(page)
     info = page.evaluate(_js(PAGE_JS)) or {}
-    pages = info.get('pages') or 1
-    for _ in range(min(pages, MAX_PAGES) - 1):
+    pages = info.get('pages') or 0
+    logger.info(f"  📄 page {info.get('page') or 1} of {pages or '?'} · next {'yes' if info.get('next') else 'no'}"
+                + (f" · pager: \"{info['pager']}\"" if info.get('pager') else ''))
+    # Without a page count, follow Next while the grid keeps changing.
+    for _ in range((min(pages, MAX_PAGES) - 1) if pages else MAX_PAGES):
         if not next_page(page):
             break
         more, _h = read_rows(page)
         rows.extend(more)
-    if pages > 1:
-        logger.info(f"  📄 {len(rows)} row(s) over {min(pages, MAX_PAGES)} page(s)")
+    if len(rows) and (pages > 1 or info.get('next')):
+        logger.info(f"  📄 {len(rows)} row(s) read over the pages")
     return rows, hdrs
 
 

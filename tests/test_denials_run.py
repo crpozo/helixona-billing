@@ -128,3 +128,41 @@ class TheRunLinksTheThreeSteps(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TheGridColumnsComeFromTheCells(unittest.TestCase):
+    """2026-10-05, first live run: every <th> on the page was read as the
+    header row, a session table ("Device · Login Time · Log Out Time") sat in
+    front, every column shifted by three, and 48 rows came back with no claim
+    number. The columns are taken from what the cells hold when the headers
+    do not line up."""
+
+    CELLS = [['', '', '', '', 'N', '328', '09/15/2025', 'ARC', 'Tolzda, Amanda', 'Cigna', 'ERA PAYER DENIED', '325.00', '0.00', '0.00', '0.00', '325.00', ''],
+             ['', '', '', '', 'N', '1201', '12/29/2025', 'ARC', 'Doe, Jane', 'Anthem Blue Cross', 'ERA PAYER DENIED', '1,200.00', '0.00', '0.00', '0.00', '1,200.00', '']]
+
+    def test_inferred_from_the_cells(self):
+        idx = ecw.infer_cols(self.CELLS)
+        self.assertEqual(idx['claim_id'], 5)
+        self.assertEqual(idx['dos'], 6)
+        self.assertEqual(idx['patient'], 8)
+        self.assertEqual(idx['payer'], 9)
+        self.assertEqual(idx['status'], 10)
+        self.assertEqual((idx['charges'], idx['balance']), (11, 15))
+
+    def test_read_rows_falls_back_when_the_headers_shift(self):
+        hdrs = ['Device', 'Login Time', 'Log Out Time', 'COLL', 'CLAIM #', 'SERVICE DATE', 'PVDR', 'PATIENT', 'PAYER', 'STATUS',
+                'CHARGES', 'PMTS/ ADJS', 'ADJUSTMENT', 'WITHHELD', 'BALANCE', 'Invoice Id.']
+        page = mock.Mock()
+        page.evaluate.return_value = {'rows': [{'cells': c} for c in self.CELLS], 'hdrs': hdrs, 'width': 17}
+        rows, _ = ecw.read_rows(page)
+        self.assertEqual([r['claim_id'] for r in rows], ['328', '1201'])
+        self.assertEqual(rows[0]['patient'], 'Tolzda, Amanda')
+        self.assertEqual(rows[0]['payer'], 'Cigna')
+        self.assertEqual(rows[1]['balance'], '1,200.00')
+
+    def test_headers_come_from_the_rows_own_table(self):
+        e = _read('src/denials/ecw.py')
+        self.assertIn("rows[0].closest('table')", e)
+        self.assertIn("tables.find(h => h.length === width)", e)
+        # Pagination without a page count follows Next while the grid changes.
+        self.assertIn("for _ in range((min(pages, MAX_PAGES) - 1) if pages else MAX_PAGES):", e)
