@@ -86,10 +86,16 @@ def codes_in(text):
         out += [f"{m.group(1).upper()}-{int(m.group(2))}", str(int(m.group(2)))]
     for m in REMARK_RX.finditer(t):
         out.append(m.group(1).upper())
-    # A bare number after a slash or comma continues the list: 'CO-16 / 96'.
-    for m in re.finditer(r'[/,]\s*(\d{1,3})\b', t):
+    # A bare number after a slash or comma continues the list: 'CO-16 / 96'
+    # — but not the thousands of '1,282.50'.
+    for m in re.finditer(r'(?<!\d)[/,]\s*(\d{1,3})\b(?!\.\d)', t):
         out.append(str(int(m.group(1))))
-    low = t.lower()
+    # Reason words, except where the word is a column header on its own line
+    # (the payments grid's "Inclusive" column named every claim inclusive).
+    lines = t.split('\n')
+    body = t if len(lines) == 1 else '\n'.join(
+        line for line in lines if len(line.strip().split()) > 1 or line.strip().lower() not in WORD_REASONS)
+    low = body.lower()
     out += [w for w in WORD_REASONS if w in low]
     seen, uniq = set(), []
     for c in out:

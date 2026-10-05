@@ -165,4 +165,37 @@ class TheGridColumnsComeFromTheCells(unittest.TestCase):
         self.assertIn("rows[0].closest('table')", e)
         self.assertIn("tables.find(h => h.length === width)", e)
         # Pagination without a page count follows Next while the grid changes.
-        self.assertIn("for _ in range((min(pages, MAX_PAGES) - 1) if pages else MAX_PAGES):", e)
+        self.assertIn("for n in range((min(pages, MAX_PAGES) - 1) if pages else MAX_PAGES):", e)
+
+
+class ThePopupTextIsCleanedBeforeCodesAreRead(unittest.TestCase):
+    """2026-10-05, first live run: every claim read as M1, M2, M3, M4 (the CPT
+    grid's modifier headers), "inclusive" (a column header on its own line),
+    and numbers like 282 and 189 (the thousands of 1,282.50). None of those
+    is a reason code."""
+
+    POPUP = ("Claim 33 · Bailey, Allison\nCPT Code  Description  Units  M1 M2 M3 M4  Charges\n96365 IV infusion 1  1,282.50\n"
+             "J3490 Drug 1 189.00\nE11.9\nPayments / Adjustments / Refunds (1)\n# Id Date From Allowed Deduct CoIns Copay Paid Adjust Withheld Code\n"
+             "1 715 12/29/2025 Anthem 0.00 0.00 0.00 0.00 351.53 267.07 0.00 CO-45 / 97 N115\nInclusive\nSan Francisco, CA 94110")
+
+    def test_only_real_codes_survive(self):
+        from src.denials.cheatsheet import codes_in
+        codes = codes_in(ecw._clean(self.POPUP))
+        self.assertEqual(codes, ['CO-45', '45', 'N115', '97'])
+        for bad in ('M1', 'M2', 'M3', 'M4', '282', '189', '29', 'inclusive'):
+            self.assertNotIn(bad, codes)
+
+    def test_cpts_come_from_the_tab_not_the_address(self):
+        self.assertEqual(ecw._cpts_on(self.POPUP), ['96365', 'J3490'])
+
+    def test_a_real_remark_code_and_a_real_word_still_count(self):
+        from src.denials.cheatsheet import codes_in
+        self.assertIn('M25', codes_in(ecw._clean('CO-50 M25 N115\nThis service is not covered, medical necessity')))
+        self.assertIn('medical necessity', codes_in('Denied: medical necessity not established'))
+
+    def test_pagination_waits_for_the_grid_and_rereads_an_empty_page(self):
+        e = _read('src/denials/ecw.py')
+        self.assertIn('def _wait_grid(page, before, timeout_s=20):', e)
+        self.assertIn("if sig and not sig.endswith('#0') and sig != before:", e)
+        self.assertIn('a page read in the loading gap is empty: look again', e)
+        self.assertIn('is fewer than expected — some pages were not read', e)

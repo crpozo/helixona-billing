@@ -360,20 +360,41 @@ NEXT_JS = r"""() => {
 }"""
 
 
-def next_page(page):
-    """Click Next and wait for the grid to change. False on the last page."""
-    info = page.evaluate(_js(PAGE_JS)) or {}
-    if not info.get('next') or (info.get('pages') and info.get('page', 0) >= info['pages']):
-        return False
-    before = _grid_sig(page)
-    if not _click_text(page, ['Next'], timeout=2, what='next page') and not page.evaluate(_js(NEXT_JS)):
-        return False
-    deadline = time.time() + 15
+def _wait_grid(page, before, timeout_s=20):
+    """eCW empties the grid and hides the pager while the next page loads.
+    Wait until rows are back, differ from `before`, and hold still for two
+    polls — reading in the gap gave an empty page and no Next button."""
+    deadline = time.time() + timeout_s
+    last, still = None, 0
     while time.time() < deadline:
-        time.sleep(0.4)
-        if _grid_sig(page) != before:
-            time.sleep(0.8)
+        time.sleep(0.5)
+        sig = _grid_sig(page)
+        if sig and not sig.endswith('#0') and sig != before:
+            still = still + 1 if sig == last else 0
+            if still >= 1:
+                return True
+        last = sig
+    return False
+
+
+def next_page(page):
+    """Click Next and wait for the next page's grid. False on the last page
+    or when nothing moved after two tries."""
+    for attempt in range(2):
+        info = {}
+        for _ in range(6):            # the pager hides while a page loads
+            info = page.evaluate(_js(PAGE_JS)) or {}
+            if info.get('next') or (info.get('pages') and info.get('page')):
+                break
+            time.sleep(0.5)
+        if not info.get('next') or (info.get('pages') and info.get('page', 0) >= info['pages']):
+            return False
+        before = _grid_sig(page)
+        if not _click_text(page, ['Next'], timeout=2, what='next page') and not page.evaluate(_js(NEXT_JS)):
+            return False
+        if _wait_grid(page, before):
             return True
+        logger.warning(f"  ⚠️ the grid did not change after Next (try {attempt + 1}/2)")
     return False
 
 
@@ -384,11 +405,23 @@ def read_all_pages(page):
     logger.info(f"  📄 page {info.get('page') or 1} of {pages or '?'} · next {'yes' if info.get('next') else 'no'}"
                 + (f" · pager: \"{info['pager']}\"" if info.get('pager') else ''))
     # Without a page count, follow Next while the grid keeps changing.
-    for _ in range((min(pages, MAX_PAGES) - 1) if pages else MAX_PAGES):
+    for n in range((min(pages, MAX_PAGES) - 1) if pages else MAX_PAGES):
         if not next_page(page):
             break
         more, _h = read_rows(page)
+        for _ in range(6):                     # a page read in the loading gap is empty: look again
+            if more:
+                break
+            time.sleep(1.0)
+            more, _h = read_rows(page)
+        if not more:
+            logger.warning(f"  ⚠️ page {n + 2}: no rows read — stopping here")
+            break
         rows.extend(more)
+        if (n + 2) % 5 == 0 or (pages and n + 2 == pages):
+            logger.info(f"  📄 page {n + 2}{f' of {pages}' if pages else ''} · {len(rows)} row(s) so far")
+    if pages and len(rows) < 50 * (pages - 1):
+        logger.warning(f"  ⚠️ {len(rows)} row(s) over {pages} page(s) is fewer than expected — some pages were not read")
     if len(rows) and (pages > 1 or info.get('next')):
         logger.info(f"  📄 {len(rows)} row(s) read over the pages")
     return rows, hdrs
@@ -445,27 +478,27 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
     out = {'codes': [], 'cpt': [], 'snippet': '', 'where': ''}
     try:
         front = _page_text(page)
-        out['cpt'] = _cpts_on(_after(front, 'CPT'))
         if _click_text(page, CPT_TAB, timeout=2, what='tab'):
-            time.sleep(1.0)
-            out['cpt'] = sorted(set(out['cpt']) | set(_cpts_on(_after(_page_text(page), 'CPT'))))
+            tab = _wait_text(page, lambda t: bool(_cpts_on(_cpt_region(t))), 4.0)
+            out['cpt'] = _cpts_on(_cpt_region(tab))
+        if not out['cpt']:
+            out['cpt'] = _cpts_on(_cpt_region(front))
         text = front
         if _click_text(page, PAYMENT_TABS, timeout=2, what='tab'):
-            time.sleep(1.2)
-            text = _page_text(page)
+            text = _wait_text(page, lambda t: 'Payments / Adjustments' in t or 'Adjustments' in t, 4.0)
             out['where'] = 'payments'
-        out['codes'] = codes_in(_no_dates(_after(text, 'Payments / Adjustments')))
+        out['codes'] = codes_in(_clean(_after(text, 'Payments / Adjustments')))
         if not out['codes'] and _click_text(page, CPT_PMTS_VIEW, timeout=2, what='view'):
             time.sleep(1.5)
             view = _page_text(page)
-            out['codes'] = codes_in(_no_dates(_after(view, 'CPT')))
+            out['codes'] = codes_in(_clean(_after(view, 'CPT')))
             out['where'] = 'View CPT Pmts'
             text = view
             if not _click_text(page, CLOSE_VIEW, timeout=1.5, what='close view'):
                 page.keyboard.press('Escape')
             time.sleep(0.5)
         if not out['codes']:
-            out['codes'] = codes_in(_no_dates(front))
+            out['codes'] = codes_in(_clean(front))
             out['where'] = 'claim' if out['codes'] else ''
         if shot:
             _shot(page, f'denial_claim_{claim_id}')
@@ -485,15 +518,55 @@ def _after(text, marker):
     return str(text or '')[i:] if i >= 0 else str(text or '')
 
 
+MODIFIER_HDR_RX = re.compile(r'\bM1\s+M2\s+M3\s+M4\b', re.I)
+MONEY_TXT_RX = re.compile(r'-?\$?\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b|-?\$?\b\d+\.\d{2}\b')
+DATE_TXT_RX = re.compile(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b')
+
+
+def _clean(text):
+    """The popup's text with what reads as a code but is not: the CPT grid's
+    modifier headers (M1 M2 M3 M4 — a run read them as remark codes on every
+    claim), money (1,282.50 gave "282"), dates (12/29/2025 gave "29")."""
+    t = MODIFIER_HDR_RX.sub(' ', str(text or ''))
+    t = DATE_TXT_RX.sub(' ', t)
+    t = MONEY_TXT_RX.sub(' ', t)
+    return t
+
+
+def _cpt_region(text):
+    """The ICD & CPT tab's part of the popup text, from its first CPT marker."""
+    t = str(text or '')
+    for marker in ('CPT Code', 'CPT/HCPCS', 'ICD & CPT', 'CPT'):
+        i = t.find(marker)
+        if i >= 0:
+            return t[i:]
+    return t
+
+
+def _wait_text(page, ready, timeout_s=4.0):
+    """The popup's text once `ready(text)` holds, or whatever it says at the
+    end of `timeout_s` — tabs fill a moment after the click."""
+    deadline = time.time() + timeout_s
+    text = _page_text(page)
+    while not ready(text) and time.time() < deadline:
+        time.sleep(0.5)
+        text = _page_text(page)
+    return text
+
+
 def _no_dates(text):
     """12/29/2025 would read as the code 29 (a number after a slash)."""
     return re.sub(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b', ' ', str(text or ''))
 
 
 def _cpts_on(text):
-    """Procedure codes on a claim tab: HCPCS/CPT, not ICD (E11.9 has a dot)
-    and not the claim, account or subscriber numbers (they are longer)."""
-    return procedure_codes(re.sub(r'\b\d{6,}\b', ' ', str(text or '')))
+    """Procedure codes on a claim tab: HCPCS/CPT, not ICD (E11.9 has a dot),
+    not the claim, account or subscriber numbers (longer), not money or
+    dates, and not a 5-digit ZIP (a number followed by nothing but a line end
+    after a state code)."""
+    t = _clean(str(text or ''))
+    t = re.sub(r'\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b', ' ', t)      # "CA 94110" — an address, not a code
+    return procedure_codes(re.sub(r'\b\d{6,}\b', ' ', t))
 
 
 def _reason_snippet(text, codes):
