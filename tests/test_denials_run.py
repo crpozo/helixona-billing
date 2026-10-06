@@ -193,6 +193,16 @@ class ThePopupTextIsCleanedBeforeCodesAreRead(unittest.TestCase):
         self.assertIn('M25', codes_in(ecw._clean('CO-50 M25 N115\nThis service is not covered, medical necessity')))
         self.assertIn('medical necessity', codes_in('Denied: medical necessity not established'))
 
+    def test_nothing_posted_falls_back_to_the_notes(self):
+        # Claim 2187 (2026-10-06): empty payments grid, empty CPT Payment view;
+        # the only words about it were Billing Notes "Per review in portal".
+        self.assertEqual(ecw._section('x\nBilling Notes\nPer review in portal — Fernando 2026-04-07\nmore', 'Billing Notes'),
+                         'Per review in portal — Fernando 2026-04-07 more')
+        e = _read('src/denials/ecw.py')
+        self.assertIn("NOTE_TABS = ['Claims Logs', '*Error', 'Error']", e)
+        self.assertIn("out['where'] = 'nothing posted — notes'", e)
+        self.assertIn("'nothing_posted': bool(do_reasons and not codes),", _read('src/denials/run.py'))
+
     def test_pagination_waits_for_the_grid_and_rereads_an_empty_page(self):
         e = _read('src/denials/ecw.py')
         self.assertIn('def _wait_grid(page, before, timeout_s=20):', e)

@@ -1750,7 +1750,7 @@ window.scrollToEl = function(sel){
                   <td>${esc((r.cpt_codes || []).join(', ') || r.cpt || '—')}</td>
                   <td class="num">${money(r.charges)}<div style="font-size:11px;color:var(--text-muted)">${r.balance ? 'balance ' + money(r.balance) : ''}</div></td>
                   <td>${esc(r.ecw_status || r.ecw_status_filter || '—')}</td>
-                  <td>${codes.length ? codes.map(c => `<span class="verdict-pill" style="color:var(--warning)">${esc(c)}</span>`).join(' ') : '<span style="color:var(--text-muted)">not read</span>'}${r.denial_text ? `<div style="font-size:11px;color:var(--text-muted)" title="${esc(r.denial_text)}">${esc(String(r.denial_text).slice(0, 120))}</div>` : ''}</td>
+                  <td>${codes.length ? codes.map(c => `<span class="verdict-pill" style="color:var(--warning)">${esc(c)}</span>`).join(' ') : (r.nothing_posted ? '<span class="verdict-pill" style="color:var(--text-muted)" title="No payment or adjustment is posted on this claim in eCW — the 835 denial was never posted, so there are no reason codes to read">nothing posted</span>' : '<span style="color:var(--text-muted)">not read</span>')}${r.denial_text ? `<div style="font-size:11px;color:var(--text-muted)" title="${esc(r.denial_text)}">${esc(String(r.denial_text).slice(0, 120))}</div>` : ''}</td>
                   <td>${sop}</td>
                 </tr>`;
             }).join('');
@@ -2962,7 +2962,7 @@ def api_denials_csv():
     import io
     from flask import Response
     cols = ['claim_id', 'patient', 'dos', 'payer', 'cpt', 'charges', 'paid', 'adjustment', 'balance', 'ecw_status', 'ecw_status_filter',
-            'denial_codes', 'denial_text', 'action_kind', 'sop_rows', 'action', 'reviewed_at']
+            'denial_codes', 'denial_text', 'nothing_posted', 'action_kind', 'sop_rows', 'action', 'reviewed_at']
     try:
         rows, _ = _denials_rows()
         buf = io.StringIO()

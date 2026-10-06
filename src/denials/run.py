@@ -121,6 +121,8 @@ def run_claim_denials(aws_client, body, login, get_page, open_claim, close_claim
             else:
                 codes, snippet, read = got['codes'], got['snippet'] or snippet, read + 1
                 cpt = got['cpt'] or cpt
+                if got.get('notes'):
+                    snippet = got['notes'] if not snippet else snippet
         elif codes:
             kept += 1
         # The grid has no CPT column: the codes billed come off the claim.
@@ -131,6 +133,7 @@ def run_claim_denials(aws_client, body, login, get_page, open_claim, close_claim
             'cpt_codes': cpt, 'charges': c.get('charges', ''), 'paid': c.get('paid', ''),
             'adjustment': c.get('adjustment', ''), 'balance': c.get('balance', ''), 'ecw_status': c.get('status', '') or c.get('ecw_status_filter', ''),
             'ecw_status_filter': c.get('ecw_status_filter', ''), 'denial_codes': codes, 'denial_text': snippet,
+            'nothing_posted': bool(do_reasons and not codes),
             'sop_rows': [h['sop_row'] for h in hits], 'sop_matches': hits, 'action_kind': kind, 'action': action,
             'reviewed_at': _now(), 'since': since})
         written += 1

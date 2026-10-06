@@ -46,6 +46,11 @@ CPT_TAB = ['ICD & CPT', 'ICD and CPT']
 PAYMENT_TABS = ['Insurances & Payment', 'Insurance & Payment', 'Payments']
 CPT_PMTS_VIEW = ['View CPT Pmts']
 CLOSE_VIEW = ['Close']
+# When nothing is posted on the claim (an ERA PAYER DENIED claim whose 835
+# was never posted: empty payments grid, empty CPT Payment view — claim 2187,
+# 2026-10-06), the only words about the denial are the people's: the Billing
+# Notes panel and the Claims Logs / Error tabs of the Summary box. Read-only.
+NOTE_TABS = ['Claims Logs', '*Error', 'Error']
 MAX_PAGES = 60
 ROW_SEL = 'tr[ng-repeat*="lstClaimReport"]'
 
@@ -500,17 +505,42 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
         if not out['codes']:
             out['codes'] = codes_in(_clean(front))
             out['where'] = 'claim' if out['codes'] else ''
+        # Nothing posted: keep what people wrote about it (Billing Notes, the
+        # Summary box's Claims Logs / Error tabs) so the row says something.
+        if not out['codes']:
+            notes = _section(text, 'Billing Notes', 600)
+            for tab in NOTE_TABS:
+                if _click_text(page, [tab], timeout=1.5, what='summary tab'):
+                    time.sleep(1.0)
+                    notes = (notes + ' | ' + _section(_page_text(page), tab.strip('*'), 600)).strip(' |')
+                    break
+            if notes:
+                out['notes'] = notes[:1200]
+                out['where'] = 'nothing posted — notes'
+                out['codes'] = codes_in(_clean(notes))
         if shot:
             _shot(page, f'denial_claim_{claim_id}')
         out['snippet'] = _reason_snippet(text, out['codes'])
         logger.info(f"  🧾 claim {claim_id}: codes {', '.join(out['codes'][:8]) or 'none'} · billed {', '.join(out['cpt'][:6]) or '?'}"
-                    + (f" ({out['where']})" if out['where'] else ''))
+                    + (f" ({out['where']})" if out['where'] else '')
+                    + (f" · notes: {out['notes'][:120]}" if out.get('notes') else ''))
     finally:
         try:
             close_claim(page)
         except Exception:
             pass
     return out
+
+
+def _section(text, marker, length=600):
+    """The text right after `marker`, trimmed and on one line."""
+    t = str(text or '')
+    i = t.find(marker)
+    if i < 0:
+        return ''
+    body = t[i + len(marker):i + len(marker) + length]
+    body = re.sub(r'\s+', ' ', body).strip()
+    return body if len(body) > 3 else ''
 
 
 def _after(text, marker):
