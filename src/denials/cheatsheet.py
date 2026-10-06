@@ -96,7 +96,9 @@ def codes_in(text):
     body = t if len(lines) == 1 else '\n'.join(
         line for line in lines if len(line.strip().split()) > 1 or line.strip().lower() not in WORD_REASONS)
     low = body.lower()
-    out += [w for w in WORD_REASONS if w in low]
+    # Whole words only, and never inside another term ("All-Inclusive Care"
+    # is a place of service, not an inclusive denial).
+    out += [w for w in WORD_REASONS if re.search(r'(?<![\w-])' + re.escape(w) + r'(?![\w-])', low)]
     seen, uniq = set(), []
     for c in out:
         if c not in seen:

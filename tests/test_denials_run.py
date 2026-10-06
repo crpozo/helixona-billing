@@ -61,7 +61,7 @@ class TheRunLinksTheThreeSteps(unittest.TestCase):
         texts = {'8101': 'Claim 8101 · ICD & CPT · J3490 96365 96366 · E11.9\nPayments / Adjustments / Refunds (1)\n# Id Date From Allowed Paid Adjust Code\n1 715 12/29/2025 Anthem 0.00 0.00 0.00 CO252 N706',
                  '8102': 'Claim 8102 · 96365 · nothing here'}
         with mock.patch.object(run, 'list_denied', return_value=(claims, ['ERA PAYER DENIED', 'Insurance Rejected'], ['A', 'ERA PAYER DENIED'])), \
-                mock.patch.object(ecw, '_page_text', side_effect=lambda page: texts.get(opened[-1], '')), \
+                mock.patch.object(ecw, '_popup_text', side_effect=lambda page: texts.get(opened[-1], '')), \
                 mock.patch.object(ecw, '_click_text', return_value=True), mock.patch.object(ecw, '_shot'):
             out = run.run_claim_denials(_Aws(table), {'since': '07/01/2025'}, login=lambda p, c, a: True, get_page=lambda: object(),
                                         open_claim=open_claim, close_claim=lambda p: None)
@@ -187,6 +187,17 @@ class ThePopupTextIsCleanedBeforeCodesAreRead(unittest.TestCase):
 
     def test_cpts_come_from_the_tab_not_the_address(self):
         self.assertEqual(ecw._cpts_on(self.POPUP), ['96365', 'J3490'])
+
+    def test_a_place_of_service_menu_is_not_a_reason(self):
+        # Claim 2187 (2026-10-06): the Place of Service dropdown's options read
+        # "66 - Programs of All-Inclusive Care for the Elderly (PACE) Center"
+        # and the row said "inclusive".
+        from src.denials.cheatsheet import codes_in
+        self.assertEqual(codes_in('65 - END STAGE RENAL DISEASE TREATMENT FACILITY | 66 - Programs of All-Inclusive Care for the Elderly (PACE) Center | 71'), [])
+        self.assertEqual(codes_in('Denied as inclusive to the primary procedure'), ['inclusive'])
+        e = _read('src/denials/ecw.py')
+        self.assertIn("const skip = new Set(['SELECT', 'OPTION', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);", e)
+        self.assertIn("front = _popup_text(page)", e)
 
     def test_a_real_remark_code_and_a_real_word_still_count(self):
         from src.denials.cheatsheet import codes_in

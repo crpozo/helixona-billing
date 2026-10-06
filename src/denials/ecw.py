@@ -482,7 +482,7 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
         return None
     out = {'codes': [], 'cpt': [], 'snippet': '', 'where': ''}
     try:
-        front = _page_text(page)
+        front = _popup_text(page)
         if _click_text(page, CPT_TAB, timeout=2, what='tab'):
             tab = _wait_text(page, lambda t: bool(_cpts_on(_cpt_region(t))), 4.0)
             out['cpt'] = _cpts_on(_cpt_region(tab))
@@ -495,7 +495,7 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
         out['codes'] = codes_in(_clean(_after(text, 'Payments / Adjustments')))
         if not out['codes'] and _click_text(page, CPT_PMTS_VIEW, timeout=2, what='view'):
             time.sleep(1.5)
-            view = _page_text(page)
+            view = _popup_text(page)
             out['codes'] = codes_in(_clean(_after(view, 'CPT')))
             out['where'] = 'View CPT Pmts'
             text = view
@@ -512,7 +512,7 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
             for tab in NOTE_TABS:
                 if _click_text(page, [tab], timeout=1.5, what='summary tab'):
                     time.sleep(1.0)
-                    notes = (notes + ' | ' + _section(_page_text(page), tab.strip('*'), 600)).strip(' |')
+                    notes = (notes + ' | ' + _section(_popup_text(page), tab.strip('*'), 600)).strip(' |')
                     break
             if notes:
                 out['notes'] = notes[:1200]
@@ -530,6 +530,39 @@ def read_reasons(page, claim_id, open_claim, close_claim, shot=False):
         except Exception:
             pass
     return out
+
+
+POPUP_TEXT_JS = r"""() => {
+    // The page's visible text WITHOUT its <select> menus: innerText lists every
+    // option of every dropdown (Place of Service: "66 - Programs of
+    // All-Inclusive Care for the Elderly (PACE) Center"), and that read as the
+    // denial reason "inclusive" on claim 2187.
+    const skip = new Set(['SELECT', 'OPTION', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+    const out = [];
+    const walk = (node) => {
+        if (node.nodeType === 3) { const t = node.nodeValue.replace(/\s+/g, ' ').trim(); if (t) out.push(t); return; }
+        if (node.nodeType !== 1 || skip.has(node.tagName)) return;
+        const cs = getComputedStyle(node);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return;
+        const block = /^(block|table|table-row|table-cell|flex|grid|list-item)$/.test(cs.display) || /^(DIV|P|TR|TD|TH|LI|BR|H\d|LABEL|SECTION|TABLE)$/.test(node.tagName);
+        if (block) out.push('\n');
+        for (const c of node.childNodes) walk(c);
+        if (block) out.push('\n');
+    };
+    if (document.body) walk(document.body);
+    return out.join(' ').replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{2,}/g, '\n').trim();
+}"""
+
+
+def _popup_text(page):
+    """Every frame's visible text, dropdown menus left out."""
+    parts = []
+    for frm in page.frames:
+        try:
+            parts.append(frm.evaluate(POPUP_TEXT_JS) or '')
+        except Exception:
+            continue
+    return '\n'.join(p for p in parts if p)
 
 
 def _section(text, marker, length=600):
@@ -577,10 +610,10 @@ def _wait_text(page, ready, timeout_s=4.0):
     """The popup's text once `ready(text)` holds, or whatever it says at the
     end of `timeout_s` — tabs fill a moment after the click."""
     deadline = time.time() + timeout_s
-    text = _page_text(page)
+    text = _popup_text(page)
     while not ready(text) and time.time() < deadline:
         time.sleep(0.5)
-        text = _page_text(page)
+        text = _popup_text(page)
     return text
 
 
