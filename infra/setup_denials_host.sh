@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-time host setup for the Denials bot's screen and queue. Run ON the EC2
+# One-time host setup for a bot's screen and queue (Denials by default;
+# `ROLE=priority bash setup_denials_host.sh 104 6085` for the Priority bot). Run ON the EC2
 # host, as root or with sudo:
 #
 #     sudo bash /opt/helixona-agent/setup_denials_host.sh
@@ -11,12 +12,14 @@
 # other bots' displays or queues.
 set -euo pipefail
 
+ROLE=${ROLE:-denials}
 DISPLAY_NO=${1:-103}
 NOVNC_PORT=${2:-6084}
 RFB_PORT=$((5900 + DISPLAY_NO - 99))          # :99→5900 … :103→5904, like the others
 APP=/opt/helixona-agent
 ENV_FILE=$APP/.env
-QUEUE_NAME=helixona-agent-tasks-denials
+QUEUE_NAME=helixona-agent-tasks-$ROLE
+ENV_VAR=SQS_QUEUE_URL_$(echo "$ROLE" | tr a-z A-Z)
 VNCPASS=$APP/.vncpass
 NOVNC_WEB=/usr/share/novnc
 [ -d "$NOVNC_WEB" ] || NOVNC_WEB=$(dirname "$(find / -name vnc.html -path '*novnc*' 2>/dev/null | head -1)")
@@ -55,7 +58,7 @@ else
 fi
 cat > /etc/systemd/system/x11vnc-$DISPLAY_NO.service <<UNIT
 [Unit]
-Description=x11vnc on display :$DISPLAY_NO (Denials bot)
+Description=x11vnc on display :$DISPLAY_NO ($ROLE bot)
 After=xvfb@$DISPLAY_NO.service
 Requires=xvfb@$DISPLAY_NO.service
 
@@ -70,7 +73,7 @@ WantedBy=multi-user.target
 UNIT
 cat > /etc/systemd/system/novnc-$NOVNC_PORT.service <<UNIT
 [Unit]
-Description=noVNC on $NOVNC_PORT → VNC $RFB_PORT (Denials bot)
+Description=noVNC on $NOVNC_PORT → VNC $RFB_PORT ($ROLE bot)
 After=x11vnc-$DISPLAY_NO.service
 Requires=x11vnc-$DISPLAY_NO.service
 
@@ -90,8 +93,8 @@ systemctl is-active xvfb@$DISPLAY_NO x11vnc-$DISPLAY_NO novnc-$NOVNC_PORT | past
 
 # ── 3. The queue ──────────────────────────────────────────────────────────
 say "Queue $QUEUE_NAME"
-if grep -q '^SQS_QUEUE_URL_DENIALS=.\+' "$ENV_FILE" 2>/dev/null; then
-    echo "  already in .env: $(grep '^SQS_QUEUE_URL_DENIALS=' "$ENV_FILE")"
+if grep -q "^$ENV_VAR=.\+" "$ENV_FILE" 2>/dev/null; then
+    echo "  already in .env: $(grep "^$ENV_VAR=" "$ENV_FILE")"
 else
     REGION=$(grep -E '^AWS_REGION=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)
     REGION=${REGION:-us-west-2}
@@ -107,21 +110,21 @@ PY
 )
     fi
     if [ -n "$URL" ]; then
-        sed -i '/^SQS_QUEUE_URL_DENIALS=/d' "$ENV_FILE"
-        echo "SQS_QUEUE_URL_DENIALS=$URL" >> "$ENV_FILE"
+        sed -i "/^$ENV_VAR=/d" "$ENV_FILE"
+        echo "$ENV_VAR=$URL" >> "$ENV_FILE"
         echo "  created and written to .env: $URL"
     else
         echo "  ⚠️ could not create the queue from here (no AWS permission on the host)."
         echo "     Create it in the SQS console (same settings as helixona-agent-tasks-eob) and add to $ENV_FILE:"
-        echo "     SQS_QUEUE_URL_DENIALS=https://sqs.$REGION.amazonaws.com/<account>/$QUEUE_NAME"
+        echo "     $ENV_VAR=https://sqs.$REGION.amazonaws.com/<account>/$QUEUE_NAME"
     fi
 fi
 
 # ── 4. Restart what reads the new pieces ─────────────────────────────────
 say "Restart"
-systemctl restart helixona-agent-denials helixona-dashboard
+systemctl restart helixona-agent-$ROLE helixona-dashboard
 sleep 2
-systemctl is-active helixona-agent-denials helixona-dashboard | paste - - | sed 's/^/  denials · dashboard: /'
+systemctl is-active helixona-agent-$ROLE helixona-dashboard | paste - - | sed "s/^/  $ROLE · dashboard: /"
 
 cat <<MSG
 

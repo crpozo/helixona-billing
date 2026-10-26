@@ -1,0 +1,19 @@
+[Unit]
+Description=Helixona Billing Agent (Priority Bot)
+After=network.target xvfb@104.service
+# Wants (not Requires): a flapping display must not crash-loop the worker. See
+# helixona-agent.service for the rationale.
+Wants=xvfb@104.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/helixona-agent
+ExecStart=/opt/helixona-agent/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:104
+Environment=BOT_ROLE=priority
+
+[Install]
+WantedBy=multi-user.target

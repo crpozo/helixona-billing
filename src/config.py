@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     sqs_queue_url_iv: str = ""
     sqs_queue_url_eob: str = ""
     sqs_queue_url_denials: str = ""
+    sqs_queue_url_priority: str = ""
     s3_bucket_name: str = ""
     ecw_login_url: str = "https://eclinicalworks.com/login"
     secrets_manager_prefix: str = "prod/helixona/"
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     #   resubmissions    helixona-agent-resub   :100     6081   sqs_queue_url_resub
     #   eob              helixona-agent-eob     :102     6083   sqs_queue_url_eob
     #   denials          helixona-agent-denials :103     6084   sqs_queue_url_denials
+    #   priority         helixona-agent-priority :104    6085   sqs_queue_url_priority
     #
     # Each also has a name that says what it does, in the clinic's own words —
     # Intake, Follow-up, Remittance, Denials — kept with the dashboard's BOT_ROUTING,

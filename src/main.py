@@ -1160,7 +1160,7 @@ def _run_fix_coding_ivs_stage2(page, body, aws_client, ecw_url):
     logger.info(f"═══ Stage 2 complete — total test claims deleted: {total_deleted} ═══")
 
 
-def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
+def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url, since=None):
     """
     Fix Coding IVs — Stage 1: Create encounter claims.
       1. (login already done by caller)
@@ -1172,6 +1172,7 @@ def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
       - testing_mode: no-op for this stage (kept for symmetry with other stages).
     """
     from datetime import datetime as _dt
+    since = since or CLAIMS_SINCE      # the Priority bot passes the last 120 days
     today_str = _dt.now().strftime('%m/%d/%Y')
 
     logger.info("═══ Fix Coding IVs — Stage 1: Create encounter claims ═══")
@@ -1203,7 +1204,7 @@ def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
     except Exception as e:
         logger.error(f"Encounters navigation failed: {e}")
 
-    logger.info(f"Setting Encounters date range {CLAIMS_SINCE} → today...")
+    logger.info(f"Setting Encounters date range {since} → today...")
     try:
         date_inputs = page.locator('input[type="text"]:visible').all()
         set_count = 0
@@ -1212,9 +1213,9 @@ def _run_fix_coding_ivs_stage1(page, body, aws_client, ecw_url):
                 val = inp.input_value()
                 if val and '/' in val and len(val) == 10:
                     if set_count == 0:
-                        inp.click(click_count=3); inp.fill(CLAIMS_SINCE)
+                        inp.click(click_count=3); inp.fill(since)
                         inp.dispatch_event('change'); inp.dispatch_event('blur')
-                        logger.info(f"✅ FROM {CLAIMS_SINCE}")
+                        logger.info(f"✅ FROM {since}")
                     elif set_count == 1:
                         inp.click(click_count=3); inp.fill(today_str)
                         inp.dispatch_event('change'); inp.dispatch_event('blur')
@@ -11620,6 +11621,35 @@ def process_message(message: dict, aws_client: AWSClient):
                               open_claim=_open_claim_popup_via_lookup, close_claim=_close_claim_popup)
         except Exception as e:
             logger.error(f"Denials review failed: {e}")
+        finally:
+            if holder.get('manager'):
+                holder['manager'].stop()
+
+    elif task_type == 'claim_priority':
+        # Priority: every open claim (All Claims · Balance > 0) dated by its
+        # Billing Logs or follow-up notes, aged into P1–P4 and flagged
+        # against the status SLA (src/priority, docs/priority.md). Read-only
+        # in eCW, except the optional Claims IPE All step (create_claims).
+        logger.info("═══ Priority — open claims by aging, overdue first ═══")
+        from src.priority.run import run_claim_priority
+        holder = {}
+
+        def get_page():
+            if not holder.get('manager'):
+                holder['manager'] = BrowserManager().start(proxy_config=None)
+            return holder['manager'].new_page()
+
+        def create_claims(page, enc_since):
+            creds = aws_client.get_secret('ecw_credentials')
+            ecw_url = creds.get('url', 'https://zjdvbjliaam2udi33vapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp')
+            _run_fix_coding_ivs_stage1(page, {}, aws_client, ecw_url, since=enc_since)
+
+        try:
+            run_claim_priority(aws_client, body, login=_perform_ecw_login, get_page=get_page,
+                               open_claim=_open_claim_popup_via_lookup, close_claim=_close_claim_popup,
+                               create_claims=create_claims)
+        except Exception as e:
+            logger.error(f"Priority run failed: {e}")
         finally:
             if holder.get('manager'):
                 holder['manager'].stop()

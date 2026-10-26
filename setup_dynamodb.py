@@ -108,6 +108,17 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # Claim prioritization: one item per open claim with its reference
+        # date, days, P1–P4 and overdue flag (docs/priority.md). Created on
+        # first use by src/priority/run.py too.
+        "TableName": "helixona-priority",
+        "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "claim_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

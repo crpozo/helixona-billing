@@ -13,13 +13,14 @@ from src.aws.clients import QUEUE_BY_ROLE, ROLE_ENV_VAR
 from src.config import Settings
 from src.ecw.browser import profile_dir_for
 
-ROLES = ('submissions', 'resubmissions', 'eob', 'denials')
+ROLES = ('submissions', 'resubmissions', 'eob', 'denials', 'priority')
 
 QUEUES = dict(
     sqs_queue_url='https://sqs/helixona-agent-tasks',
     sqs_queue_url_resub='https://sqs/helixona-agent-tasks-resub',
     sqs_queue_url_eob='https://sqs/helixona-agent-tasks-eob',
     sqs_queue_url_denials='https://sqs/helixona-agent-tasks-denials',
+    sqs_queue_url_priority='https://sqs/helixona-agent-tasks-priority',
 )
 
 

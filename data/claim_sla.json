@@ -1,0 +1,15 @@
+{
+  "_comment": "Days allowed in each eCW Claim Status before the claim is overdue (Claim Prioritization bot). Keys are matched case-insensitively; 'default' covers the rest.",
+  "default": 30,
+  "ERA PAYER DENIED": 30,
+  "Insurance Rejected": 15,
+  "Clearinghouse Rejected": 7,
+  "Claim sent via Symplisend": 30,
+  "Ready to Submit to Symplisend": 7,
+  "In Process": 45,
+  "In Appeal": 60,
+  "Pending": 30,
+  "Payer Contact": 14,
+  "Partial Payment": 30,
+  "Patient": 60
+}

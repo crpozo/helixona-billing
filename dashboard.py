@@ -33,6 +33,7 @@ SQS_URL = os.environ['SQS_QUEUE_URL']
 SQS_URL_RESUB = os.environ.get('SQS_QUEUE_URL_RESUB', '')
 SQS_URL_EOB = os.environ.get('SQS_QUEUE_URL_EOB', '')
 SQS_URL_DENIALS = os.environ.get('SQS_QUEUE_URL_DENIALS', '')
+SQS_URL_PRIORITY = os.environ.get('SQS_QUEUE_URL_PRIORITY', '')
 S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '')
 EC2_IP = "54.189.175.233"
 
@@ -133,6 +134,16 @@ BOT_ROUTING = {
         'emoji': '🚫',
         'label': 'Claim denials',
         'novnc_port': 6084,
+    },
+    # Priority (2026-10-26): every open claim dated by its logs, aged into
+    # P1–P4, flagged against the status SLA. Display :104, noVNC 6085.
+    'priority': {
+        'queue_url': SQS_URL_PRIORITY,
+        'service': 'helixona-agent-priority',
+        'name': 'Priority',
+        'emoji': '🎯',
+        'label': 'Claim prioritization',
+        'novnc_port': 6085,
     },
 }
 
@@ -381,7 +392,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
    the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #claims-section-submissions{grid-column:1}
 .ftree details{margin:2px 0 2px 14px;border-left:1px solid var(--bdr);padding-left:10px}
 .ftree > details{margin-left:0;border-left:none;padding-left:0}
 .ftree summary{cursor:pointer;padding:6px 4px;list-style:none;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -585,6 +596,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="subtab" data-bot="resubmissions" onclick="setActiveBot('resubmissions')">🩺 Follow-up · Blue Shield Resubmissions</div>
       <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · Checks</div>
       <div class="subtab" data-bot="denials" onclick="setActiveBot('denials')">🚫 Denials · Claim denials</div>
+      <div class="subtab" data-bot="priority" onclick="setActiveBot('priority')">🎯 Priority · Claim prioritization</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -663,6 +675,28 @@ tbody tr:last-child td{border-bottom:none}
               </tr>
             </thead>
             <tbody id="denials-body"><tr><td colspan="8" class="empty-state">No review yet. Use <strong>▶ Run → Review denied claims in eCW</strong> on the right. The bot lists the claims eCW shows as denied, reads the reason codes on each, and looks the answer up in the SOP cheat sheet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PRIORITY — open claims by aging, overdue first -->
+      <div class="claims-section" id="priority-section" hidden>
+        <div class="section-title">
+          🎯 Open claims by priority
+          <span id="priority-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <a class="btn" href="/api/priority.csv" style="margin-left:auto">⬇ CSV</a>
+          <button class="btn btn-refresh" onclick="loadPriority()">↻ Refresh</button>
+        </div>
+        <div id="priority-run" style="font-size:12px;color:var(--text-muted);margin:8px 14px 0;line-height:1.7"></div>
+        <div class="chk-tiles" id="priority-tiles"></div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Priority</th><th>Claim</th><th>Patient · DOS</th><th>Payer</th><th>eCW status</th><th class="num">Balance</th><th>Days · reference date</th><th>SLA</th>
+              </tr>
+            </thead>
+            <tbody id="priority-body"><tr><td colspan="8" class="empty-state">No prioritization yet. Use <strong>▶ Run → Test on 1 claim</strong> first, then <strong>Prioritize all open claims</strong>. The bot lists every claim with a balance, dates each one by its Billing Logs or follow-up notes, and sorts P1 → P4 with the overdue first.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -761,6 +795,9 @@ tbody tr:last-child td{border-bottom:none}
               </optgroup>
               <optgroup label="🚫 Denials" data-bot="denials">
                 <option value="claim_denials" data-bot="denials">🚫 Review denied claims: eCW reasons + SOP action</option>
+              </optgroup>
+              <optgroup label="🎯 Priority" data-bot="priority">
+                <option value="claim_priority" data-bot="priority">🎯 Prioritize open claims: aging P1–P4, overdue by SLA</option>
               </optgroup>
               <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
                 <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
@@ -1009,6 +1046,12 @@ window.scrollToEl = function(sel){
                 reasons: true,
                 redo: false
             }, null, 2),
+            claim_priority: JSON.stringify({
+                since: "07/01/2025",
+                limit_claims: 0,
+                create_claims: false,
+                redo: false
+            }, null, 2),
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
                 blue_shield: false,
@@ -1122,6 +1165,17 @@ window.scrollToEl = function(sel){
              desc: 'Lists the denied claims and their status without opening any claim. Minutes. Claims whose codes were read before keep them.',
              payload: {since: '07/01/2025', limit_claims: 0, reasons: false}},
         ];
+        ACTIONS.priority = [
+            {icon: '🧪', title: 'Test on 1 claim', task: 'claim_priority',
+             desc: 'Lists the open claims (All Claims · Balance > 0), opens the first one, reads its Billing Logs or follow-up notes and dates it. Nothing is created in eCW. A screenshot of the claim popup is saved.',
+             payload: {since: '07/01/2025', limit_claims: 1, create_claims: false, redo: true}},
+            {icon: '🎯', title: 'Prioritize all open claims', task: 'claim_priority',
+             desc: 'Encounters with a locked note and no claim (last 120 days) → Claims IPE All creates them. Then every claim with a balance is dated by its logs, aged into P1–P4 and flagged against the status SLA. Claims dated before keep their date.',
+             payload: {since: '07/01/2025', limit_claims: 0, create_claims: true, redo: false}},
+            {icon: '📋', title: 'Prioritize without creating claims', task: 'claim_priority',
+             desc: 'The same, skipping the Claims IPE All step: nothing is written in eCW.',
+             payload: {since: '07/01/2025', limit_claims: 0, create_claims: false, redo: false}},
+        ];
         ACTIONS.resubmissions = ACTIONS.submissions;
 
         function renderActions(bot) {
@@ -1228,7 +1282,7 @@ window.scrollToEl = function(sel){
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             renderActions(bot);
             const df = document.getElementById('date-filter');
-            if (df) df.hidden = (bot === 'eob' || bot === 'denials');
+            if (df) df.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority');
             const numLabel = document.getElementById('hero-num-label');
             if (numLabel) { numLabel.hidden = false; numLabel.textContent = bot === 'eob' ? ' need attention,' : ' claims to send'; }
             const heroOf = document.getElementById('hero-of');
@@ -1249,11 +1303,22 @@ window.scrollToEl = function(sel){
             const chkSec = document.getElementById('checks-section');
             if (chkSec) chkSec.hidden = (bot !== 'eob');
             const claimsSec = document.getElementById('claims-section-submissions');
-            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials');
+            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority');
             if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
             // Denials: eCW's denied claims with the SOP's answer, one panel.
             const denSec = document.getElementById('denials-section');
             if (denSec) denSec.hidden = (bot !== 'denials');
+            // Priority: open claims by aging, one panel.
+            const priSec = document.getElementById('priority-section');
+            if (priSec) priSec.hidden = (bot !== 'priority');
+            if (bot === 'priority') {
+                if (numLabel) numLabel.textContent = ' open claims,';
+                if (heroOf) heroOf.hidden = false;
+                if (denom) denom.textContent = 'overdue past their SLA';
+                if (pctLabel) pctLabel.textContent = 'overdue';
+                if (remLabel) remLabel.textContent = 'within SLA';
+                if (typeof loadPriority === 'function') loadPriority();
+            }
             if (bot === 'denials') {
                 if (numLabel) numLabel.textContent = ' denied claims,';
                 if (heroOf) heroOf.hidden = false;
@@ -1455,7 +1520,7 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
-            if (window.activeBot === 'eob' || window.activeBot === 'denials') return [];  // those tabs show their own tables
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority') return [];  // those tabs show their own tables
             return claims;
         }
 
@@ -1765,6 +1830,73 @@ window.scrollToEl = function(sel){
             } catch (e) { console.warn('denials', e); }
         }
 
+        // ---- Priority (open claims by aging) ----
+        window._priorityFilter = window._priorityFilter || 'all';
+        const PRIORITY_BANDS = [['P1', '91+ days', 'var(--bad)'], ['P2', '61–90 days', 'var(--warning)'], ['P3', '31–60 days', 'var(--info)'], ['P4', '0–30 days', 'var(--text-muted)']];
+        function setPriorityFilter(f) { window._priorityFilter = f; renderPriority(); }
+        function renderPriority() {
+            const data = window._priority;
+            if (!data) return;
+            const sm = data.summary || {};
+            const nf = n => Number(n || 0).toLocaleString('en-US');
+            const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+            const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '') || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const meta = document.getElementById('priority-meta');
+            if (meta) meta.textContent = data.rows.length ? `${nf(data.rows.length)} open claims · ${money(sm.balance)} outstanding · ${sm.run_at ? 'last run ' + sm.run_at : ''}` : '';
+            if (window.activeBot === 'priority') {
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+                const total = data.rows.length, over = data.rows.filter(r => r.overdue).length;
+                set('hero-submitted', nf(total)); set('hero-total', nf(over));
+                set('hero-pct', (total ? Math.round(over / total * 100) : 0) + '%'); set('hero-remaining', nf(total - over));
+                const fill = document.getElementById('hero-progress-fill');
+                if (fill) fill.style.width = (total ? Math.round(over / total * 100) : 0) + '%';
+            }
+            const run = document.getElementById('priority-run');
+            if (run) {
+                const lr = sm.last_run || {}; const steps = lr.steps || {}, order = lr.order || [];
+                run.innerHTML = order.length ? `<strong>Last run</strong> ${esc(lr.started_at || '')} · ` + order.map(k => `<strong>${esc(k)}:</strong> ${esc(steps[k])}`).join(' · ') : '';
+            }
+            const tiles = document.getElementById('priority-tiles');
+            if (tiles) {
+                const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._priorityFilter === f ? ' on' : ''}" onclick="setPriorityFilter('${f}')" style="border-color:${window._priorityFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
+                tiles.innerHTML = data.rows.length ? [
+                    tile('open claims', data.rows.length, 'all', 'var(--text-secondary)', money(sm.balance) + ' outstanding'),
+                    tile('overdue', data.rows.filter(r => r.overdue).length, 'overdue', 'var(--bad)', 'past the SLA for their status'),
+                    ...PRIORITY_BANDS.map(([p, label, color]) => tile(p + ' · ' + label, data.rows.filter(r => r.priority === p).length, p, color, money(sm[p + '_balance']))),
+                    tile('undated', data.rows.filter(r => !r.ref_date).length, 'undated', 'var(--text-muted)', 'no log date found'),
+                ].join('') : '';
+            }
+            const body = document.getElementById('priority-body');
+            if (!body) return;
+            const f = window._priorityFilter;
+            const rows = data.rows.filter(r => f === 'all' ? true : f === 'overdue' ? r.overdue : f === 'undated' ? !r.ref_date : r.priority === f);
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="8" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'No prioritization yet. Use <strong>▶ Run → Test on 1 claim</strong> on the right.'}</td></tr>`;
+                return;
+            }
+            const color = p => (PRIORITY_BANDS.find(x => x[0] === p) || [])[2] || 'var(--text-muted)';
+            body.innerHTML = rows.map(r => `
+                <tr>
+                  <td><span class="verdict-pill" style="color:${color(r.priority)};font-weight:700">${esc(r.priority)}</span>${r.overdue ? ' <span class="verdict-pill" style="color:var(--bad)">overdue</span>' : ''}</td>
+                  <td><strong>${esc(r.claim_id)}</strong></td>
+                  <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}</div></td>
+                  <td>${esc(r.payer || '—')}<div style="font-size:11px;color:var(--text-muted)">${r.era_payer ? 'ERA payer · Billing Logs' : 'follow-up notes'}</div></td>
+                  <td>${esc(r.status || '—')}</td>
+                  <td class="num">${money(r.balance)}<div style="font-size:11px;color:var(--text-muted)">${r.charges ? 'of ' + money(r.charges) : ''}</div></td>
+                  <td>${r.days >= 0 ? `<strong>${nf(r.days)}</strong> days` : '<span style="color:var(--text-muted)">no date</span>'}<div style="font-size:11px;color:var(--text-muted)" title="${esc(r.snippet || '')}">${esc(r.ref_date || '')}${r.ref_source ? ' · ' + esc(r.ref_source) : ''}</div></td>
+                  <td>${nf(r.sla_days)} days${r.overdue ? `<div style="font-size:11px;color:var(--bad)">${nf(r.days - r.sla_days)} over</div>` : ''}</td>
+                </tr>`).join('');
+        }
+        async function loadPriority() {
+            try {
+                const res = await fetch('/api/priority');
+                const data = await res.json();
+                if (data.error) { console.warn('priority', data.error); return; }
+                window._priority = data;
+                renderPriority();
+            } catch (e) { console.warn('priority', e); }
+        }
+
         async function loadChecks() {
             try {
                 const res = await fetch('/api/checks');
@@ -1898,7 +2030,7 @@ window.scrollToEl = function(sel){
         }
 
         async function loadCounts() {
-            if (window.activeBot === 'eob' || window.activeBot === 'denials') return;   // those tabs write their own headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority') return;   // those tabs write their own headline
             // With a date filter on, the headline is computed from the cached
             // claims with the SAME state definition the server uses
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
@@ -2011,7 +2143,7 @@ window.scrollToEl = function(sel){
         }
 
         function renderStats(claims) {
-            if (window.activeBot === 'eob' || window.activeBot === 'denials') return;   // those tabs write their own headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority') return;   // those tabs write their own headline
             const live = claims.filter(c => !isSent(c));
             window._archivedCount = live.filter(isArchived).length;
             const pending = live.filter(c => !isArchived(c));
@@ -2559,6 +2691,7 @@ window.scrollToEl = function(sel){
         // The checks table is small; keep it live while a run is going.
         setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 15000);
         setInterval(() => { if (window.activeBot === 'denials') loadDenials(); }, 15000);
+        setInterval(() => { if (window.activeBot === 'priority') loadPriority(); }, 15000);
         setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
 
         // ---- SharePoint folders (Remittance) ----
@@ -2945,6 +3078,50 @@ def api_usage_credits():
     claude_usage.ensure_table(dynamodb)
     item = claude_usage.set_credits(dynamodb, balance, who)
     return jsonify({'ok': True, 'balance_usd': float(item['balance_usd']), 'as_of': item['as_of']})
+
+
+def _priority_rows():
+    from src.priority.run import summarize as _sum, rank
+    table = dynamodb.Table('helixona-priority')
+    items = scan_all(table)
+    meta = next((it for it in items if it.get('claim_id') == '_summary'), {})
+    run = next((it for it in items if it.get('claim_id') == '_run'), {})
+    rows = [it for it in items if not str(it.get('claim_id', '')).startswith('_')]
+    for r in rows:
+        r['days'] = int(r.get('days', -1) or -1)
+        r['sla_days'] = int(r.get('sla_days', 30) or 30)
+    rows.sort(key=rank)
+    summary = {**_sum(rows), **{k: meta[k] for k in ('since', 'run_at', 'as_of', 'run_claims', 'create_claims') if k in meta},
+               'last_run': {k: v for k, v in run.items() if k != 'claim_id'}}
+    return rows, summary
+
+
+@app.route('/api/priority')
+def api_priority():
+    try:
+        rows, summary = _priority_rows()
+        return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'summary': {}})
+
+
+@app.route('/api/priority.csv')
+def api_priority_csv():
+    import csv
+    import io
+    from flask import Response
+    cols = ['priority', 'overdue', 'claim_id', 'patient', 'dos', 'payer', 'era_payer', 'status', 'charges', 'paid', 'balance',
+            'days', 'ref_date', 'ref_source', 'sla_days', 'snippet', 'reviewed_at']
+    try:
+        rows, _ = _priority_rows()
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction='ignore')
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, '') for k in cols})
+        return Response(buf.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename="priority.csv"'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 @app.route('/api/denials')

@@ -24,6 +24,7 @@ _PROFILE_BY_ROLE = {
     'resubmissions': '/opt/helixona-agent/browser-profile-resubmissions',
     'eob':           '/opt/helixona-agent/browser-profile-eob',
     'denials':       '/opt/helixona-agent/browser-profile-denials',
+    'priority':      '/opt/helixona-agent/browser-profile-priority',
 }
 
 
