@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time host setup for a bot's screen and queue (Denials by default;
-# `ROLE=priority bash setup_denials_host.sh 104 6085` for the Priority bot). Run ON the EC2
+# `ROLE=priority bash setup_denials_host.sh 104 6085` for the Priority bot,
+# `ROLE=reminders bash setup_denials_host.sh 105 6086` for the Reminders bot). Run ON the EC2
 # host, as root or with sudo:
 #
 #     sudo bash /opt/helixona-agent/setup_denials_host.sh

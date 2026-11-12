@@ -1,0 +1,19 @@
+[Unit]
+Description=Helixona Billing Agent (Reminders Bot)
+After=network.target xvfb@105.service
+# Wants (not Requires): a flapping display must not crash-loop the worker. See
+# helixona-agent.service for the rationale.
+Wants=xvfb@105.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/helixona-agent
+ExecStart=/opt/helixona-agent/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:105
+Environment=BOT_ROLE=reminders
+
+[Install]
+WantedBy=multi-user.target

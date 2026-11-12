@@ -14,6 +14,7 @@ QUEUE_BY_ROLE = {
     'eob':           lambda s: s.sqs_queue_url_eob,
     'denials':       lambda s: s.sqs_queue_url_denials,
     'priority':      lambda s: s.sqs_queue_url_priority,
+    'reminders':     lambda s: s.sqs_queue_url_reminders,
 }
 
 ROLE_ENV_VAR = {
@@ -22,6 +23,7 @@ ROLE_ENV_VAR = {
     'eob':           'SQS_QUEUE_URL_EOB',
     'denials':       'SQS_QUEUE_URL_DENIALS',
     'priority':      'SQS_QUEUE_URL_PRIORITY',
+    'reminders':     'SQS_QUEUE_URL_REMINDERS',
 }
 
 

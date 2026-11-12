@@ -25,6 +25,7 @@ _PROFILE_BY_ROLE = {
     'eob':           '/opt/helixona-agent/browser-profile-eob',
     'denials':       '/opt/helixona-agent/browser-profile-denials',
     'priority':      '/opt/helixona-agent/browser-profile-priority',
+    'reminders':     '/opt/helixona-agent/browser-profile-reminders',
 }
 
 

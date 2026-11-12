@@ -34,6 +34,7 @@ SQS_URL_RESUB = os.environ.get('SQS_QUEUE_URL_RESUB', '')
 SQS_URL_EOB = os.environ.get('SQS_QUEUE_URL_EOB', '')
 SQS_URL_DENIALS = os.environ.get('SQS_QUEUE_URL_DENIALS', '')
 SQS_URL_PRIORITY = os.environ.get('SQS_QUEUE_URL_PRIORITY', '')
+SQS_URL_REMINDERS = os.environ.get('SQS_QUEUE_URL_REMINDERS', '')
 S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '')
 EC2_IP = "54.189.175.233"
 
@@ -144,6 +145,17 @@ BOT_ROUTING = {
         'emoji': '🎯',
         'label': 'Claim prioritization',
         'novnc_port': 6085,
+    },
+    # Reminders (2026-11-12): Blue Shield checks mailed to the patient —
+    # who was told, who is due a reminder, who is past the deadline.
+    # Display :105, noVNC 6086.
+    'reminders': {
+        'queue_url': SQS_URL_REMINDERS,
+        'service': 'helixona-agent-reminders',
+        'name': 'Reminders',
+        'emoji': '💌',
+        'label': 'Checks sent to patients',
+        'novnc_port': 6086,
     },
 }
 
@@ -392,7 +404,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
    the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #reminders-section, .main > #claims-section-submissions{grid-column:1}
 .ftree details{margin:2px 0 2px 14px;border-left:1px solid var(--bdr);padding-left:10px}
 .ftree > details{margin-left:0;border-left:none;padding-left:0}
 .ftree summary{cursor:pointer;padding:6px 4px;list-style:none;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -597,6 +609,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="subtab" data-bot="eob" onclick="setActiveBot('eob')">🧾 Remittance · Checks</div>
       <div class="subtab" data-bot="denials" onclick="setActiveBot('denials')">🚫 Denials · Claim denials</div>
       <div class="subtab" data-bot="priority" onclick="setActiveBot('priority')">🎯 Priority · Claim prioritization</div>
+      <div class="subtab" data-bot="reminders" onclick="setActiveBot('reminders')">💌 Reminders · Checks sent to patients</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -675,6 +688,28 @@ tbody tr:last-child td{border-bottom:none}
               </tr>
             </thead>
             <tbody id="denials-body"><tr><td colspan="8" class="empty-state">No review yet. Use <strong>▶ Run → Review denied claims in eCW</strong> on the right. The bot lists the claims eCW shows as denied, reads the reason codes on each, and looks the answer up in the SOP cheat sheet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- REMINDERS — Blue Shield checks mailed to the patient -->
+      <div class="claims-section" id="reminders-section" hidden>
+        <div class="section-title">
+          💌 Blue Shield checks sent to patients
+          <span id="reminders-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <a class="btn" href="/api/reminders.csv" style="margin-left:auto">⬇ CSV</a>
+          <button class="btn btn-refresh" onclick="loadReminders()">↻ Refresh</button>
+        </div>
+        <div id="reminders-run" style="font-size:12px;color:var(--text-muted);margin:8px 14px 0;line-height:1.7"></div>
+        <div class="chk-tiles" id="reminders-tiles"></div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stage</th><th>Check</th><th>Patient · DOS</th><th class="num">Amount</th><th>Blue Shield</th><th>Patient e-mail</th><th>Reminders · deadline</th><th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="reminders-body"><tr><td colspan="8" class="empty-state">Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> first. The bot finds the Blue Shield checks made out to the patient, looks up the patient's e-mail and writes the reminder as a draft. Nothing is e-mailed until you run <strong>Send the reminders</strong>.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -798,6 +833,9 @@ tbody tr:last-child td{border-bottom:none}
               </optgroup>
               <optgroup label="🎯 Priority" data-bot="priority">
                 <option value="claim_priority" data-bot="priority">🎯 Prioritize open claims: aging P1–P4, overdue by SLA</option>
+              </optgroup>
+              <optgroup label="💌 Reminders" data-bot="reminders">
+                <option value="patient_check_reminders" data-bot="reminders">💌 Checks sent to patients: find them, draft or send the reminder</option>
               </optgroup>
               <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
                 <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
@@ -1052,6 +1090,14 @@ window.scrollToEl = function(sel){
                 create_claims: false,
                 redo: false
             }, null, 2),
+            patient_check_reminders: JSON.stringify({
+                since: "07/01/2025",
+                blue_shield: false,
+                limit: 0,
+                ecw: true,
+                send: false,
+                test_to: ""
+            }, null, 2),
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
                 blue_shield: false,
@@ -1176,6 +1222,19 @@ window.scrollToEl = function(sel){
              desc: 'The same, skipping the Claims IPE All step: nothing is written in eCW.',
              payload: {since: '07/01/2025', limit_claims: 0, create_claims: false, redo: false}},
         ];
+        ACTIONS.reminders = [
+            {icon: '🧪', title: 'Test on 1 check', task: 'patient_check_reminders',
+             desc: 'Takes the newest Blue Shield check made out to a patient, looks up the patient e-mail in eCW and writes the reminder as a draft. Nothing is e-mailed. Type your own address to receive that one message as a test.',
+             input: {key: 'test_to', placeholder: 'your e-mail (optional test copy)'},
+             payload: {since: '07/01/2025', blue_shield: false, limit: 1, ecw: true, send: false}},
+            {icon: '🔎', title: 'Find new checks and draft', task: 'patient_check_reminders',
+             desc: 'Walks the Blue Shield portal for new checks, keeps the ones made out to the patient that Helixona has not received, and drafts each reminder that is due. Nothing is e-mailed.',
+             payload: {since: '07/01/2025', blue_shield: true, limit: 0, ecw: true, send: false}},
+            {icon: '💌', title: 'Send the reminders', task: 'patient_check_reminders',
+             desc: 'E-mails every reminder that is due to the patient: the first notice, then one every few days, the last as a final notice. Patients without an e-mail are listed for a call. The bot never charges a card.',
+             confirm: 'Send the reminder e-mails to the PATIENTS now? Check the drafts in the table first.',
+             payload: {since: '07/01/2025', blue_shield: false, limit: 0, ecw: true, send: true}},
+        ];
         ACTIONS.resubmissions = ACTIONS.submissions;
 
         function renderActions(bot) {
@@ -1196,6 +1255,7 @@ window.scrollToEl = function(sel){
         async function runAction(bot, i) {
             const a = (ACTIONS[bot] || [])[i];
             if (!a) return;
+            if (a.confirm && !confirm(a.confirm)) return;
             let payload = {};
             if (a.payload) payload = {...a.payload};
             else { try { payload = JSON.parse(TASK_TEMPLATES[a.task] || '{}'); } catch (e) { payload = {}; } }
@@ -1282,7 +1342,7 @@ window.scrollToEl = function(sel){
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             renderActions(bot);
             const df = document.getElementById('date-filter');
-            if (df) df.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority');
+            if (df) df.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders');
             const numLabel = document.getElementById('hero-num-label');
             if (numLabel) { numLabel.hidden = false; numLabel.textContent = bot === 'eob' ? ' need attention,' : ' claims to send'; }
             const heroOf = document.getElementById('hero-of');
@@ -1303,11 +1363,22 @@ window.scrollToEl = function(sel){
             const chkSec = document.getElementById('checks-section');
             if (chkSec) chkSec.hidden = (bot !== 'eob');
             const claimsSec = document.getElementById('claims-section-submissions');
-            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority');
+            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders');
             if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
             // Denials: eCW's denied claims with the SOP's answer, one panel.
             const denSec = document.getElementById('denials-section');
             if (denSec) denSec.hidden = (bot !== 'denials');
+            // Reminders: checks mailed to patients, one panel.
+            const remSec = document.getElementById('reminders-section');
+            if (remSec) remSec.hidden = (bot !== 'reminders');
+            if (bot === 'reminders') {
+                if (numLabel) numLabel.textContent = ' checks with patients,';
+                if (heroOf) heroOf.hidden = false;
+                if (denom) denom.textContent = 'reminders due now';
+                if (pctLabel) pctLabel.textContent = 'due now';
+                if (remLabel) remLabel.textContent = 'past the deadline';
+                if (typeof loadReminders === 'function') loadReminders();
+            }
             // Priority: open claims by aging, one panel.
             const priSec = document.getElementById('priority-section');
             if (priSec) priSec.hidden = (bot !== 'priority');
@@ -1520,7 +1591,7 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
-            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority') return [];  // those tabs show their own tables
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return [];  // those tabs show their own tables
             return claims;
         }
 
@@ -1830,6 +1901,81 @@ window.scrollToEl = function(sel){
             } catch (e) { console.warn('denials', e); }
         }
 
+        // ---- Reminders (Blue Shield checks mailed to patients) ----
+        window._remindersFilter = window._remindersFilter || 'open';
+        const REMINDER_STAGES = {'to remind': 'var(--warning)', 'reminded': 'var(--info)', 'deadline passed': 'var(--bad)', 'received': 'var(--success)', 'voided': 'var(--text-muted)'};
+        function setRemindersFilter(f) { window._remindersFilter = f; renderReminders(); }
+        function showReminderDraft(i) {
+            const r = (window._remindersShown || [])[i];
+            if (r) alert((r.draft_subject || '') + String.fromCharCode(10, 10) + (r.draft_text || ''));
+        }
+        function renderReminders() {
+            const data = window._reminders;
+            if (!data) return;
+            const sm = data.summary || {};
+            const nf = n => Number(n || 0).toLocaleString('en-US');
+            const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+            const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '') || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const open = r => r.stage === 'to remind' || r.stage === 'reminded' || r.stage === 'deadline passed';
+            const meta = document.getElementById('reminders-meta');
+            if (meta) meta.textContent = data.rows.length ? `${nf(sm.outstanding)} checks with patients · ${money(sm.outstanding_amount)} · ${sm.run_at ? 'last run ' + sm.run_at + ' (' + (sm.mode || '') + ')' : ''}` : '';
+            if (window.activeBot === 'reminders') {
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+                const total = sm.outstanding || 0, due = sm['to remind'] || 0;
+                set('hero-submitted', nf(total)); set('hero-total', nf(due));
+                set('hero-pct', (total ? Math.round(due / total * 100) : 0) + '%'); set('hero-remaining', nf(sm['deadline passed'] || 0));
+                const fill = document.getElementById('hero-progress-fill');
+                if (fill) fill.style.width = (total ? Math.round(due / total * 100) : 0) + '%';
+            }
+            const run = document.getElementById('reminders-run');
+            if (run) {
+                const lr = sm.last_run || {}; const steps = lr.steps || {}, order = lr.order || [];
+                run.innerHTML = order.length ? `<strong>Last run</strong> ${esc(lr.started_at || '')} · ` + order.map(k => `<strong>${esc(k)}:</strong> ${esc(steps[k])}`).join(' · ') : '';
+            }
+            const tiles = document.getElementById('reminders-tiles');
+            if (tiles) {
+                const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._remindersFilter === f ? ' on' : ''}" onclick="setRemindersFilter('${f}')" style="border-color:${window._remindersFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
+                tiles.innerHTML = data.rows.length ? [
+                    tile('with patients', sm.outstanding, 'open', 'var(--text-secondary)', money(sm.outstanding_amount) + ' not received'),
+                    tile('reminder due', sm['to remind'], 'to remind', 'var(--warning)', 'a message is drafted'),
+                    tile('reminded', sm['reminded'], 'reminded', 'var(--info)', 'waiting for the patient'),
+                    tile('deadline passed', sm['deadline passed'], 'deadline passed', 'var(--bad)', money(sm['deadline passed_amount']) + ' · a person decides'),
+                    tile('no e-mail', sm.no_email, 'no_email', 'var(--bad)', 'call the patient'),
+                    tile('cashed by patient', sm.cashed_by_patient, 'cashed', 'var(--warning)', 'Blue Shield shows it cashed'),
+                    tile('received', sm['received'], 'received', 'var(--success)', 'the check is at Helixona'),
+                ].join('') : '';
+            }
+            const body = document.getElementById('reminders-body');
+            if (!body) return;
+            const f = window._remindersFilter;
+            const rows = data.rows.filter(r => f === 'open' ? open(r) : f === 'no_email' ? (open(r) && !r.email) : f === 'cashed' ? (open(r) && r.cashed) : r.stage === f);
+            window._remindersShown = rows;
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="8" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> on the right.'}</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map((r, i) => `
+                <tr>
+                  <td><span class="verdict-pill" style="color:${REMINDER_STAGES[r.stage] || 'var(--text-muted)'};font-weight:700">${esc(r.stage)}</span>${r.next_action === 'final' ? ' <span class="verdict-pill" style="color:var(--bad)">final notice</span>' : ''}</td>
+                  <td><strong>${esc(r.check_number)}</strong><div style="font-size:11px;color:var(--text-muted)">${esc(r.check_date || '')}</div></td>
+                  <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}${(r.claim_ids || []).length ? ' · claim ' + esc(r.claim_ids.join(', ')) : ' · no eCW claim matched'}</div></td>
+                  <td class="num">${money(r.amount)}</td>
+                  <td>${esc(r.bs_status || '—')}<div style="font-size:11px;color:var(--text-muted)">${r.in_hand ? 'at Helixona: ' + esc(r.in_hand_how) : r.cashed ? 'cashed ' + esc(r.cashed_date || '') : r.reconciled ? 'not received' : 'not reconciled yet'}</div></td>
+                  <td>${r.email ? esc(r.email) : (open(r) ? '<span style="color:var(--bad)">none on file</span>' : '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.phone || '')}${r.email_source ? ' · ' + esc(r.email_source) : ''}</div></td>
+                  <td><strong>${nf(r.reminders_sent)}</strong> sent<div style="font-size:11px;color:var(--text-muted)">${r.last_reminder_at ? 'last ' + esc(r.last_reminder_at) : ''}${r.deadline ? ' · deadline ' + esc(r.deadline) : ''}</div></td>
+                  <td>${r.draft_text && r.next_action ? `<button class="btn" onclick="showReminderDraft(${i})">View draft</button>` : ''}</td>
+                </tr>`).join('');
+        }
+        async function loadReminders() {
+            try {
+                const res = await fetch('/api/reminders');
+                const data = await res.json();
+                if (data.error) { console.warn('reminders', data.error); return; }
+                window._reminders = data;
+                renderReminders();
+            } catch (e) { console.warn('reminders', e); }
+        }
+
         // ---- Priority (open claims by aging) ----
         window._priorityFilter = window._priorityFilter || 'all';
         const PRIORITY_BANDS = [['P1', '91+ days', 'var(--bad)'], ['P2', '61–90 days', 'var(--warning)'], ['P3', '31–60 days', 'var(--info)'], ['P4', '0–30 days', 'var(--text-muted)']];
@@ -2030,7 +2176,7 @@ window.scrollToEl = function(sel){
         }
 
         async function loadCounts() {
-            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority') return;   // those tabs write their own headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return;   // those tabs write their own headline
             // With a date filter on, the headline is computed from the cached
             // claims with the SAME state definition the server uses
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
@@ -2143,7 +2289,7 @@ window.scrollToEl = function(sel){
         }
 
         function renderStats(claims) {
-            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority') return;   // those tabs write their own headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return;   // those tabs write their own headline
             const live = claims.filter(c => !isSent(c));
             window._archivedCount = live.filter(isArchived).length;
             const pending = live.filter(c => !isArchived(c));
@@ -2692,6 +2838,7 @@ window.scrollToEl = function(sel){
         setInterval(() => { if (window.activeBot === 'eob') loadChecks(); }, 15000);
         setInterval(() => { if (window.activeBot === 'denials') loadDenials(); }, 15000);
         setInterval(() => { if (window.activeBot === 'priority') loadPriority(); }, 15000);
+        setInterval(() => { if (window.activeBot === 'reminders') loadReminders(); }, 15000);
         setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
 
         // ---- SharePoint folders (Remittance) ----
@@ -3078,6 +3225,49 @@ def api_usage_credits():
     claude_usage.ensure_table(dynamodb)
     item = claude_usage.set_credits(dynamodb, balance, who)
     return jsonify({'ok': True, 'balance_usd': float(item['balance_usd']), 'as_of': item['as_of']})
+
+
+def _reminder_rows():
+    from src.reminders.run import summarize as _sum, REMINDERS_TABLE
+    order = {'deadline passed': 0, 'to remind': 1, 'reminded': 2, 'received': 3, 'voided': 4}
+    items = scan_all(dynamodb.Table(REMINDERS_TABLE))
+    meta = next((it for it in items if it.get('check_number') == '_summary'), {})
+    run = next((it for it in items if it.get('check_number') == '_run'), {})
+    rows = [it for it in items if not str(it.get('check_number', '')).startswith('_')]
+    for r in rows:
+        r['reminders_sent'] = int(r.get('reminders_sent', 0) or 0)
+    rows.sort(key=lambda r: (order.get(r.get('stage'), 9), str(r.get('deadline') or '9'), str(r.get('check_number'))))
+    summary = {**_sum(rows), **{k: meta[k] for k in ('run_at', 'as_of', 'since', 'mode', 'due', 'sent', 'owed') if k in meta},
+               'last_run': {k: v for k, v in run.items() if k != 'check_number'}}
+    return rows, summary
+
+
+@app.route('/api/reminders')
+def api_reminders():
+    try:
+        rows, summary = _reminder_rows()
+        return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'summary': {}})
+
+
+@app.route('/api/reminders.csv')
+def api_reminders_csv():
+    import csv
+    import io
+    from flask import Response
+    cols = ['stage', 'check_number', 'check_date', 'amount', 'patient', 'dos', 'claim_ids', 'bs_status', 'cashed', 'cashed_date',
+            'in_hand', 'in_hand_how', 'email', 'phone', 'reminders_sent', 'first_reminder_at', 'last_reminder_at', 'deadline', 'updated_at']
+    try:
+        rows, _ = _reminder_rows()
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction='ignore')
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: (' '.join(r[k]) if isinstance(r.get(k), list) else r.get(k, '')) for k in cols})
+        return Response(buf.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename="patient_checks.csv"'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 def _priority_rows():

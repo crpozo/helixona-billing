@@ -51,3 +51,6 @@ data/.admin_key
 
 # --- Staff roster for the unlocked-notes notices (host only) ---
 data/note_lock_roster.json
+
+# --- Patient e-mail addresses for the Reminders bot (host only, PHI) ---
+data/patient_contacts.json

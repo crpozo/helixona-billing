@@ -119,6 +119,17 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # Reminders: one item per Blue Shield check made out to the patient,
+        # with its stage, the reminders sent and the draft of the next one
+        # (docs/reminders.md). Created on first use by src/reminders/run.py too.
+        "TableName": "helixona-patient-checks",
+        "KeySchema": [{"AttributeName": "check_number", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "check_number", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [

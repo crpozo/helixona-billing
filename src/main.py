@@ -3109,6 +3109,10 @@ IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 # Vignesh's team's work, not the bot's: the old eob_post task is gone.)
 EOB_TASKS = {'check_reconcile'}
 
+# The Reminders bot is the only one that writes to patients, and it does
+# nothing else: fenced both ways, like Remittance.
+REMINDER_TASKS = {'patient_check_reminders'}
+
 
 def process_message(message: dict, aws_client: AWSClient):
     body = json.loads(message.get('Body', '{}'))
@@ -3130,6 +3134,12 @@ def process_message(message: dict, aws_client: AWSClient):
         logger.warning(f"BOT_ROLE=eob refused task_type={task_type}")
         return
     if _settings.bot_role != 'eob' and task_type in EOB_TASKS:
+        logger.warning(f"BOT_ROLE={_settings.bot_role} refused task_type={task_type}")
+        return
+    if _settings.bot_role == 'reminders' and task_type not in REMINDER_TASKS:
+        logger.warning(f"BOT_ROLE=reminders refused task_type={task_type}")
+        return
+    if _settings.bot_role != 'reminders' and task_type in REMINDER_TASKS:
         logger.warning(f"BOT_ROLE={_settings.bot_role} refused task_type={task_type}")
         return
 
@@ -11650,6 +11660,32 @@ def process_message(message: dict, aws_client: AWSClient):
                                create_claims=create_claims)
         except Exception as e:
             logger.error(f"Priority run failed: {e}")
+        finally:
+            if holder.get('manager'):
+                holder['manager'].stop()
+
+    elif task_type == 'patient_check_reminders':
+        # Reminders: Blue Shield checks mailed to the patient instead of to
+        # Helixona — who was told, who is due a reminder, who is past the
+        # deadline (src/reminders, docs/reminders.md). Read-only in the
+        # portal and in eCW. E-mails go out only with send:true; the bot
+        # never charges a card.
+        logger.info("═══ Reminders — Blue Shield checks mailed to patients ═══")
+        from src.reminders.run import run_patient_check_reminders
+        from src.checks.run import collect_blue_shield
+        holder = {}
+
+        def get_page():
+            if not holder.get('manager'):
+                holder['manager'] = BrowserManager().start(proxy_config=None)
+            return holder['manager'].new_page()
+
+        try:
+            run_patient_check_reminders(aws_client, body, login=_perform_ecw_login, get_page=get_page,
+                                        open_claim=_open_claim_popup_via_lookup, close_claim=_close_claim_popup,
+                                        walk_portal=collect_blue_shield)
+        except Exception as e:
+            logger.error(f"Reminders run failed: {e}")
         finally:
             if holder.get('manager'):
                 holder['manager'].stop()
