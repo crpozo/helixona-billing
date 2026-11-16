@@ -12,7 +12,7 @@ run saves `reminders_claim_<n>.png` and logs what it found.
 import re
 import time
 
-from src.denials.ecw import _popup_text
+from src.denials.ecw import _popup_text, open_claims
 from src.eob.post import _click_text, _shot
 from src.utils.logger import get_logger
 
@@ -48,6 +48,36 @@ def contact_in(text):
     return {'email': (labelled or emails or [''])[0], 'phone': (cells or phones or [''])[0]}
 
 
+BUTTONS_JS = r"""() => {
+    // What can be clicked on the claim popup that might lead to the patient:
+    // the names only, for the log, so the right one can be added to PATIENT_INFO.
+    const vis = el => el.offsetWidth > 0 && el.offsetHeight > 0;
+    const out = new Set();
+    for (const el of document.querySelectorAll('button, input[type="button"], a')) {
+        const t = (el.value || el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (t && t.length <= 30 && vis(el) && /info|hub|demog|patient|pt\b|contact|acct|account/i.test(t)) out.add(t);
+    }
+    return Array.from(out).slice(0, 25);
+}"""
+
+
+def _candidate_buttons(page):
+    names = []
+    for frm in page.frames:
+        try:
+            names += frm.evaluate(BUTTONS_JS) or []
+        except Exception:
+            continue
+    return sorted(set(names))
+
+
+def go_to_claims(page):
+    """After the login eCW is on the schedule; the claim lookup lives on
+    Billing → Claims. (2026-11-16: the lookup box was not on the page, the
+    claim was never opened, and nothing said so.)"""
+    return open_claims(page)
+
+
 def read_contact(page, claim_id, open_claim, close_claim, shot=False):
     """The patient's contact off claim `claim_id`: {'email', 'phone',
     'source'}, or None when the claim could not be opened."""
@@ -59,6 +89,9 @@ def read_contact(page, claim_id, open_claim, close_claim, shot=False):
     except Exception as e:
         logger.warning(f"  ⚠️ claim {cid}: could not be opened: {str(e)[:120]}")
     if not ok:
+        logger.warning(f"  ⚠️ claim {cid}: the claim did not open — no contact read")
+        if shot:
+            _shot(page, f'reminders_not_opened_{cid}')
         return None
     out = {'email': '', 'phone': '', 'source': ''}
     try:
@@ -66,7 +99,11 @@ def read_contact(page, claim_id, open_claim, close_claim, shot=False):
         if found['email']:
             out.update(found, source='eCW claim')
         else:
+            if shot:
+                logger.info(f"  🔘 claim {cid}: buttons that may lead to the patient: {_candidate_buttons(page) or 'none seen'}")
             opened = _click_text(page, PATIENT_INFO, timeout=2.5, what='patient info')
+            if not opened:
+                logger.info(f"  (claim {cid}: no patient-info button among {PATIENT_INFO} — the claim popup alone was read)")
             if opened:
                 time.sleep(2.0)
                 info = contact_in(_popup_text(page))

@@ -98,6 +98,15 @@ class FoundOnTheFirstRealRun(unittest.TestCase):
         self.assertEqual(run.match_by_patient({'patient': 'SOMEONE ELSE', 'dos': '10/23/2026'}, index), ([], ''))
         self.assertEqual(run.match_by_patient({'patient': 'ALMANZA', 'dos': '10/23/2026'}, index), ([], ''), 'a surname alone is not a patient')
 
+    def test_the_claims_screen_is_opened_before_any_claim_and_a_miss_is_said(self):
+        # The lookup box is on Billing → Claims, not on the schedule the login lands on.
+        src = _read('src/reminders/run.py')
+        self.assertLess(src.index('go_to_claims(page)'), src.index('read_contact(page, r['))
+        page = mock.Mock()
+        with mock.patch.object(ecw, 'logger') as log:
+            self.assertIsNone(ecw.read_contact(page, '2190', lambda p, c: (False, None), lambda p: None))
+        self.assertIn('the claim did not open', log.warning.call_args.args[0])
+
     def test_a_check_just_issued_is_still_in_the_mail(self):
         row = {'in_hand': False, 'voided': False, 'cashed': False, 'check_date': '11/12/2026'}
         self.assertEqual(run.plan(row, {}, POLICY, TODAY), ('in the mail', ''))

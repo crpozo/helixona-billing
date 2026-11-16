@@ -382,10 +382,12 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
         due = due[:limit]
     need_ecw = [r for r in due if not r['email'] and r['claim_ids']]
     if need_ecw and use_ecw and login and get_page and open_claim:
-        from src.reminders.ecw import read_contact
+        from src.reminders.ecw import read_contact, go_to_claims
         progress('contacts', f"looking up {len(need_ecw)} patient e-mail(s) in eCW…")
         page = get_page()
         if login(page, aws_client.get_secret('ecw_credentials'), aws_client):
+            if not go_to_claims(page):
+                logger.warning("  ⚠️ Billing → Claims not confirmed — the lookups may not open")
             for i, r in enumerate(need_ecw, 1):
                 got = read_contact(page, r['claim_ids'][0], open_claim, close_claim, shot=(i == 1))
                 if got and (got['email'] or got['phone']):
