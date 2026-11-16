@@ -47,6 +47,11 @@ KEY_SECRETS = [os.environ.get('ANTHROPIC_SECRET_NAME', 'prod/helixona/anthropic_
 # each name is tried in the bot's region and then in these.
 KEY_SECRET_REGIONS = [r for r in os.environ.get('ANTHROPIC_SECRET_REGIONS', 'us-east-1').split(',') if r.strip()]
 VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'claude-sonnet-5')  # the operator's choice, 2026-09-17
+# A page the reader could not settle — it says "check" and gives no usable
+# number, or it reads one with low confidence — is looked at once more by a
+# stronger model (2026-11-16). A wrong digit makes two wrong rows: a check
+# nobody issued and a real one with "no copy". Empty turns it off.
+VISION_RETRY_MODEL_ID = os.environ.get('VISION_RETRY_MODEL_ID', 'claude-fable-5-2')
 _CLIENT = {}
 
 IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -143,10 +148,16 @@ def parse_check_text(text):
     m = re.search(r'(?:check|check|chk|eft)\s*(?:no\.?|number|#|num\.?)?\s*:?\s*(\d{5,11})\b', t, re.I)
     if m:
         out['check_number'] = m.group(1)
-    m = re.search(r'(?:amount|pay|total|net)[^$\d]{0,30}\$?\s*([\d,]+\.\d{2})', t, re.I)
+    # The check's own amount first ("Check Amount", "Amount Paid", "Net
+    # Payment"): an EOB page prints "Amount Billed" and "Total Charges"
+    # before it, and the first "amount" on the page was taken for the check.
+    m = (re.search(r'(?:check|payment|eft)\s*(?:amount|amt|total)[^$\d]{0,20}\$?\s*([\d,]+\.\d{2})', t, re.I)
+         or re.search(r'(?:amount\s*paid|net\s*(?:payment|amount|paid)|total\s*(?:payment|paid)|pay\s*exactly)[^$\d]{0,20}\$?\s*([\d,]+\.\d{2})', t, re.I)
+         or re.search(r'(?:amount|pay|total|net)[^$\d]{0,30}\$?\s*([\d,]+\.\d{2})', t, re.I))
     if m:
         out['amount'] = money(m.group(1))
-    m = re.search(r'\b(\d{2}/\d{2}/\d{4})\b', t)
+    m = (re.search(r'(?:check|payment|issue[d]?|eft)\s*date\D{0,12}(\d{2}/\d{2}/\d{4})\b', t, re.I)
+         or re.search(r'\b(\d{2}/\d{2}/\d{4})\b', t))
     if m:
         out['check_date'] = m.group(1)
     if re.search(r'blue\s*shield', t, re.I):
@@ -370,13 +381,7 @@ def read_check(aws_client, path, model_id=VISION_MODEL_ID):
     if n > MAX_PAGES:
         logger.warning(f"  ⚠️ {os.path.basename(path)}: {n} pages, only the first {MAX_PAGES} read")
     # The same check on two pages (the check and its stub, a re-scan) is one check.
-    checks, seen = [], set()
-    for c in found:
-        key = c['check_number'].lstrip('0')
-        if key in seen:
-            continue
-        seen.add(key)
-        checks.append(c)
+    checks = merge_pages(found)
     if not checks:
         result['pages_tried'] = tried
         result['problem'] = (f"no check number could be read off the image (pages {', '.join(map(str, tried))} of {n})"
@@ -394,6 +399,38 @@ def read_check(aws_client, path, model_id=VISION_MODEL_ID):
                 + ', '.join(c['check_number'] for c in checks[:8]) + (' …' if len(checks) > 8 else '')
                 + (f" · total ${total}" if total else ''))
     return result
+
+
+def merge_pages(found):
+    """The same check on two pages (the check and its stub, a re-scan) is
+    one check: the first page it was seen on, with whatever that page left
+    blank — the amount, the date — taken from the other."""
+    by, order = {}, []
+    for c in found:
+        key = str(c.get('check_number') or '').lstrip('0')
+        if key not in by:
+            by[key] = dict(c)
+            order.append(key)
+            continue
+        for k in CHECK_KEYS:
+            if not by[key].get(k) and c.get(k):
+                by[key][k] = c[k]
+    return [by[k] for k in order]
+
+
+def _near(a, b):
+    """Two check numbers one slip of the pen apart: one digit different,
+    one digit dropped or added, or two neighbours swapped."""
+    a, b = str(a or '').lstrip('0'), str(b or '').lstrip('0')
+    if not a or not b or a == b:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    if abs(len(a) - len(b)) == 1:
+        long, short = (a, b) if len(a) > len(b) else (b, a)
+        return any(long[:i] + long[i + 1:] == short for i in range(len(long)))
+    return False
 
 
 def _sum(checks):
@@ -431,7 +468,41 @@ def _page_check(aws_client, path, page_no, texts, model_id):
     page, raw, err = _read_one(aws_client, path, page_no, model_id)
     if page:
         page['read_by'] = 'vision'
+        if wants_second_look(page) and VISION_RETRY_MODEL_ID and VISION_RETRY_MODEL_ID != model_id:
+            again, raw2, err2 = _read_one(aws_client, path, page_no, VISION_RETRY_MODEL_ID)
+            better = pick_reading(page, again if not err2 else {})
+            if better is not page:
+                better['read_by'] = 'vision'
+                better['second_look'] = True
+                logger.info(f"  🔁 {os.path.basename(path)} p{page_no + 1}: read again by {VISION_RETRY_MODEL_ID} — "
+                            f"{(better.get('check') or {}).get('check_number') or better.get('kind')}")
+                return better, raw2, None
     return page, raw, err
+
+
+def wants_second_look(page):
+    """A check page whose number is missing, or read with low confidence."""
+    if not page or page.get('kind') != 'check':
+        return False
+    ck = page.get('check') or {}
+    return not ck.get('check_number') or not ck.get('amount') or str(ck.get('confidence') or page.get('confidence') or '').lower() == 'low'
+
+
+def pick_reading(first, second):
+    """The second reading when it settles what the first could not: it gives
+    a number where there was none, or it is a confident reading of a check.
+    A second reading that is itself unsure, or not a check, changes nothing."""
+    if not second or second.get('kind') != 'check':
+        # "Not a check after all" is an answer too, when the first had no number.
+        if second and second.get('kind') in ('other', 'deposit_slip') and not (first.get('check') or {}).get('check_number'):
+            return second
+        return first
+    a, b = first.get('check') or {}, second.get('check') or {}
+    if not b.get('check_number'):
+        return first
+    if not a.get('check_number'):
+        return second
+    return second if str(b.get('confidence') or '').lower() in ('high', 'medium') else first
 
 
 def _read_one(aws_client, path, page_no, model_id):
@@ -473,17 +544,36 @@ def _read_deposit(aws_client, path, slip, n, model_id, result, texts=()):
         ck = (page.get('check') or {}) if page.get('kind') == 'check' else {}
         if ck.get('check_number'):
             found.append({**{k: ck.get(k, '') for k in CHECK_KEYS}, 'page': page_no + 1, 'from_slip': False})
+    found = merge_pages(found)
     bare = lambda x: str(x or '').lstrip('0')
     seen = {bare(c['check_number']) for c in found}
+    listed_bare = {bare(ln['check_number']) for ln in listed}
     for ln in listed:
         if bare(ln['check_number']) not in seen:
+            # The slip is written by hand. A line one digit away from a check
+            # printed on its own page, for the same amount, is that check —
+            # not a second one nobody will ever find.
+            twin = next((c for c in found if not c.get('from_slip') and bare(c['check_number']) not in listed_bare
+                         and ln.get('amount') and c.get('amount') == ln.get('amount')
+                         and _near(c['check_number'], ln['check_number'])), None)
+            if twin:
+                twin['slip_wrote'] = ln['check_number']
+                listed_bare.add(bare(twin['check_number']))
+                logger.info(f"  ✍️ slip line {ln['check_number']} is check {twin['check_number']} (page {twin['page']}), same amount")
+                continue
             seen.add(bare(ln['check_number']))
             found.append({**{k: '' for k in CHECK_KEYS}, 'check_number': ln['check_number'], 'amount': ln.get('amount', ''),
                           'page': 1, 'from_slip': True})
-    total = dep.get('total') or _sum(found)
+    added = _sum(found)
+    total = dep.get('total') or added
+    problem = '' if found else 'a deposit slip with no legible check'
+    if found and dep.get('total') and added and added != dep['total']:
+        # The slip's own total is the control: when the checks do not add up
+        # to it, one of them was misread or is missing.
+        problem = f"the checks add up to ${added}, the slip says ${dep['total']} — one was misread or is missing"
+        logger.warning(f"  ⚠️ {os.path.basename(path)}: {problem}")
     result.update(kind='deposit', slip=True, deposit_date=dep.get('date', ''), deposit_total=total, checks=found,
-                  read_by='vision', confidence=slip.get('confidence', ''),
-                  problem='' if found else 'a deposit slip with no legible check')
+                  deposit_sum=added, read_by='vision', confidence=slip.get('confidence', ''), problem=problem)
     from_slip = sum(1 for c in found if c['from_slip'])
     logger.info(f"  🏦 deposit of {len(found)} check(s)" + (f" ({from_slip} only on the slip)" if from_slip else '')
                 + f" · total ${total or '?'}")

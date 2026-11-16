@@ -128,6 +128,44 @@ def _zeros_in_name(path, key):
 MAX_READ_ATTEMPTS = 2   # a file that gave no check twice is a letter or an EOB page, not a check
 
 
+def _where(f):
+    """The fields that say where a file is — all that changes when the team
+    moves a scan to another folder."""
+    path = f['path']
+    return {'copy_file': path,
+            'copy_folder': path.rsplit('/', 1)[0] if '/' in path else '',
+            'copy_status': ('posted' if path.lower().startswith('posted')
+                            else 'unposted' if path.lower().startswith('unposted') else ''),
+            'copy_etag': f.get('etag') or '', 'copy_url': f.get('web_url', ''),
+            'copy_file_id': str(f.get('id') or ''), 'copy_size': int(f.get('size') or 0)}
+
+
+def _move_rows(table, rows, old_path, f):
+    """A scan the team moved (same SharePoint id, same size): its rows follow
+    it to the new folder. Nothing is downloaded and no model is asked — the
+    image is the one already read. Returns the rows' new keys."""
+    where = _where(f)
+    keys = []
+    for it in rows:
+        key = str(it.get('check_number'))
+        if key.startswith(('deposit:', 'unreadable:')):
+            # The key carries the path: the row is written under the new one.
+            new_key = key.split(':', 1)[0] + ':' + f['path']
+            item = {k: v for k, v in it.items() if k != 'check_number'}
+            item.update(where)
+            _write_item(table, new_key, item)
+            if hasattr(table, 'delete_item') and new_key != key:
+                table.delete_item(Key={'check_number': key})
+            keys.append(new_key)
+        else:
+            item = dict(where)
+            if it.get('deposit_file'):
+                item['deposit_file'] = f['path']
+            _write_item(table, key, item)
+            keys.append(key)
+    return keys
+
+
 def _write_item(table, key, item):
     table.update_item(
         Key={'check_number': key},
@@ -147,6 +185,10 @@ def _file_item(f, source, got, prev_attempts):
         'copy_status': ('posted' if f['path'].lower().startswith('posted')
                         else 'unposted' if f['path'].lower().startswith('unposted') else ''),
         'copy_etag': f.get('etag') or '',
+        # SharePoint's own id for the file and its size: a scan moved from
+        # Unposted Checks to Posted Checks keeps both, and is not read again.
+        'copy_file_id': str(f.get('id') or ''),
+        'copy_size': int(f.get('size') or 0),
         'copy_url': f.get('web_url', ''),
         'copy_source': source,
         'copy_read_by': got.get('read_by', ''),
@@ -185,12 +227,17 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
     # unchanged) and the ones that did not (skip after MAX_READ_ATTEMPTS, or
     # always on a targeted run). by_path: every row a file produced.
     known, tried, by_path, paged, whole = {}, {}, {}, {}, set()
-    for it in scan_all(table, ProjectionExpression='check_number, copy_file, copy_etag, has_copy, copy_attempts, kind, copy_pages, '
-                                                   'copy_read_mode, deposit_file'):
+    known_at, items_at, by_id, no_id = {}, {}, {}, set()
+    for it in scan_all(table):
         path = str(it.get('copy_file') or '')
         if not path:
             continue
         by_path.setdefault(path, []).append(str(it.get('check_number')))
+        items_at.setdefault(path, []).append(it)
+        if it.get('copy_file_id'):
+            by_id[str(it['copy_file_id'])] = (path, int(it.get('copy_size') or 0))
+        else:
+            no_id.add(path)
         if it.get('copy_pages'):
             paged[path] = int(it.get('copy_pages'))
         # Every page of the file was looked at: a deposit's rows always were;
@@ -198,11 +245,18 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
         if it.get('kind') == 'deposit' or it.get('deposit_file') or it.get('copy_read_mode') == 'all_pages':
             whole.add(path)
         if it.get('has_copy') or it.get('kind') == 'deposit':
-            known[path] = str(it.get('copy_etag') or '')
+            # Two rows may name one file (it changed and read differently):
+            # the latest reading says which version is on file. Whichever
+            # row the scan returned last used to decide, and a file could
+            # look changed, and be read again, on every run.
+            stamp = str(it.get('copy_read_at') or '')
+            if path not in known or stamp >= known_at.get(path, ''):
+                known[path], known_at[path] = str(it.get('copy_etag') or ''), stamp
         else:
             tried[path] = (str(it.get('copy_etag') or ''), int(it.get('copy_attempts') or 1))
-    read = skipped = failed = deposits = relooked = 0
+    read = skipped = failed = deposits = relooked = moved = 0
     api_errors = 0
+    listed = {f['path'] for f in files}
     logger.info(f"📁 {len(files)} file(s) in {source}" + (f", {len(known)} already read" if known else '')
                 + (f", {len(tried)} gave no check before" if tried else ''))
     with tempfile.TemporaryDirectory() as tmp:
@@ -210,6 +264,21 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
             if limit and read + failed >= limit:
                 break
             etag = f.get('etag') or ''
+            # Moved by the team — Unposted Checks → Posted Checks/<year>/<month>:
+            # the same file under a new path. Its rows follow it; it is not
+            # read again (a 100-page batch was a hundred model calls per move).
+            fid, size = str(f.get('id') or ''), int(f.get('size') or 0)
+            if fid and size and f['path'] not in by_path and fid in by_id:
+                old_path, old_size = by_id[fid]
+                if old_path != f['path'] and old_path not in listed and old_size == size:
+                    keys = _move_rows(table, items_at.get(old_path, []), old_path, f)
+                    by_path[f['path']] = keys
+                    by_path.pop(old_path, None)
+                    by_id[fid] = (f['path'], size)
+                    moved += 1
+                    skipped += 1
+                    logger.info(f"  📦 {old_path} → {f['path']}: moved, not read again ({len(keys)} row(s))")
+                    continue
             prev = tried.get(f['path'])
             seen_before = (f['path'] in known and known[f['path']] == etag) or (prev and prev[0] == etag)
             # A multi-page PDF read before every page was looked at: count
@@ -237,6 +306,12 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 relooked += 1
                 logger.info(f"  📄 {f['path']}: {n} pages, not every page read before — read again page by page")
             elif f['path'] in known and known[f['path']] == etag:
+                # Rows read before the id was kept learn it now, so the
+                # file's next move is recognised.
+                if fid and f['path'] in no_id:
+                    for key in by_path.get(f['path'], []):
+                        _write_item(table, key, {'copy_file_id': fid, 'copy_size': size})
+                    no_id.discard(f['path'])
                 skipped += 1
                 continue
             elif prev and prev[0] == etag and (targeted or prev[1] >= MAX_READ_ATTEMPTS):
@@ -278,6 +353,7 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                         'copy_amount': c.get('amount', ''), 'copy_date': c.get('check_date', '') or got.get('deposit_date', ''),
                         'copy_payer': c.get('payer', ''), 'copy_claim': c.get('claim_number', ''),
                         'copy_page': int(c.get('page') or 1), 'copy_from_slip': bool(c.get('from_slip')),
+                        'copy_slip_wrote': str(c.get('slip_wrote') or ''),
                         'deposit_file': f['path'], 'deposit_slip': slip, 'deposit_total': got.get('deposit_total', ''),
                         'deposit_date': got.get('deposit_date', ''),
                         'copy_confidence': got.get('confidence', ''), 'copy_problem': ''})
@@ -309,10 +385,14 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 'copy_problem': got.get('problem', ''),
             }
             _write_item(table, key, item)
-            if relook:
-                for old in by_path.get(f['path'], []):
-                    if old != key and hasattr(table, 'delete_item'):
-                        table.delete_item(Key={'check_number': old})
+            # Whatever this file gave on an earlier reading — another number
+            # (a digit misread then, or the file replaced), an "unreadable"
+            # row — is not what the file says now.
+            for old in by_path.get(f['path'], []):
+                if old != key and hasattr(table, 'delete_item'):
+                    table.delete_item(Key={'check_number': old})
+                    logger.info(f"  🗑 {old}: an earlier reading of {f['path']} — removed")
+            by_path[f['path']] = [key]
             if item['has_copy']:
                 read += 1
                 logger.info(f"  🖼 {f['path']}: check {key} ${item['copy_amount'] or '?'} ({item['copy_read_by']})")
@@ -321,7 +401,8 @@ def read_new_copies(aws_client, table, body, prefer=(), get_page=None):
                 logger.warning(f"  ⚠️ {f['path']}: {item['copy_problem']}")
     logger.info(f"📁 copies: {read} read · {skipped} already on file · {failed} unreadable ({source})"
                 + (f" · {deposits} file(s) holding several checks" if deposits else '')
-                + (f" · {relooked} PDF(s) read again page by page" if relooked else ''))
+                + (f" · {relooked} PDF(s) read again page by page" if relooked else '')
+                + (f" · {moved} moved by the team, not read again" if moved else ''))
     return read, skipped, failed
 
 

@@ -250,8 +250,60 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=(), t
         if len(set(amounts.values())) > 1:
             r['flags'].append('amounts differ: ' + ', '.join(f"{k.split('_')[0]} {v:.2f}" for k, v in amounts.items()))
 
+    flag_misreads(by.values())
     rows = sorted(by.values(), key=lambda r: (r['bs_date'] or r['copy_date'] or r['era_dated'] or r['tracker_received'] or '', r['check_number']), reverse=True)
     return rows, summarize(rows)
+
+
+def near_number(a, b):
+    """Two check numbers one misread apart: one digit different, one digit
+    dropped or added, or two neighbours swapped."""
+    a, b = norm_check(a), norm_check(b)
+    if not a or not b or a == b:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1
+                                  and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    if abs(len(a) - len(b)) == 1:
+        long, short = (a, b) if len(a) > len(b) else (b, a)
+        return any(long[:i] + long[i + 1:] == short for i in range(len(long)))
+    return False
+
+
+def flag_misreads(rows):
+    """A scan whose number nobody else knows, beside a check everybody knows
+    and nobody scanned, for the same amount and one digit apart, is very
+    likely ONE check with a digit misread off the image (or mistyped in the
+    tracker). Both rows say so — `possible misread of <other>` — and a
+    person looks at the image; nothing is merged on a guess."""
+    rows = list(rows)
+
+    def amount(r, keys):
+        for k in keys:
+            v = _d(r.get(k))
+            if v is not None:
+                return v
+        return None
+    # Known only from the image: no payer, no eCW payment, no 835, no tracker line.
+    lonely = [r for r in rows if r['has_copy'] and not (r['in_blue_shield'] or r['in_ecw'] or r['in_era'] or r['in_tracker'])]
+    # Known to somebody, and no image of it.
+    wanted = [r for r in rows if not r['has_copy'] and (r['in_blue_shield'] or r['in_ecw'] or r['in_era'] or r['in_tracker'])]
+    if not lonely or not wanted:
+        return
+    by_amount = {}
+    for w in wanted:
+        a = amount(w, ('bs_amount', 'ecw_amount', 'tracker_amount', 'era_amount'))
+        if a is not None:
+            by_amount.setdefault(a, []).append(w)
+    for c in lonely:
+        a = amount(c, ('copy_amount',))
+        twins = [w for w in by_amount.get(a, []) if near_number(c['check_number'], w['check_number'])] if a is not None else []
+        if len(twins) != 1:
+            continue   # none, or more than one candidate: no guess
+        w = twins[0]
+        c['flags'].append(f"possible misread of {w['check_number']}")
+        w['flags'].append(f"possible misread: scan filed as {c['check_number']}")
 
 
 def summarize(rows):
@@ -274,6 +326,7 @@ def summarize(rows):
         'other_payer': sum('other payer' in flags(r) for r in rows),
         'no_copy': sum('no copy of the check' in flags(r) for r in rows),
         'amount_mismatch': sum(any(f.startswith('amounts differ') for f in flags(r)) for r in rows),
+        'possible_misread': sum(any(f.startswith('possible misread') for f in flags(r)) for r in rows),
         # Blue Shield's checks by who has the money (bs_bucket).
         'bs_sent': sum(bool(r.get('in_blue_shield')) for r in rows),
         'bs_cashed_helixona': sum(r.get('bs_bucket') == 'cashed by Helixona' for r in rows),

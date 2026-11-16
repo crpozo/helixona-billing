@@ -431,6 +431,65 @@ def _open_check_link(page, check):
     page.click(link, timeout=10000)
 
 
+# A check Blue Shield showed as issued is cashed (or voided) later. The walk
+# used to skip every check already on file, so one read before it was cashed
+# said "not cashed" for ever: `in transit`, `missing, ask Blue Shield to
+# reissue` and `sent to patient, not cashed` never moved (found 2026-11-16).
+# A full walk now re-opens the checks whose status is not final and updates
+# the status alone; a check asked about within REFRESH_AFTER_HOURS is left.
+FINAL_STATUS_RX = re.compile(r'cashed|void|stop', re.I)
+REFRESH_AFTER_HOURS = 20
+
+
+def status_is_final(item):
+    """Cashed, voided or stopped: Blue Shield will not change it again."""
+    return bool(item.get('cashed_date') or FINAL_STATUS_RX.search(str(item.get('check_status') or '')))
+
+
+def needs_refresh(item, now=None, after_hours=REFRESH_AFTER_HOURS):
+    """An item on file whose status may have changed since it was read."""
+    if status_is_final(item):
+        return False
+    last = str(item.get('status_checked_at') or item.get('captured_at') or '')
+    try:
+        seen = datetime.strptime(last[:19], '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return True
+    return ((now or datetime.utcnow()) - seen).total_seconds() >= after_hours * 3600
+
+
+def _refresh_status(page, aws_client, check):
+    """Re-open a check already on file and update its status, cashed date
+    and payee — nothing else on the item is touched. Returns the new status
+    ('' when the page could not be read; the stored answer then stands)."""
+    _open_check_link(page, check)
+    _wait_for(page, lambda: _on_details(page) and bool(parse_check_summary(page.inner_text('body')).get('check_amount')), timeout=15)
+    time.sleep(0.3)
+    summary = parse_check_summary(page.inner_text('body'))
+    got = norm_check_no(summary.get('check_eft'))
+    if got and got != norm_check_no(check):
+        raise RuntimeError(f'the page shows check {summary.get("check_eft")}, not {check}')
+    if not summary.get('check_status') and not summary.get('cashed_date'):
+        logger.warning(f"  ⚠️ check {check}: status not recognised on its page — the earlier answer stands")
+        return ''
+    now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+    item = {'check_status': summary.get('check_status', ''), 'cashed_date': summary.get('cashed_date', ''),
+            'status_checked_at': now}
+    if summary.get('payee_name'):
+        item['payee_name'] = summary['payee_name']
+    aws_client.dynamodb.Table(EOB_TABLE).update_item(
+        Key={'check_eft': check},
+        UpdateExpression='SET ' + ', '.join(f'#{k} = :{k}' for k in item),
+        ExpressionAttributeNames={f'#{k}': k for k in item},
+        ExpressionAttributeValues={f':{k}': v for k, v in item.items()})
+    return item['check_status'] or ('Check Cashed' if item['cashed_date'] else '')
+
+
+def norm_check_no(s):
+    digits = ''.join(ch for ch in str(s or '') if ch.isdigit())
+    return digits.lstrip('0')
+
+
 def _capture_check(page, aws_client, check, href, result_rows, claim_idx, known_pdfs, download_eob=False):
     logger.info(f"═══ Check/EFT {check} — {len(result_rows)} result row(s) ═══")
     # Always the click, never the href: every check's link points at the same
@@ -592,8 +651,11 @@ def run_eob_capture(page, aws_client, body):
     only = str(body.get('check_eft') or '').strip()
     force = bool(body.get('force'))
     download_eob = bool(body.get('download_eob', False))
+    # Re-open the checks on file that were not cashed when last read. On by
+    # default for a full walk; a capped or one-check run does new work only.
+    refresh = bool(body.get('refresh', not limit and not only))
     logger.info(f"Remittance: since={since} limit={limit or 'none'} only={only or 'all'} force={force} "
-                f"download_eob={download_eob}")
+                f"download_eob={download_eob} refresh={refresh}")
 
     if not login_to_provider_portal(page, aws_client):
         logger.error("❌ Blue Shield login failed — nothing captured")
@@ -608,9 +670,12 @@ def run_eob_capture(page, aws_client, body):
     claim_idx = index_claims(scan_all(
         aws_client.dynamodb.Table(CLAIMS_TABLE),
         ProjectionExpression='claim_id, subscriber_id, service_date, dos, charges'))
-    done, known_pdfs = {}, {}
+    done, known_pdfs, stale = {}, {}, set()
     for it in scan_all(aws_client.dynamodb.Table(EOB_TABLE),
-                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'):
+                       ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at, '
+                                            'check_status, cashed_date, status_checked_at'):
+        if refresh and (it.get('captured_at') or it.get('eob_pdf_s3_path')) and needs_refresh(it):
+            stale.add(str(it.get('check_eft')))
         # On file = captured, with or without the report PDF. (captured_at
         # was missing from the projection, so once the PDFs were skipped
         # every check looked new and a test of 1 re-opened the same one.)
@@ -618,7 +683,8 @@ def run_eob_capture(page, aws_client, body):
         if it.get('eob_pdf_sha256'):
             known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
                                                      str(it.get('eob_pdf_s3_path') or ''))
-    logger.info(f"💾 {len(done)} check(s) already on file")
+    logger.info(f"💾 {len(done)} check(s) already on file"
+                + (f" · {len(stale)} not cashed when last read — their status is asked again" if stale else ''))
 
     # Page by page through the results on screen. Every check is saved the
     # moment it is captured, so a crash or a portal hiccup loses nothing and
@@ -626,6 +692,7 @@ def run_eob_capture(page, aws_client, body):
     # file did not line up with the screen.
     seen, pages = set(), 0
     captured, skipped, failed, rows_seen = 0, 0, 0, 0
+    refreshed, changed = 0, []
     captured_checks, failed_checks = [], []
     stop = False
     while not stop:
@@ -670,6 +737,19 @@ def run_eob_capture(page, aws_client, body):
             seen.add(ck)
             info = checks[ck]
             if only and ck != only:
+                continue
+            if done.get(ck) and not force and ck in stale:
+                # On file, not cashed when last read: its status today.
+                stale.discard(ck)
+                try:
+                    status = _refresh_status(page, aws_client, ck)
+                    refreshed += 1
+                    if status and FINAL_STATUS_RX.search(status):
+                        changed.append(ck)
+                        logger.info(f"  🔄 check {ck}: now {status}")
+                except Exception as e:
+                    logger.warning(f"  ⚠️ check {ck}: status not refreshed ({str(e)[:120]}) — the earlier answer stands")
+                skipped += 1
                 continue
             if done.get(ck) and not force:
                 skipped += 1
@@ -717,7 +797,10 @@ def run_eob_capture(page, aws_client, body):
             break
 
     logger.info(f"═══ Remittance complete: {captured} captured · {skipped} already on file · {failed} failed "
-                f"· {len(seen)} check(s) seen over {pages + 1} page(s) ═══")
+                f"· {len(seen)} check(s) seen over {pages + 1} page(s)"
+                + (f" · {refreshed} status(es) asked again, {len(changed)} now cashed or voided" if refresh else '')
+                + (f" · {len(stale)} uncashed check(s) no longer listed by the portal" if refresh and stale else '') + " ═══")
     return {'ok': True, 'captured': captured, 'skipped': skipped, 'failed': failed,
+            'refreshed': refreshed, 'status_changed': changed,
             'checks': len(seen), 'rows': rows_seen,
             'captured_checks': captured_checks, 'failed_checks': failed_checks}

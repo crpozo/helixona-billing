@@ -1658,14 +1658,14 @@ window.scrollToEl = function(sel){
         window._checksFilter = window._checksFilter || 'mismatch';
         const CHECK_FILTERS = [['last run', '🧪 Last run'], ['mismatch', '⚠ Needs attention'], ['all', 'All'], ['posted', 'Posted'], ['unposted', 'Unposted'],
                                ['not in eCW', 'Not in eCW'], ['not cashed', 'Not cashed'], ['eCW not checked', 'eCW not checked'],
-                               ['other payer', 'Other payer'], ['no copy', 'No copy'], ['tracker no scan', 'In tracker, no scan'], ['in tracker', 'In tracker'], ['amounts', 'Amounts differ']];
+                               ['other payer', 'Other payer'], ['no copy', 'No copy'], ['tracker no scan', 'In tracker, no scan'], ['in tracker', 'In tracker'], ['amounts', 'Amounts differ'], ['misread', 'Possible misread']];
         // "Needs attention" — the same definition as the team view: what a
         // person must act on. Cashed but not in eCW, entered but unposted, a
         // cashed check with no copy, amounts that disagree. Copy-only checks
         // (other payers), not-yet-cashed ones and an unread eCW are shown in
         // their own tiles, not counted here.
         const checkMismatch = r => ['not in eCW', 'unposted'].includes(r.verdict)
-            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('in tracker, no scan') || String(f).startsWith('amounts differ')
+            || (r.flags || []).some(f => String(f).startsWith('no copy') || String(f).startsWith('in tracker, no scan') || String(f).startsWith('amounts differ') || String(f).startsWith('possible misread')
                                          || String(f).startsWith('cashed by patient') || String(f).startsWith('missing, ask Blue Shield'));
         // The rows the last run wrote: its targets (a test of 1), else
         // whatever carries the last reconciliation's timestamp.
@@ -1727,6 +1727,7 @@ window.scrollToEl = function(sel){
                     tile('no copy of the check', sm.no_copy, 'no copy', 'var(--bad)', 'cashed, nobody logged it'),
                     tile('in tracker, no scan', sm.tracker_no_scan, 'tracker no scan', 'var(--warning)', 'logged as received, scan missing'),
                     tile('amounts differ', sm.amount_mismatch, 'amounts', 'var(--warning)', 'check which is right'),
+                    ...(sm.possible_misread ? [tile('possible misread', sm.possible_misread, 'misread', 'var(--warning)', 'one digit apart, same amount')] : []),
                     tile('posted & matching', matching, 'posted', 'var(--success)', 'nothing to do'),
                     tile('not cashed yet', sm.not_cashed, 'not cashed', 'var(--text-muted)', 'wait for the bank'),
                     tile('other payer', sm.other_payer, 'other payer', 'var(--text-muted)', 'not a Blue Shield check'),
@@ -1740,6 +1741,8 @@ window.scrollToEl = function(sel){
                     ...((lr.targets || []).length ? [tile('last run', data.rows.filter(r => inLastRun(r, sm)).length, 'last run', 'var(--vio2)', 'the test just run')] : []),
                     tile('all checks', data.rows.length, 'all', 'var(--text-secondary)', ''),
                 ].join('') : '';
+                const depBad = (sm.deposits || []).filter(d => d.problem);
+                if (depBad.length) tiles.innerHTML += `<div class="chk-tile" title="${esc(depBad.map(d => d.file + ' — ' + d.problem).join(' | '))}" style="border-color:var(--bdr);cursor:default"><div class="chk-tile-n" style="color:var(--warning)">${nf(depBad.length)}</div><div class="chk-tile-l">deposits that do not add up</div><div class="chk-tile-m">hover for the file</div></div>`;
                 if (sm.unreadable) tiles.innerHTML += `<div class="chk-tile" title="${esc((sm.unreadable_files || []).map(u => u.file + ' — ' + u.problem).join(' | '))}" style="border-color:var(--bdr);cursor:default"><div class="chk-tile-n" style="color:var(--warning)">${nf(sm.unreadable)}</div><div class="chk-tile-l">scans not read</div><div class="chk-tile-m">tried again next run</div></div>`;
             }
             if (!body) return;
@@ -1755,6 +1758,7 @@ window.scrollToEl = function(sel){
                 : f === 'other payer' ? (r.flags || []).some(x => x === 'other payer')
                 : f === '835 unposted' ? (r.flags || []).some(x => x.startsWith('835 in eCW'))
                 : f === 'amounts' ? (r.flags || []).some(x => x.startsWith('amounts differ'))
+                : f === 'misread' ? (r.flags || []).some(x => x.startsWith('possible misread'))
                 : r.verdict === f);
             if (!rows.length) {
                 body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'No reconciliation yet. Use <strong>▶ Run → Reconcile all checks</strong> (or <strong>Test one check</strong>) on the right. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>Blue Shield code</strong> box.'}</td></tr>`;
@@ -1772,6 +1776,8 @@ window.scrollToEl = function(sel){
                 if (flags.some(x => x.startsWith('no copy'))) out.push('<strong>Scan the check</strong> into SharePoint › Insurance Checks — the tracker does not list it either.');
                 if (flags.some(x => x.startsWith('in tracker, no scan'))) out.push(`The tracker says it was received${r.tracker_received ? ' ' + esc(r.tracker_received) : ''}, but no folder holds its scan — <strong>find it or scan it</strong> into Insurance Checks.`);
                 if (flags.some(x => x.startsWith('amounts differ'))) out.push('<strong>Check which amount is right</strong>: copy, Blue Shield and eCW disagree.');
+                const mis = flags.find(x => x.startsWith('possible misread'));
+                if (mis) out.push(`<strong>Look at the scan</strong>: ${esc(mis)} — same amount, one digit apart. Probably one check, not two.`);
                 if (r.verdict === '835 only') out.push('<strong>eCW holds the 835 but nothing else knows this payment</strong>. Confirm the check reached Helixona, then post it.');
                 if (flags.some(x => x.startsWith('835 in eCW')) && r.verdict !== '835 only') out.push('eCW holds the 835 from the payer and it is <strong>not posted</strong>.');
                 if (r.verdict === 'eCW not checked') out.push('eCW was not read for this check yet — <strong>run again</strong>.');
@@ -3141,7 +3147,10 @@ def _checks_rows():
                          'total': str(d.get('deposit_total') or ''), 'count': int(d.get('deposit_count') or len(members)),
                          'checks': [str(r['check_number']) for r in members],
                          'posted': sum(r.get('verdict') == 'posted' for r in members),
-                         'attention': sum(r.get('verdict') in ('not in eCW', 'unposted') or 'amounts differ' in r['flags'] for r in members)})
+                         'problem': str(d.get('copy_problem') or ''),
+                         'attention': sum(r.get('verdict') in ('not in eCW', 'unposted')
+                                          or any(str(f).startswith(('amounts differ', 'possible misread')) for f in (r.get('flags') or []))
+                                          for r in members)})
     summary = {**summarize(rows), 'unreadable': len(unreadable), 'deposits': dep_rows,
                'unreadable_files': [{'file': str(u.get('copy_file', '')), 'problem': str(u.get('copy_problem', ''))} for u in unreadable[:50]],
                **{k: meta[k] for k in ('since', 'reconciled_at', 'ecw_checked', 'run_rows') if k in meta},

@@ -92,7 +92,7 @@ class TheVerdictPerCheck(unittest.TestCase):
         sm = summarize(table_rows)
         self.assertEqual((sm['checks'], sm['posted'], sm['amount_mismatch'], sm['no_copy'], sm['other_payer']), (6, 2, 1, 1, 1))
         self.assertEqual(summarize([]), {'checks': 0, 'posted': 0, 'unposted': 0, 'not_in_ecw': 0, 'not_cashed': 0,
-                                         'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0,
+                                         'ecw_unchecked': 0, 'other_payer': 0, 'no_copy': 0, 'amount_mismatch': 0, 'possible_misread': 0,
                                          'era_only': 0, 'era_unposted': 0,
                                          'in_tracker': 0, 'tracker_no_scan': 0,
                                          'bs_sent': 0, 'bs_cashed_helixona': 0, 'bs_cashed_patient': 0, 'bs_cashed_unknown': 0,
@@ -795,7 +795,7 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
 
     def test_a_check_captured_without_a_pdf_is_on_file(self):
         c = _read('src/eob/capture.py')
-        self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at'", c)
+        self.assertIn("ProjectionExpression='check_eft, eob_pdf_s3_path, eob_pdf_sha256, captured_at, '", c)
         # ...and the optional SharePoint app secret is looked for without an error line.
         r = _read('src/checks/run.py')
         self.assertNotIn("aws_client.get_secret('sharepoint_credentials')", r)

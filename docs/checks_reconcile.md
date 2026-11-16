@@ -82,6 +82,42 @@ Everything lands in the **✅ Checks** table on the Remittance tab (filters
 per verdict, CSV export) and in the `helixona-checks` table, one item per
 check number.
 
+## Review of 2026-11-16 — what changed
+
+- **An uncashed check is asked again.** The portal walk skipped every check
+  already on file, so a check read while it was only issued said `not
+  cashed` for ever — `in transit`, `missing, ask Blue Shield to reissue` and
+  `sent to patient, not cashed` never moved. A full walk (`blue_shield:true`
+  with no `limit_checks` / `check_eft`) now re-opens the checks whose status
+  is not final (cashed, voided, stopped) and updates the status, the cashed
+  date and the payee alone; a check asked within 20 hours is left.
+  `refresh:false` turns it off, `refresh:true` forces it on a capped run.
+- **`possible misread`.** A scan whose number no other source knows, beside
+  a check Blue Shield / eCW / the tracker knows and nobody scanned, for the
+  same amount and one digit apart (one digit different, dropped, added, or
+  two swapped), is flagged on both rows and counted under *needs attention*.
+  Nothing is merged on a guess; with two candidates nothing is flagged.
+- **A second look.** A page the reader calls a check but gives no number or
+  amount for, or reads with low confidence, is looked at once more by
+  `VISION_RETRY_MODEL_ID` (default `claude-fable-5-2`; empty turns it off).
+  The second reading replaces the first only when it settles it; a failure
+  of the second call keeps the first.
+- **The check's own amount.** On a page with a text layer, "Check Amount",
+  "Amount Paid", "Net Payment" and "Check Date" are taken before the first
+  "amount" or date on the page (an EOB prints Amount Billed first).
+- **Deposits.** The same check on two pages is one check with the fuller
+  reading. A hand-written slip line one digit off a check printed on its own
+  page, for the same amount, is that check (`copy_slip_wrote` keeps what the
+  slip said). When the checks do not add up to the slip's total the deposit
+  says so (tile *deposits that do not add up*).
+- **A moved scan is not read again.** A file with the same SharePoint id and
+  size under a new path — Unposted Checks → Posted Checks — keeps its rows,
+  which follow it; no download, no model call, and no second `deposit:` row
+  left behind. Rows read before the id was kept learn it on the next run.
+- **A changed file is read once.** When a file reads as another number than
+  before, the earlier row is removed; the latest reading decides which
+  version is on file.
+
 ## SharePoint access
 
 Two ways in. The folder is shared inside Helixona only.
