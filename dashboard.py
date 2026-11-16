@@ -706,7 +706,7 @@ tbody tr:last-child td{border-bottom:none}
           <table>
             <thead>
               <tr>
-                <th>Stage</th><th>Check</th><th>Patient · DOS</th><th class="num">Amount</th><th>Blue Shield</th><th>Patient e-mail</th><th>Reminders · deadline</th><th>Message</th>
+                <th>Stage</th><th>Check</th><th>Patient · DOS</th><th class="num">Amount</th><th>Blue Shield</th><th>E-mail</th><th>Reminders</th><th>Draft</th>
               </tr>
             </thead>
             <tbody id="reminders-body"><tr><td colspan="8" class="empty-state">Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> first. The bot finds the Blue Shield checks made out to the patient, looks up the patient's e-mail and writes the reminder as a draft. Nothing is e-mailed until you run <strong>Send the reminders</strong>.</td></tr></tbody>
@@ -1374,7 +1374,7 @@ window.scrollToEl = function(sel){
             if (bot === 'reminders') {
                 if (numLabel) numLabel.textContent = ' checks with patients,';
                 if (heroOf) heroOf.hidden = false;
-                if (denom) denom.textContent = 'reminders due now';
+                if (denom) denom.textContent = 'with a reminder due now';
                 if (pctLabel) pctLabel.textContent = 'due now';
                 if (remLabel) remLabel.textContent = 'past the deadline';
                 if (typeof loadReminders === 'function') loadReminders();
@@ -1909,7 +1909,7 @@ window.scrollToEl = function(sel){
 
         // ---- Reminders (Blue Shield checks mailed to patients) ----
         window._remindersFilter = window._remindersFilter || 'open';
-        const REMINDER_STAGES = {'to remind': 'var(--warning)', 'reminded': 'var(--info)', 'deadline passed': 'var(--bad)', 'received': 'var(--success)', 'voided': 'var(--text-muted)'};
+        const REMINDER_STAGES = {'in the mail': 'var(--text-muted)', 'to remind': 'var(--warning)', 'reminded': 'var(--info)', 'deadline passed': 'var(--bad)', 'received': 'var(--success)', 'voided': 'var(--text-muted)'};
         function setRemindersFilter(f) { window._remindersFilter = f; renderReminders(); }
         function showReminderDraft(i) {
             const r = (window._remindersShown || [])[i];
@@ -1922,7 +1922,7 @@ window.scrollToEl = function(sel){
             const nf = n => Number(n || 0).toLocaleString('en-US');
             const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
             const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '') || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            const open = r => r.stage === 'to remind' || r.stage === 'reminded' || r.stage === 'deadline passed';
+            const open = r => r.stage === 'in the mail' || r.stage === 'to remind' || r.stage === 'reminded' || r.stage === 'deadline passed';
             const meta = document.getElementById('reminders-meta');
             if (meta) meta.textContent = data.rows.length ? `${nf(sm.outstanding)} checks with patients · ${money(sm.outstanding_amount)} · ${sm.run_at ? 'last run ' + sm.run_at + ' (' + (sm.mode || '') + ')' : ''}` : '';
             if (window.activeBot === 'reminders') {
@@ -1944,6 +1944,7 @@ window.scrollToEl = function(sel){
                 tiles.innerHTML = data.rows.length ? [
                     tile('with patients', sm.outstanding, 'open', 'var(--text-secondary)', money(sm.outstanding_amount) + ' not received'),
                     tile('reminder due', sm['to remind'], 'to remind', 'var(--warning)', 'a message is drafted'),
+                    tile('in the mail', sm['in the mail'], 'in the mail', 'var(--text-muted)', 'just issued, not chased yet'),
                     tile('reminded', sm['reminded'], 'reminded', 'var(--info)', 'waiting for the patient'),
                     tile('deadline passed', sm['deadline passed'], 'deadline passed', 'var(--bad)', money(sm['deadline passed_amount']) + ' · a person decides'),
                     tile('no e-mail', sm.no_email, 'no_email', 'var(--bad)', 'call the patient'),
@@ -1964,7 +1965,7 @@ window.scrollToEl = function(sel){
                 <tr>
                   <td><span class="verdict-pill" style="color:${REMINDER_STAGES[r.stage] || 'var(--text-muted)'};font-weight:700">${esc(r.stage)}</span>${r.next_action === 'final' ? ' <span class="verdict-pill" style="color:var(--bad)">final notice</span>' : ''}</td>
                   <td><strong>${esc(r.check_number)}</strong><div style="font-size:11px;color:var(--text-muted)">${esc(r.check_date || '')}</div></td>
-                  <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}${(r.claim_ids || []).length ? ' · claim ' + esc(r.claim_ids.join(', ')) : ' · no eCW claim matched'}</div></td>
+                  <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}${(r.claim_ids || []).length ? ' · claim ' + esc(r.claim_ids.join(', ')) + (r.claim_match ? ' (by ' + esc(r.claim_match) + ')' : '') : ' · no eCW claim matched'}</div></td>
                   <td class="num">${money(r.amount)}</td>
                   <td>${esc(r.bs_status || '—')}<div style="font-size:11px;color:var(--text-muted)">${r.in_hand ? 'at Helixona: ' + esc(r.in_hand_how) : r.cashed ? 'cashed ' + esc(r.cashed_date || '') : r.reconciled ? 'not received' : 'not reconciled yet'}</div></td>
                   <td>${r.email ? esc(r.email) : (open(r) ? '<span style="color:var(--bad)">none on file</span>' : '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.phone || '')}${r.email_source ? ' · ' + esc(r.email_source) : ''}</div></td>
@@ -3238,7 +3239,7 @@ def api_usage_credits():
 
 def _reminder_rows():
     from src.reminders.run import summarize as _sum, REMINDERS_TABLE
-    order = {'deadline passed': 0, 'to remind': 1, 'reminded': 2, 'received': 3, 'voided': 4}
+    order = {'deadline passed': 0, 'to remind': 1, 'reminded': 2, 'in the mail': 3, 'received': 4, 'voided': 5}
     items = scan_all(dynamodb.Table(REMINDERS_TABLE))
     meta = next((it for it in items if it.get('check_number') == '_summary'), {})
     run = next((it for it in items if it.get('check_number') == '_run'), {})

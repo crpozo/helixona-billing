@@ -133,5 +133,5 @@ Done. Two things only the AWS console can do:
   • Security group of 54.189.175.233: allow inbound TCP $NOVNC_PORT (the browser
     opens http://54.189.175.233:$NOVNC_PORT/vnc.html directly, like 6083).
   • If the queue could not be created above, create it there and add the URL to .env.
-Then in the dashboard: 🚫 Denials → Live screen, and ▶ Run → Test on 5 claims.
+Then in the dashboard: the bot's tab → Live screen, and ▶ Run → its test card.
 MSG

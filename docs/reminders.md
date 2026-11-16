@@ -36,10 +36,26 @@ Read-only in the Blue Shield portal and in eCW.
 6. **Past the deadline** → `deadline passed`, no more e-mails. A person
    decides whether the card on file is charged.
 
+## First run on the host (2026-11-16)
+
+What the first test taught:
+
+- The summary held floats and DynamoDB refused it ("Float types are not
+  supported") — amounts are strings to the cent now.
+- The newest checks carry no eCW claim (the portal walk pins a check to a
+  claim by subscriber + DOS, and many do not pin). They are now matched by
+  the patient's name: the claim on the check's DOS, else the patient's most
+  recent claim — any claim of the patient opens the same patient record.
+- A check issued days ago is still in the envelope: `in the mail` until
+  `mail_days` (7) after the check date, unless Blue Shield shows it cashed.
+- Without a sender the run says so once: set `from` in
+  `data/patient_check_reminder.json`.
+
 ## Stages
 
 | stage | meaning |
 |---|---|
+| `in the mail` | issued less than `mail_days` ago — not chased yet |
 | `to remind` | a reminder is due now; its draft is on the row |
 | `reminded` | told, waiting for the patient |
 | `deadline passed` | the deadline went by — a person decides on the card |
@@ -59,7 +75,7 @@ Task body: `since` · `blue_shield` · `limit_checks` · `check_eft` · `ecw`
 
 ## Wording and numbers
 
-`data/patient_check_reminder.json`: `deadline_days` (14),
+`data/patient_check_reminder.json`: `mail_days` (7), `deadline_days` (14),
 `reminder_every_days` (5), `max_reminders` (3), `clinic`, `phone`, `from`,
 and the text (`subject`, `body`, `final_subject`, `cashed_subject`,
 `cashed_body`). Placeholders: `{first_name}` `{clinic}` `{check_number}`

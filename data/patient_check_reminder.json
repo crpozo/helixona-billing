@@ -3,6 +3,7 @@
   "from": "",
   "clinic": "Helixona",
   "phone": "",
+  "mail_days": 7,
   "deadline_days": 14,
   "reminder_every_days": 5,
   "max_reminders": 3,

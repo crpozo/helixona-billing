@@ -47,8 +47,11 @@ POLICY_FILE = os.path.join(_ROOT, 'data', 'patient_check_reminder.json')
 # Host-side, git-ignored (it is PHI): {"claims": {"1234": {"email": "..."}},
 # "patients": {"DOE, JANE": {"email": "...", "phone": "..."}}}
 CONTACTS_FILE = os.environ.get('PATIENT_CONTACTS', '/opt/helixona-agent/data/patient_contacts.json')
-DEFAULTS = {'clinic': 'Helixona', 'phone': '', 'from': '', 'deadline_days': 14, 'reminder_every_days': 5, 'max_reminders': 3}
-OPEN_STAGES = ('to remind', 'reminded', 'deadline passed')
+DEFAULTS = {'clinic': 'Helixona', 'phone': '', 'from': '', 'deadline_days': 14, 'reminder_every_days': 5, 'max_reminders': 3,
+            'mail_days': 7}
+OPEN_STAGES = ('in the mail', 'to remind', 'reminded', 'deadline passed')
+CLAIMS_TABLE = 'helixona-claims'
+PRIORITY_TABLE = 'helixona-priority'
 
 
 def _now():
@@ -83,7 +86,7 @@ def load_policy(path=None):
         logger.error(f"  ❌ reminder policy not read ({e}) — nothing can be composed")
         raw = {}
     p = {**DEFAULTS, **{k: v for k, v in raw.items() if not str(k).startswith('_')}}
-    for k in ('deadline_days', 'reminder_every_days', 'max_reminders'):
+    for k in ('deadline_days', 'reminder_every_days', 'max_reminders', 'mail_days'):
         p[k] = int(p[k])
     return p
 
@@ -185,6 +188,41 @@ def patient_checks(eobs, held=(), since=None):
     return out
 
 
+def index_patients(*claim_lists):
+    """Our eCW claims by patient, for the checks the portal walk could not
+    pin to a claim: [(name tokens, DOS date or None, claim_id)]. Each list
+    is rows carrying claim_id and a name (patient_name / patient) and a
+    date (service_date / dos)."""
+    out = []
+    for claims in claim_lists:
+        for c in claims or ():
+            cid = str(c.get('claim_id') or '')
+            tokens = _name_tokens(c.get('patient_name') or c.get('patient'))
+            if not cid or cid.startswith('_') or len(tokens) < 2:
+                continue
+            out.append((tokens, _date(c.get('service_date') or c.get('dos')), cid))
+    return out
+
+
+def match_by_patient(row, index):
+    """(claim_ids, how) for a check with no claim: the patient's claim on
+    the check's date of service, else the patient's most recent claim — any
+    claim of the patient leads to the same patient record in eCW, which is
+    all the e-mail lookup needs. First and last name must both match."""
+    want = _name_tokens(row.get('patient'))
+    if len(want) < 2:
+        return [], ''
+    mine = [(d, cid) for tokens, d, cid in index if len(tokens & want) >= 2 and (want <= tokens or tokens <= want)]
+    if not mine:
+        return [], ''
+    dates = {_date(d) for d in str(row.get('dos') or '').split(',')} - {None}
+    same = sorted({cid for d, cid in mine if d in dates})
+    if same:
+        return same, 'patient + DOS'
+    latest = max(mine, key=lambda x: (x[0] or date.min, x[1]))
+    return [latest[1]], 'patient (another visit)'
+
+
 def plan(row, prev, policy, today):
     """(stage, action) for one check. action: '' (nothing to send now),
     'first', 'reminder' or 'final'."""
@@ -194,6 +232,10 @@ def plan(row, prev, policy, today):
         return 'voided', ''
     n = int(prev.get('reminders_sent') or 0)
     if n == 0:
+        # Just issued: the envelope is still on its way to the patient.
+        issued = _date(row.get('check_date'))
+        if issued and not row.get('cashed') and (today - issued).days < policy.get('mail_days', 0):
+            return 'in the mail', ''
         return 'to remind', 'first'
     deadline = _date(prev.get('deadline'))
     if deadline and today > deadline:
@@ -235,9 +277,10 @@ def compose(policy, row, deadline, action='first'):
 
 def summarize(rows):
     def total(sel):
-        return round(sum(float(r.get('amount') or 0) for r in rows if sel(r)), 2)
+        # A string, to the cent: DynamoDB takes no float, and money is not one.
+        return f"{sum(float(r.get('amount') or 0) for r in rows if sel(r)):.2f}"
     out = {'checks': len(rows), 'amount': total(lambda r: True)}
-    for st in ('to remind', 'reminded', 'deadline passed', 'received', 'voided'):
+    for st in ('in the mail', 'to remind', 'reminded', 'deadline passed', 'received', 'voided'):
         out[st] = sum(1 for r in rows if r.get('stage') == st)
         out[st + '_amount'] = total(lambda r, st=st: r.get('stage') == st)
     out['outstanding'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES)
@@ -305,6 +348,20 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
 
     known = {str(it.get('check_number')): it for it in scan_all(table) if not str(it.get('check_number', '')).startswith('_')}
 
+    # The checks the portal walk did not pin to a claim: by the patient's name.
+    unmatched = [r for r in rows if not r['claim_ids'] and not r['in_hand']]
+    if unmatched:
+        lists = []
+        for name, proj in ((CLAIMS_TABLE, 'claim_id, patient_name, service_date, dos'), (PRIORITY_TABLE, 'claim_id, patient, dos')):
+            try:
+                lists.append(scan_all(aws_client.dynamodb.Table(name), ProjectionExpression=proj))
+            except Exception as e:
+                logger.warning(f"  ⚠️ {name} not read ({str(e)[:80]})")
+        index = index_patients(*lists)
+        for r in unmatched:
+            r['claim_ids'], r['claim_match'] = match_by_patient(r, index)
+        progress('claims', f"{sum(1 for r in unmatched if r['claim_ids'])} of {len(unmatched)} check(s) without a claim matched by patient name")
+
     # 2. Who is due, and their address.
     due = []
     for r in rows:
@@ -336,7 +393,11 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
              + (f" · {sum(1 for r in due if not r['claim_ids'])} not matched to an eCW claim" if any(not r['claim_ids'] for r in due) else ''))
 
     # 3. Compose; send only when told to.
-    sender = {'from': policy.get('from') or mail.load_roster().get('from', '')}
+    sender = {'from': policy.get('from') or mail.NOTIFY_FROM}
+    if not sender['from'] and (do_send or test_to):
+        sender['from'] = mail.load_roster().get('from', '')
+        if not sender['from']:
+            logger.error("❌ no sender address — set \"from\" in data/patient_check_reminder.json (an address verified in Amazon SES)")
     sent, drafted, owed = 0, 0, 0
     due_keys = {r['check_number'] for r in due}
     for r in rows:
@@ -344,6 +405,7 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
         n = int(prev.get('reminders_sent') or 0)
         item = {k: r[k] for k in ('amount', 'check_date', 'bs_status', 'cashed', 'cashed_date', 'voided', 'payee', 'patient',
                                   'claim_ids', 'dos', 'in_hand', 'in_hand_how', 'reconciled', 'stage', 'email', 'phone', 'email_source')}
+        item['claim_match'] = r.get('claim_match', '')
         item.update(reminders_sent=n, updated_at=_now(), first_seen=prev.get('first_seen') or _now(), next_action=r['action'])
         if r['check_number'] in due_keys:
             deadline = _date(prev.get('deadline')) or today + timedelta(days=policy['deadline_days'])

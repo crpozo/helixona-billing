@@ -77,6 +77,34 @@ class WhenAReminderIsDue(unittest.TestCase):
         self.assertEqual(run.plan(self.ROW, prev, POLICY, TODAY), ('deadline passed', ''))
 
 
+class FoundOnTheFirstRealRun(unittest.TestCase):
+    """2026-11-16, the first test on the host."""
+
+    def test_the_summary_holds_no_float(self):
+        # "Float types are not supported. Use Decimal types instead."
+        sm = run.summarize([{'stage': 'to remind', 'amount': '323.58'}, {'stage': 'received', 'amount': '10.10'}])
+        self.assertFalse([k for k, v in sm.items() if isinstance(v, float)])
+        self.assertEqual((sm['outstanding_amount'], sm['amount'], sm['to remind']), ('323.58', '333.68', 1))
+
+    def test_a_check_with_no_claim_finds_the_patients_claim_by_name(self):
+        index = run.index_patients([{'claim_id': '2190', 'patient_name': 'Almanza, Yazmin M', 'service_date': '10/23/2026'},
+                                    {'claim_id': '2150', 'patient_name': 'Almanza, Yazmin M', 'service_date': '09/04/2026'},
+                                    {'claim_id': '2200', 'patient_name': 'Almanza, Rosa', 'service_date': '10/23/2026'}],
+                                   [{'claim_id': '_run'}, {'claim_id': '2301', 'patient': 'THORNE, KARI', 'dos': '10/23/2026'}])
+        row = {'patient': 'YAZMIN ALMANZA', 'dos': '10/23/2026'}
+        self.assertEqual(run.match_by_patient(row, index), (['2190'], 'patient + DOS'))
+        # Another date of service: any claim of hers leads to her record.
+        self.assertEqual(run.match_by_patient({'patient': 'YAZMIN ALMANZA', 'dos': '10/16/2026'}, index), (['2190'], 'patient (another visit)'))
+        self.assertEqual(run.match_by_patient({'patient': 'SOMEONE ELSE', 'dos': '10/23/2026'}, index), ([], ''))
+        self.assertEqual(run.match_by_patient({'patient': 'ALMANZA', 'dos': '10/23/2026'}, index), ([], ''), 'a surname alone is not a patient')
+
+    def test_a_check_just_issued_is_still_in_the_mail(self):
+        row = {'in_hand': False, 'voided': False, 'cashed': False, 'check_date': '11/12/2026'}
+        self.assertEqual(run.plan(row, {}, POLICY, TODAY), ('in the mail', ''))
+        self.assertEqual(run.plan({**row, 'check_date': '10/30/2026'}, {}, POLICY, TODAY), ('to remind', 'first'))
+        self.assertEqual(run.plan({**row, 'cashed': True}, {}, POLICY, TODAY), ('to remind', 'first'), 'cashed: it arrived')
+
+
 class TheMessage(unittest.TestCase):
     def test_it_names_the_check_the_amount_and_the_deadline(self):
         row = run.patient_checks([eob()])[0]
@@ -124,7 +152,10 @@ class FakeTable:
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
         it = self.items.setdefault(Key[self.key], {self.key: Key[self.key]})
         for ph, name in ExpressionAttributeNames.items():
-            it[name] = ExpressionAttributeValues[':' + ph[1:]]
+            v = ExpressionAttributeValues[':' + ph[1:]]
+            if isinstance(v, float):
+                raise TypeError('Float types are not supported. Use Decimal types instead.')
+            it[name] = v
 
 
 class TheRun(unittest.TestCase):
