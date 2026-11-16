@@ -151,8 +151,13 @@ class FakeTable:
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
         it = self.items.setdefault(Key[self.key], {self.key: Key[self.key]})
+        import re
+        pairs = dict(part.strip().split(' = ') for part in UpdateExpression[4:].split(', '))
         for ph, name in ExpressionAttributeNames.items():
-            v = ExpressionAttributeValues[':' + ph[1:]]
+            # DynamoDB's own rule for a placeholder.
+            if not re.fullmatch(r'#[A-Za-z0-9_]+', ph) or not re.fullmatch(r':[A-Za-z0-9_]+', pairs[ph]):
+                raise ValueError(f'ExpressionAttributeNames contains invalid key: "{ph}"')
+            v = ExpressionAttributeValues[pairs[ph]]
             if isinstance(v, float):
                 raise TypeError('Float types are not supported. Use Decimal types instead.')
             it[name] = v

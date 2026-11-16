@@ -72,10 +72,14 @@ def ensure_table(aws_client):
 
 
 def _put(table, key, item):
+    # Numbered placeholders: an attribute may be named anything ("in the
+    # mail_amount"), a placeholder may not (2026-11-16: "ExpressionAttributeNames
+    # contains invalid key: #in the mail_amount").
+    keys = list(item)
     table.update_item(Key={'check_number': key},
-                      UpdateExpression='SET ' + ', '.join(f'#{k} = :{k}' for k in item),
-                      ExpressionAttributeNames={f'#{k}': k for k in item},
-                      ExpressionAttributeValues={f':{k}': v for k, v in item.items()})
+                      UpdateExpression='SET ' + ', '.join(f'#n{i} = :v{i}' for i in range(len(keys))),
+                      ExpressionAttributeNames={f'#n{i}': k for i, k in enumerate(keys)},
+                      ExpressionAttributeValues={f':v{i}': item[k] for i, k in enumerate(keys)})
 
 
 def load_policy(path=None):
