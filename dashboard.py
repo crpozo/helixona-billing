@@ -1949,13 +1949,14 @@ window.scrollToEl = function(sel){
                     tile('deadline passed', sm['deadline passed'], 'deadline passed', 'var(--bad)', money(sm['deadline passed_amount']) + ' · a person decides'),
                     tile('no e-mail', sm.no_email, 'no_email', 'var(--bad)', 'call the patient'),
                     tile('cashed by patient', sm.cashed_by_patient, 'cashed', 'var(--warning)', 'Blue Shield shows it cashed'),
+                    ...(sm.no_card ? [tile('no card on file', sm.no_card, 'no_card', 'var(--bad)', 'eCW has no card to charge')] : []),
                     tile('received', sm['received'], 'received', 'var(--success)', 'the check is at Helixona'),
                 ].join('') : '';
             }
             const body = document.getElementById('reminders-body');
             if (!body) return;
             const f = window._remindersFilter;
-            const rows = data.rows.filter(r => f === 'open' ? open(r) : f === 'no_email' ? (open(r) && !r.email) : f === 'cashed' ? (open(r) && r.cashed) : r.stage === f);
+            const rows = data.rows.filter(r => f === 'open' ? open(r) : f === 'no_email' ? (open(r) && !r.email) : f === 'cashed' ? (open(r) && r.cashed) : f === 'no_card' ? (open(r) && r.card_on_file === false) : r.stage === f);
             window._remindersShown = rows;
             if (!rows.length) {
                 body.innerHTML = `<tr><td colspan="8" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> on the right.'}</td></tr>`;
@@ -1968,7 +1969,7 @@ window.scrollToEl = function(sel){
                   <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}${(r.claim_ids || []).length ? ' · claim ' + esc(r.claim_ids.join(', ')) + (r.claim_match ? ' (by ' + esc(r.claim_match) + ')' : '') : ' · no eCW claim matched'}</div></td>
                   <td class="num">${money(r.amount)}</td>
                   <td>${esc(r.bs_status || '—')}<div style="font-size:11px;color:var(--text-muted)">${r.in_hand ? 'at Helixona: ' + esc(r.in_hand_how) : r.cashed ? 'cashed ' + esc(r.cashed_date || '') : r.reconciled ? 'not received' : 'not reconciled yet'}</div></td>
-                  <td>${r.email ? esc(r.email) : (open(r) ? '<span style="color:var(--bad)">none on file</span>' : '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.phone || '')}${r.email_source ? ' · ' + esc(r.email_source) : ''}</div></td>
+                  <td>${r.email ? esc(r.email) : (open(r) ? '<span style="color:var(--bad)">none on file</span>' : '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.phone || '')}${r.email_source ? ' · ' + esc(r.email_source) : ''}</div>${r.card_on_file === false ? '<div style="font-size:11px;color:var(--bad)">no card on file</div>' : r.card_on_file === true ? '<div style="font-size:11px;color:var(--text-muted)">card on file</div>' : ''}</td>
                   <td><strong>${nf(r.reminders_sent)}</strong> sent<div style="font-size:11px;color:var(--text-muted)">${r.last_reminder_at ? 'last ' + esc(r.last_reminder_at) : ''}${r.deadline ? ' · deadline ' + esc(r.deadline) : ''}</div></td>
                   <td>${r.draft_text && r.next_action ? `<button class="btn" onclick="showReminderDraft(${i})">View draft</button>` : ''}</td>
                 </tr>`).join('');
@@ -3267,7 +3268,7 @@ def api_reminders_csv():
     import io
     from flask import Response
     cols = ['stage', 'check_number', 'check_date', 'amount', 'patient', 'dos', 'claim_ids', 'bs_status', 'cashed', 'cashed_date',
-            'in_hand', 'in_hand_how', 'email', 'phone', 'reminders_sent', 'first_reminder_at', 'last_reminder_at', 'deadline', 'updated_at']
+            'in_hand', 'in_hand_how', 'email', 'phone', 'card_on_file', 'reminders_sent', 'first_reminder_at', 'last_reminder_at', 'deadline', 'updated_at']
     try:
         rows, _ = _reminder_rows()
         buf = io.StringIO()

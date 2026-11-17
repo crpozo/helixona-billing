@@ -133,9 +133,79 @@ def go_to_claims(page):
     return open_claims(page)
 
 
+HUB = ['Hub']
+HUB_TITLE_RX = re.compile(r'patient\s*hub', re.I)
+CLOSE_HUB_JS = r"""() => {
+    // The Patient Hub's own close control: an x / Close button inside the
+    // window whose title bar says "Patient Hub" — never the claim's.
+    const vis = el => el.offsetWidth > 0 && el.offsetHeight > 0;
+    const looks = el => {
+        const t = (el.textContent || '').trim();
+        const hint = [el.getAttribute('aria-label'), el.title, el.className && String(el.className), el.id].filter(Boolean).join(' ');
+        return t === '×' || t === 'x' || t === 'X' || /close/i.test(t) && t.length < 8 || /close|dismiss/i.test(hint);
+    };
+    for (const el of document.querySelectorAll('button, a, span, i, div[role="button"]')) {
+        if (!vis(el) || !looks(el)) continue;
+        let up = el.parentElement;
+        for (let n = 0; up && n < 7; n++, up = up.parentElement) {
+            if (/^\s*patient\s*hub/i.test((up.textContent || '').slice(0, 40))) { el.click(); return true; }
+        }
+    }
+    return false;
+}"""
+
+
+def card_on_file(text):
+    """What the Patient Hub's Billing box says after "Card on File": False
+    when it offers "Add Card" (none on file), True when it names a card,
+    None when the line is not there to read."""
+    m = re.search(r'card\s*on\s*file', str(text or ''), re.I)
+    if not m:
+        return None
+    after = re.sub(r'^[\s:]+', '', str(text)[m.end():m.end() + 120])
+    first = (after.splitlines() or [''])[0].strip(' :')
+    if not first or re.match(r'billing alert|guarantor|account inquiry|billing logs', first, re.I):
+        return None
+    return not re.search(r'add\s*card|no\s*card|none', first, re.I)
+
+
+def _wait_hub(page, timeout=10.0):
+    """The Patient Hub is up when its title is on the page."""
+    deadline = time.time() + timeout
+    text = ''
+    while time.time() < deadline:
+        text = _popup_text(page)
+        if HUB_TITLE_RX.search(text):
+            time.sleep(1.0)   # the header fills a moment after the frame
+            return _popup_text(page)
+        time.sleep(0.5)
+    return ''
+
+
+def _close_hub(page):
+    for frm in page.frames:
+        try:
+            if frm.evaluate(CLOSE_HUB_JS):
+                time.sleep(0.8)
+                return True
+        except Exception:
+            continue
+    try:
+        page.keyboard.press('Escape')
+        time.sleep(0.8)
+    except Exception:
+        pass
+    return not HUB_TITLE_RX.search(_popup_text(page))
+
+
 def read_contact(page, claim_id, open_claim, close_claim, shot=False):
     """The patient's contact off claim `claim_id`: {'email', 'phone',
-    'source'}, or None when the claim could not be opened."""
+    'source', 'card_on_file'}, or None when the claim could not be opened.
+
+    The operator (2026-11-17): "you go inside Hub and check the email" — the
+    claim's Hub button opens the Patient Hub, whose header carries the
+    patient's mobile number and e-mail, and whose Billing box says whether a
+    card is on file. The Info form is the fallback when the Hub gives none."""
     cid = str(claim_id)
     ok = False
     try:
@@ -148,41 +218,37 @@ def read_contact(page, claim_id, open_claim, close_claim, shot=False):
         if shot:
             _shot(page, f'reminders_not_opened_{cid}')
         return None
-    out = {'email': '', 'phone': '', 'source': ''}
+    out = {'email': '', 'phone': '', 'source': '', 'card_on_file': None}
     try:
-        found = contact_in(_popup_text(page))
-        if found['email']:
-            out.update(found, source='eCW claim')
-        else:
+        # 1. The Patient Hub.
+        if _click_text(page, HUB, timeout=3.0, what='Patient Hub'):
+            text = _wait_hub(page)
+            if text:
+                hub = contact_in(text)
+                out['card_on_file'] = card_on_file(text)
+                if hub['email'] or hub['phone']:
+                    out.update(email=hub['email'], phone=hub['phone'], source='eCW Patient Hub')
+            else:
+                logger.warning(f"  ⚠️ claim {cid}: the Patient Hub did not come up")
             if shot:
-                logger.info(f"  🔘 claim {cid}: buttons that may lead to the patient: {_candidate_buttons(page) or 'none seen'}")
-            opened = _click_text(page, PATIENT_INFO, timeout=2.5, what='patient info')
-            if not opened:
-                logger.info(f"  (claim {cid}: no patient-info button among {PATIENT_INFO} — the claim popup alone was read)")
-            if opened:
-                time.sleep(2.0)
-                info = contact_in(_popup_text(page))
-                fields = _fields(page)
-                boxed = contact_in_fields(fields)
-                # The form's boxes say more than the page's text, and say it by name.
-                info = {'email': boxed['email'] or info['email'], 'phone': boxed['phone'] or info['phone']}
-                if shot:
-                    # The boxes' names only — never what a patient typed in them.
-                    named = sorted({f['name'][:40] for f in fields if re.search(r'mail|phone|cell|mobile|contact', f['name'], re.I)})
-                    logger.info(f"  🧾 claim {cid}: {len(fields)} filled box(es) on the patient's information; "
-                                f"contact-looking: {named or 'none'}")
-                if info['email'] or info['phone']:
-                    out.update(email=info['email'], phone=info['phone'] or found['phone'], source='eCW patient info')
-                if shot:
-                    _shot(page, f'reminders_info_{cid}')
-                _click_text(page, CLOSE_INFO, timeout=1.5, what='close patient info')
-                time.sleep(0.5)
-            if not out['source'] and found['phone']:
-                out.update(phone=found['phone'], source='eCW claim')
-        if shot:
-            _shot(page, f'reminders_claim_{cid}')
+                _shot(page, f'reminders_hub_{cid}')
+            if not _close_hub(page):
+                logger.warning(f"  ⚠️ claim {cid}: the Patient Hub may still be open")
+        else:
+            logger.info(f"  (claim {cid}: no Hub button — buttons seen: {_candidate_buttons(page) or 'none'})")
+        # 2. The Info form, only when the Hub gave no address.
+        if not out['email'] and _click_text(page, ['Info'], timeout=2.0, what='patient info'):
+            time.sleep(2.0)
+            boxed = contact_in_fields(_fields(page))
+            if boxed['email'] or (boxed['phone'] and not out['phone']):
+                out.update(email=boxed['email'], phone=out['phone'] or boxed['phone'],
+                           source='eCW patient info' if boxed['email'] else out['source'] or 'eCW patient info')
+            _click_text(page, CLOSE_INFO, timeout=1.5, what='close patient info')
+            time.sleep(0.5)
+        card = {True: 'yes', False: 'NO', None: 'not read'}[out['card_on_file']]
         logger.info(f"  📇 claim {cid}: e-mail {'found' if out['email'] else 'not found'} · "
-                    f"phone {'found' if out['phone'] else 'not found'}{' · ' + out['source'] if out['source'] else ''}")
+                    f"phone {'found' if out['phone'] else 'not found'} · card on file {card}"
+                    f"{' · ' + out['source'] if out['source'] else ''}")
     finally:
         try:
             close_claim(page)

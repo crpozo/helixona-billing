@@ -129,6 +129,16 @@ class TheMessage(unittest.TestCase):
         self.assertIn('has been cashed', text)
         self.assertNotIn('Bring or mail the check', text)
 
+    def test_no_card_on_file_means_no_promise_to_charge_one(self):
+        row = run.patient_checks([eob()])[0]
+        _, text = run.compose(POLICY, {**row, 'card_on_file': False}, date(2026, 11, 26))
+        self.assertNotIn('card we have on file', text)
+        self.assertIn('billed to you as a patient balance', text)
+        self.assertNotIn('{', text)
+        # Not read is not "no card": the card sentence stays.
+        self.assertIn('card we have on file', run.compose(POLICY, row, date(2026, 11, 26))[1])
+        self.assertIn('card we have on file', run.compose(POLICY, {**row, 'card_on_file': True}, date(2026, 11, 26))[1])
+
     def test_the_final_notice_says_so(self):
         row = run.patient_checks([eob()])[0]
         self.assertTrue(run.compose(POLICY, row, date(2026, 11, 26), 'final')[0].startswith('Final notice'))
@@ -154,6 +164,24 @@ class TheContact(unittest.TestCase):
                   {'name': 'patientEmail E-mail', 'value': 'Kari.T@Example.com'}]
         self.assertEqual(ecw.contact_in_fields(fields), {'email': 'kari.t@example.com', 'phone': '(415) 555-0100'})
         self.assertEqual(ecw.contact_in_fields([{'name': 'zip', 'value': '94110'}]), {'email': '', 'phone': ''})
+
+    HUB = ("Patient Hub\nDOE, Jane\nJan 1, 1990 (36 yo F)\nAcc No. 99999\nDoe, Jane 36Y, F\nINFO\n1 Main St, TOWN,CA-90000\n|\n555-010-0199\n|\n"
+           "jane.doe@example.com\n|\n01/01/1990\nAccount No: 99999 | Messenger Enabled: Yes\nBilling\nPatient Balance\n:\n$10.00\n"
+           "Card on File\n:\n{card}\nBilling Alert\nGuarantor Balance")
+
+    def test_the_patient_hub_gives_the_address_the_mobile_and_the_card(self):
+        # The operator, 2026-11-17: "you go inside Hub and check the email".
+        text = self.HUB.format(card='Add Card')
+        self.assertEqual(ecw.contact_in(text), {'email': 'jane.doe@example.com', 'phone': '(555) 010-0199'})
+        self.assertIs(ecw.card_on_file(text), False)
+        self.assertIs(ecw.card_on_file(self.HUB.format(card='Visa ending 4242')), True)
+        self.assertIsNone(ecw.card_on_file('Billing\nPatient Balance : $10.00'))
+        self.assertIsNone(ecw.card_on_file('Card on File\n:\nBilling Alert'))
+
+    def test_the_hub_is_tried_before_the_info_form(self):
+        src = _read('src/reminders/ecw.py')
+        body = src[src.index('def read_contact('):]
+        self.assertLess(body.index("_click_text(page, HUB,"), body.index("_click_text(page, ['Info'],"))
 
     def test_nothing_found_is_empty(self):
         self.assertEqual(ecw.contact_in('Claim 2187 · THORNE, KARI · 09/01/2026 · 257.09'), {'email': '', 'phone': ''})

@@ -51,6 +51,19 @@ What the first test taught:
 - Without a sender the run says so once: set `from` in
   `data/patient_check_reminder.json`.
 
+## Where the e-mail is (2026-11-17)
+
+The operator: "you go inside Hub and check the email". The claim popup's
+**Hub** button opens the Patient Hub; its header carries the patient's
+mobile number and e-mail, and its Billing box says **Card on File** — a
+card, or an "Add Card" button when there is none. The bot reads all three
+and closes the Hub; the Info form is only the fallback.
+
+A patient with **no card on file** gets `no_card_sentence` ("billed to you
+as a patient balance") in place of `card_sentence`: the message never
+promises a charge nobody can make. Not read keeps the card sentence. The
+tab shows *no card on file* on the row and as a tile.
+
 ## Stages
 
 | stage | meaning |

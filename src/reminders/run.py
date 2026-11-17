@@ -272,10 +272,15 @@ def compose(policy, row, deadline, action='first'):
         'phone_phrase': f" or call {policy['phone']}" if policy.get('phone') else '',
     }
 
+
     class _Keep(dict):
         def __missing__(self, k):
             return '{' + k + '}'
     fill = lambda s: str(s).format_map(_Keep(vals))
+    # eCW says no card is on file: the message must not promise a charge
+    # nobody can make. Unknown (not read) keeps the card sentence.
+    key = 'no_card_sentence' if row.get('card_on_file') is False else 'card_sentence'
+    vals['consequence'] = fill(policy.get(key) or '')
     return fill(subject), '\n'.join(fill(line) for line in body)
 
 
@@ -291,6 +296,7 @@ def summarize(rows):
     out['outstanding_amount'] = total(lambda r: r.get('stage') in OPEN_STAGES)
     out['no_email'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and not r.get('email'))
     out['cashed_by_patient'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and r.get('cashed'))
+    out['no_card'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and r.get('card_on_file') is False)
     return out
 
 
@@ -372,6 +378,8 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
         prev = known.get(r['check_number'], {})
         r['stage'], r['action'] = plan(r, prev, policy, today)
         r['email'], r['phone'], r['email_source'] = prev.get('email', ''), prev.get('phone', ''), prev.get('email_source', '')
+        if prev.get('card_on_file') is not None:
+            r['card_on_file'] = bool(prev['card_on_file'])
         if r['action'] and not r['email']:
             got = contact_from_file(contacts, r)
             if got:
@@ -392,6 +400,8 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
                 got = read_contact(page, r['claim_ids'][0], open_claim, close_claim, shot=(i == 1))
                 if got and (got['email'] or got['phone']):
                     r['email'], r['phone'], r['email_source'] = got['email'], got['phone'], got['source']
+                if got and got.get('card_on_file') is not None:
+                    r['card_on_file'] = got['card_on_file']
                 time.sleep(0.2)
         else:
             logger.error("❌ eCW login did not go through — no e-mail could be looked up")
@@ -412,6 +422,8 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
         item = {k: r[k] for k in ('amount', 'check_date', 'bs_status', 'cashed', 'cashed_date', 'voided', 'payee', 'patient',
                                   'claim_ids', 'dos', 'in_hand', 'in_hand_how', 'reconciled', 'stage', 'email', 'phone', 'email_source')}
         item['claim_match'] = r.get('claim_match', '')
+        if r.get('card_on_file') is not None:
+            item['card_on_file'] = bool(r['card_on_file'])
         item.update(reminders_sent=n, updated_at=_now(), first_seen=prev.get('first_seen') or _now(), next_action=r['action'])
         if r['check_number'] in due_keys:
             deadline = _date(prev.get('deadline')) or today + timedelta(days=policy['deadline_days'])
