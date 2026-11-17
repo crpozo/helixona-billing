@@ -71,6 +71,61 @@ def _candidate_buttons(page):
     return sorted(set(names))
 
 
+FIELDS_JS = r"""() => {
+    // The patient's information is a form: the address and the numbers sit
+    // in <input> boxes, and a box's value is not text on the page. Each
+    // visible, filled box with whatever names it: its id, name, model,
+    // placeholder, title, and the label or cell just before it.
+    const vis = el => el.offsetWidth > 0 && el.offsetHeight > 0;
+    const out = [];
+    for (const el of document.querySelectorAll('input, textarea')) {
+        const type = (el.type || '').toLowerCase();
+        if (['hidden', 'password', 'checkbox', 'radio', 'button', 'submit', 'file'].includes(type)) continue;
+        const value = (el.value || '').trim();
+        if (!value || value.length > 120 || !vis(el)) continue;
+        let near = '';
+        if (el.id) { const lab = document.querySelector('label[for="' + el.id.replace(/"/g, '') + '"]'); if (lab) near = lab.textContent || ''; }
+        if (!near) {
+            let p = el.previousElementSibling;
+            if (!p && el.parentElement) p = el.parentElement.previousElementSibling;
+            if (p) near = (p.textContent || '').slice(0, 60);
+        }
+        const name = [el.id, el.name, el.getAttribute('ng-model'), el.placeholder, el.title, near]
+            .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+        out.push({ name, value });
+    }
+    return out.slice(0, 400);
+}"""
+
+
+def _fields(page):
+    out = []
+    for frm in page.frames:
+        try:
+            out += frm.evaluate(FIELDS_JS) or []
+        except Exception:
+            continue
+    return out
+
+
+def contact_in_fields(fields):
+    """{'email', 'phone'} from a form's filled boxes ({'name', 'value'}):
+    the box named e-mail wins over any other holding an address; the box
+    named cell/mobile wins over home and work. Never the clinic's own."""
+    emails, labelled, phones, cells = [], [], [], []
+    for f in fields or ():
+        name, value = str(f.get('name') or ''), str(f.get('value') or '')
+        m = EMAIL_RX.fullmatch(value.strip()) or EMAIL_RX.search(value)
+        if m and not NOT_PATIENT_RX.search(m.group(0)):
+            (labelled if EMAIL_LABEL_RX.search(name) else emails).append(m.group(0).rstrip('.').lower())
+            continue
+        if re.search(r'phone|cell|mobile|tel\b|home|work', name, re.I) and not re.search(r'fax|emergency|pharm|employer|guarantor|insur', name, re.I):
+            p = PHONE_RX.search(value)
+            if p:
+                (cells if CELL_LABEL_RX.search(name) else phones).append(f"({p.group(1)}) {p.group(2)}-{p.group(3)}")
+    return {'email': (labelled or emails or [''])[0], 'phone': (cells or phones or [''])[0]}
+
+
 def go_to_claims(page):
     """After the login eCW is on the schedule; the claim lookup lives on
     Billing → Claims. (2026-11-16: the lookup box was not on the page, the
@@ -107,6 +162,15 @@ def read_contact(page, claim_id, open_claim, close_claim, shot=False):
             if opened:
                 time.sleep(2.0)
                 info = contact_in(_popup_text(page))
+                fields = _fields(page)
+                boxed = contact_in_fields(fields)
+                # The form's boxes say more than the page's text, and say it by name.
+                info = {'email': boxed['email'] or info['email'], 'phone': boxed['phone'] or info['phone']}
+                if shot:
+                    # The boxes' names only — never what a patient typed in them.
+                    named = sorted({f['name'][:40] for f in fields if re.search(r'mail|phone|cell|mobile|contact', f['name'], re.I)})
+                    logger.info(f"  🧾 claim {cid}: {len(fields)} filled box(es) on the patient's information; "
+                                f"contact-looking: {named or 'none'}")
                 if info['email'] or info['phone']:
                     out.update(email=info['email'], phone=info['phone'] or found['phone'], source='eCW patient info')
                 if shot:

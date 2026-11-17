@@ -142,6 +142,19 @@ class TheContact(unittest.TestCase):
         got = ecw.contact_in("billing@helixona.com\nother@example.org\nE-mail: kari.t@example.com   Cell: 415-555-0100\nHome: (415) 555-0199")
         self.assertEqual(got, {'email': 'kari.t@example.com', 'phone': '(415) 555-0100'})
 
+    def test_the_address_inside_a_form_box_is_read_by_the_boxs_name(self):
+        # 2026-11-17, claim 7874: "e-mail not found · phone found" — the
+        # address was in an <input>, and a box's value is not page text.
+        fields = [{'name': 'ptFname First Name', 'value': 'KARI'},
+                  {'name': 'respEmail Guarantor', 'value': 'someone@helixona.com'},
+                  {'name': 'homePhone Home', 'value': '415-555-0199'},
+                  {'name': 'cellPhone Cell', 'value': '(415) 555-0100'},
+                  {'name': 'faxNo Fax', 'value': '415-555-0000'},
+                  {'name': 'notes', 'value': 'alt contact old@example.org'},
+                  {'name': 'patientEmail E-mail', 'value': 'Kari.T@Example.com'}]
+        self.assertEqual(ecw.contact_in_fields(fields), {'email': 'kari.t@example.com', 'phone': '(415) 555-0100'})
+        self.assertEqual(ecw.contact_in_fields([{'name': 'zip', 'value': '94110'}]), {'email': '', 'phone': ''})
+
     def test_nothing_found_is_empty(self):
         self.assertEqual(ecw.contact_in('Claim 2187 · THORNE, KARI · 09/01/2026 · 257.09'), {'email': '', 'phone': ''})
 
