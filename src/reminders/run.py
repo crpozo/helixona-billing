@@ -366,7 +366,11 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
             try:
                 lists.append(scan_all(aws_client.dynamodb.Table(name), ProjectionExpression=proj))
             except Exception as e:
-                logger.warning(f"  ⚠️ {name} not read ({str(e)[:80]})")
+                # helixona-priority exists only once the Priority bot has run.
+                if 'ResourceNotFound' in str(e):
+                    logger.info(f"  ({name} does not exist yet — skipped)")
+                else:
+                    logger.warning(f"  ⚠️ {name} not read ({str(e)[:80]})")
         index = index_patients(*lists)
         for r in unmatched:
             r['claim_ids'], r['claim_match'] = match_by_patient(r, index)
@@ -452,6 +456,6 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
     _put(table, '_summary', {'run_at': _now(), 'as_of': today.isoformat(), 'since': since_txt, 'mode': mode,
                              'due': len(due), 'sent': sent, 'owed': owed, **summary})
     progress('done', f"{len(due)} reminder(s) due · {drafted} drafted · {sent} sent{' (test)' if test_to else ''}"
-             + (f" · {owed} not sent (no e-mail or SES refused)" if owed else '')
+             + (f" · {owed} not sent ({'no sender address set' if not sender['from'] else 'no e-mail or SES refused'})" if owed else '')
              + f" · {summary['deadline passed']} past the deadline — for a person to decide")
     return {'ok': True, 'due': len(due), 'sent': sent, 'owed': owed, **summary}
