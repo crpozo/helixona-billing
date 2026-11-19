@@ -404,7 +404,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
    the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #checks-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #reminders-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section, .main > #bank-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #reminders-section, .main > #claims-section-submissions{grid-column:1}
 .ftree details{margin:2px 0 2px 14px;border-left:1px solid var(--bdr);padding-left:10px}
 .ftree > details{margin-left:0;border-left:none;padding-left:0}
 .ftree summary{cursor:pointer;padding:6px 4px;list-style:none;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -755,6 +755,31 @@ tbody tr:last-child td{border-bottom:none}
               </tr>
             </thead>
             <tbody id="checks-body"><tr><td colspan="7" class="empty-state">No reconciliation yet. Use <strong>▶ Run → Reconcile all checks</strong> (or <strong>Test one check</strong>) on the right. If the log stops at Blue Shield’s 2-step, type the e-mailed code in the <strong>Blue Shield code</strong> box.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- BANK (Remittance, B10) — the bank statement against the checks, the 835s and eCW -->
+      <div class="claims-section" id="bank-section" hidden>
+        <div class="section-title">
+          🏦 Bank reconciliation
+          <span id="bank-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <input type="file" id="bank-file" accept=".csv,.xlsx,.xlsm,.txt" style="margin-left:auto;font-size:11px;max-width:210px">
+          <button class="btn" onclick="uploadBank()">⬆ Upload statement</button>
+          <a class="btn" href="/api/bank.csv">⬇ CSV</a>
+          <button class="btn btn-refresh" onclick="loadBank()">↻ Refresh</button>
+        </div>
+        <div id="bank-run" style="font-size:12px;color:var(--text-muted);margin:8px 14px 0;line-height:1.7"></div>
+        <div class="chk-tiles" id="bank-tiles"></div>
+        <div id="bank-missing" style="margin:0 14px"></div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th><th>Bank line</th><th class="num">Amount</th><th>Status</th><th>What it is</th><th class="num">Variance</th><th>Review</th>
+              </tr>
+            </thead>
+            <tbody id="bank-body"><tr><td colspan="7" class="empty-state">No bank statement yet. Export the account's transactions from the bank as CSV or Excel and use <strong>⬆ Upload statement</strong>. Each credit is matched to the checks and EFTs the Checks table already knows, and to what eCW has posted. Nothing is written to the bank or to eCW.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1398,6 +1423,9 @@ window.scrollToEl = function(sel){
                 if (remLabel) remLabel.textContent = 'need a person';
                 if (typeof loadDenials === 'function') loadDenials();
             }
+            const bankSec = document.getElementById('bank-section');
+            if (bankSec) bankSec.hidden = (bot !== 'eob');
+            if (bot === 'eob' && typeof loadBank === 'function') loadBank();
             const fldSec = document.getElementById('folders-section');
             if (fldSec) fldSec.hidden = (bot !== 'eob');
             if (bot === 'eob' && typeof loadFolders === 'function') loadFolders();
@@ -1905,6 +1933,107 @@ window.scrollToEl = function(sel){
                 window._denials = data;
                 renderDenials();
             } catch (e) { console.warn('denials', e); }
+        }
+
+        // ---- Bank reconciliation (B10) ----
+        window._bankFilter = window._bankFilter || 'attention';
+        const BANK_STATUS = {'matched · posted': 'var(--success)', 'matched · not posted': 'var(--warning)', 'unmatched': 'var(--bad)',
+                             'ambiguous': 'var(--warning)', 'reversed': 'var(--bad)', 'reversal': 'var(--text-muted)',
+                             'other income': 'var(--text-muted)', 'debit': 'var(--text-muted)'};
+        function setBankFilter(f) { window._bankFilter = f; renderBank(); }
+        function renderBank() {
+            const data = window._bank;
+            if (!data) return;
+            const sm = data.summary || {};
+            const nf = n => Number(n || 0).toLocaleString('en-US');
+            const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+            const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '') || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const needs = r => !r.resolved_at && ['matched · not posted', 'unmatched', 'ambiguous', 'reversed'].includes(r.status);
+            const meta = document.getElementById('bank-meta');
+            if (meta) meta.textContent = data.rows.length ? `${nf(sm.credits)} credits · ${money(sm.credits_amount)} · ${esc(sm.from || '')} → ${esc(sm.to || '')}` : '';
+            const run = document.getElementById('bank-run');
+            if (run) {
+                const up = sm.last_upload || {};
+                run.innerHTML = up.at ? `<strong>Last statement</strong> ${esc(up.file || '')} · ${esc(up.at)} · ${nf(up.transactions)} line(s), ${nf(up.added)} new` + (sm.checks_reconciled_at ? ` · <strong>checks as of</strong> ${esc(sm.checks_reconciled_at)}` : '') + (sm.accounted === false ? ' · <span style="color:var(--bad)">the buckets do not add up to the credits — tell the developer</span>' : '') : '';
+            }
+            const tiles = document.getElementById('bank-tiles');
+            if (tiles) {
+                const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._bankFilter === f ? ' on' : ''}" onclick="setBankFilter('${f}')" style="border-color:${window._bankFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
+                tiles.innerHTML = data.rows.length ? [
+                    tile('need a person', data.rows.filter(needs).length, 'attention', 'var(--bad)', money(sm.variance) + ' not explained or not posted'),
+                    tile('matched & posted', sm.posted, 'matched · posted', 'var(--success)', money(sm.posted_amount)),
+                    tile('matched, not posted', sm.not_posted, 'matched · not posted', 'var(--warning)', money(sm.not_posted_amount) + ' · post in eCW'),
+                    tile('unmatched', sm.unmatched, 'unmatched', 'var(--bad)', money(sm.unmatched_amount) + ' in the bank, unexplained'),
+                    tile('ambiguous', sm.ambiguous, 'ambiguous', 'var(--warning)', 'more than one explanation'),
+                    tile('reversed', sm.reversed, 'reversed', 'var(--bad)', money(sm.reversed_amount) + ' taken back'),
+                    tile('not in bank', sm.not_in_bank, 'missing', 'var(--bad)', money(sm.not_in_bank_amount) + ' recorded, never credited'),
+                    tile('other income', sm.other, 'other income', 'var(--text-muted)', 'cards and others, not reconciled here'),
+                    tile('all lines', data.rows.length, 'all', 'var(--text-secondary)', ''),
+                ].join('') : '';
+            }
+            const miss = document.getElementById('bank-missing');
+            if (miss) {
+                const list = (window._bankFilter === 'missing' || window._bankFilter === 'attention') ? (data.missing || []) : [];
+                miss.innerHTML = list.length ? '<div style="font-size:12px;margin:10px 0 4px"><strong>Recorded as deposited, not in the bank</strong></div>' + list.map(m =>
+                    `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--bdr)"><span class="verdict-pill" style="color:var(--bad)">not in bank</span> ${esc(m.date)} · <strong>${money(m.amount)}</strong> · ${esc(m.what)} · ${nf((m.items || []).length)} check(s): ${esc((m.items || []).slice(0, 8).join(', '))}${(m.items || []).length > 8 ? ' …' : ''}<div style="font-size:11px;color:var(--text-muted)">${esc(m.reason)}${m.file ? ' · ' + esc(m.file) : ''}</div></div>`).join('') : '';
+            }
+            const body = document.getElementById('bank-body');
+            if (!body) return;
+            const f = window._bankFilter;
+            const rows = data.rows.filter(r => f === 'all' ? true : f === 'attention' ? needs(r) : f === 'missing' ? false : r.status === f);
+            window._bankShown = rows;
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? (f === 'missing' ? 'See the list above.' : 'Nothing under this tile.') : 'No bank statement yet. Use <strong>⬆ Upload statement</strong> above.'}</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map((r, i) => `
+                <tr>
+                  <td>${esc(r.date)}</td>
+                  <td>${esc(r.desc || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.kind)}${r.ref ? ' · ref ' + esc(r.ref) : ''}</div></td>
+                  <td class="num">${money(r.amount)}</td>
+                  <td><span class="verdict-pill" style="color:${BANK_STATUS[r.status] || 'var(--text-muted)'};font-weight:700">${esc(r.status)}</span></td>
+                  <td>${(r.items || []).length ? `<strong>${nf(r.items.length)}</strong> item(s): ${esc(r.items.slice(0, 6).join(', '))}${r.items.length > 6 ? ' …' : ''}` : ''}<div style="font-size:11px;color:var(--text-muted)">${r.rule ? 'by ' + esc(r.rule) + (r.note ? ' — ' + esc(r.note) : '') : ''}${r.reason ? (r.rule ? ' · ' : '') + esc(r.reason) : ''}${(r.payers || []).length ? ' · ' + esc(r.payers.join(', ')) : ''}</div></td>
+                  <td class="num">${Number(r.variance) > 0 ? '<span style="color:var(--bad)">' + money(r.variance) + '</span>' : ''}</td>
+                  <td>${r.resolved_at ? `<span style="font-size:11px;color:var(--success)">✓ ${esc(r.resolved_by || '')}</span><div style="font-size:11px;color:var(--text-muted)" title="${esc(r.resolved_note || '')}">${esc(r.resolved_at)}</div>` : (needs(r) ? `<button class="btn" onclick="reviewBank(${i})">Mark reviewed</button>` : '')}</td>
+                </tr>`).join('');
+        }
+        async function loadBank() {
+            try {
+                const res = await fetch('/api/bank');
+                const data = await res.json();
+                if (data.error) { console.warn('bank', data.error); return; }
+                window._bank = data;
+                renderBank();
+            } catch (e) { console.warn('bank', e); }
+        }
+        async function uploadBank() {
+            const input = document.getElementById('bank-file');
+            if (!input || !input.files.length) { alert('Choose the statement file first (CSV or Excel).'); return; }
+            const form = new FormData();
+            form.append('file', input.files[0]);
+            try {
+                const res = await fetch('/api/bank/upload', {method: 'POST', body: form});
+                const data = await res.json();
+                if (data.error) { alert('Statement not read: ' + data.error); return; }
+                alert(data.transactions + ' line(s) read, ' + data.added + ' new.');
+                input.value = '';
+                loadBank();
+            } catch (e) { alert('Upload failed: ' + e); }
+        }
+        async function reviewBank(i) {
+            const r = (window._bankShown || [])[i];
+            if (!r) return;
+            let who = '';
+            try { who = localStorage.getItem('helixona_reviewer') || ''; } catch (e) {}
+            who = prompt('Your name (the review is recorded under it):', who);
+            if (!who) return;
+            const note = prompt('What was found / what was done about this line:', '');
+            if (note === null) return;
+            try { localStorage.setItem('helixona_reviewer', who); } catch (e) {}
+            const res = await fetch('/api/bank/review', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: r.id, by: who, note: note, status: r.status})});
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+            loadBank();
         }
 
         // ---- Reminders (Blue Shield checks mailed to patients) ----
@@ -2848,6 +2977,7 @@ window.scrollToEl = function(sel){
         setInterval(() => { if (window.activeBot === 'priority') loadPriority(); }, 15000);
         setInterval(() => { if (window.activeBot === 'reminders') loadReminders(); }, 15000);
         setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
+        setInterval(() => { if (window.activeBot === 'eob') loadBank(); }, 60000);
 
         // ---- SharePoint folders (Remittance) ----
         // The folder tree exactly as the bot walked it, with the check
@@ -3236,6 +3366,127 @@ def api_usage_credits():
     claude_usage.ensure_table(dynamodb)
     item = claude_usage.set_credits(dynamodb, balance, who)
     return jsonify({'ok': True, 'balance_usd': float(item['balance_usd']), 'as_of': item['as_of']})
+
+
+# ── B10: the bank statement against the checks, the 835s and eCW ──────────
+BANK_TABLE = 'helixona-bank'
+
+
+def _bank_table():
+    """helixona-bank, created on first use: one item per bank transaction
+    (key `id`), plus `_upload:<time>` items — the record of each statement."""
+    if BANK_TABLE not in [t.name for t in dynamodb.tables.all()]:
+        t = dynamodb.create_table(TableName=BANK_TABLE, KeySchema=[{'AttributeName': 'id', 'KeyType': 'HASH'}],
+                                  AttributeDefinitions=[{'AttributeName': 'id', 'AttributeType': 'S'}], BillingMode='PAY_PER_REQUEST')
+        t.wait_until_exists()
+    return dynamodb.Table(BANK_TABLE)
+
+
+def _bank_rows():
+    from src.checks.bank import reconcile_bank
+    items = scan_all(_bank_table())
+    txns = [it for it in items if not str(it.get('id', '')).startswith('_')]
+    uploads = sorted((it for it in items if str(it.get('id', '')).startswith('_upload:')), key=lambda it: str(it.get('at', '')))
+    checks = scan_all(dynamodb.Table('helixona-checks'))
+    rows, missing, summary = reconcile_bank(txns, checks)
+    meta = next((c for c in checks if c.get('check_number') == '_summary'), {})
+    summary['checks_reconciled_at'] = str(meta.get('reconciled_at') or '')
+    if uploads:
+        summary['last_upload'] = {k: str(uploads[-1].get(k, '')) for k in ('at', 'file', 'transactions', 'added', 'evidence')}
+    return rows, missing, summary
+
+
+@app.route('/api/bank')
+def api_bank():
+    try:
+        rows, missing, summary = _bank_rows()
+        return jsonify(json.loads(json.dumps({'rows': rows, 'missing': missing, 'summary': summary}, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'missing': [], 'summary': {}})
+
+
+@app.route('/api/bank/upload', methods=['POST'])
+def api_bank_upload():
+    """A statement export (CSV or Excel) → bank transactions. Idempotent: a
+    line already on file (same date, amount, words, reference) is not added
+    twice, so overlapping statements can be uploaded freely. The file itself
+    is kept in S3 as the evidence of what the bank said."""
+    from src.checks.bank import parse_statement
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'error': 'No file in request'}), 400
+    data = upload.read()
+    if len(data) > 10 * 1024 * 1024:
+        return jsonify({'error': 'File larger than 10 MB'}), 400
+    try:
+        txns = parse_statement(data, upload.filename)
+    except Exception as e:
+        return jsonify({'error': f'could not be read as CSV or Excel: {str(e)[:120]}'}), 400
+    if not txns:
+        return jsonify({'error': 'no transactions found — the file needs a header row with a Date column and an Amount (or Credit/Debit) column'}), 400
+    import time as _t
+    now = _t.strftime('%Y-%m-%d %H:%M:%S UTC', _t.gmtime())
+    table = _bank_table()
+    known = {str(it.get('id')) for it in scan_all(table, ProjectionExpression='id')}
+    added = 0
+    for t in txns:
+        if t['id'] in known:
+            continue
+        table.put_item(Item={**t, 'uploaded_at': now})
+        added += 1
+    evidence = ''
+    if S3_BUCKET:
+        try:
+            import re as _re
+            key = f"bank/statements/{now[:19].replace(' ', '_').replace(':', '')}_{_re.sub(r'[^A-Za-z0-9._-]', '_', upload.filename)[:80]}"
+            session.client('s3').put_object(Bucket=S3_BUCKET, Key=key, Body=data, ServerSideEncryption='AES256')
+            evidence = f's3://{S3_BUCKET}/{key}'
+        except Exception as e:
+            print(f'bank statement not kept in S3: {e}')
+    table.put_item(Item={'id': f'_upload:{now}', 'at': now, 'file': upload.filename[:120], 'transactions': len(txns), 'added': added,
+                         'evidence': evidence, 'from': min(t['date'] for t in txns), 'to': max(t['date'] for t in txns)})
+    return jsonify({'ok': True, 'transactions': len(txns), 'added': added, 'evidence': evidence})
+
+
+@app.route('/api/bank/review', methods=['POST'])
+def api_bank_review():
+    """A person's word on one bank line — who, when, what they found. The
+    reconciliation itself never closes a line; this is the human checkpoint."""
+    body = request.get_json(silent=True) or {}
+    tid, who, note = str(body.get('id') or ''), str(body.get('by') or '').strip()[:80], str(body.get('note') or '').strip()[:500]
+    if not tid or tid.startswith('_') or not who:
+        return jsonify({'error': 'A bank line and a name are needed'}), 400
+    import time as _t
+    table = _bank_table()
+    if 'Item' not in table.get_item(Key={'id': tid}):
+        return jsonify({'error': 'No such bank line'}), 404
+    table.update_item(Key={'id': tid},
+                      UpdateExpression='SET resolved_at = :t, resolved_by = :w, resolved_note = :n, resolved_status = :s',
+                      ExpressionAttributeValues={':t': _t.strftime('%Y-%m-%d %H:%M UTC', _t.gmtime()), ':w': who, ':n': note,
+                                                 ':s': str(body.get('status') or '')[:40]})
+    return jsonify({'ok': True})
+
+
+@app.route('/api/bank.csv')
+def api_bank_csv():
+    import csv
+    import io
+    from flask import Response
+    cols = ['date', 'desc', 'ref', 'kind', 'amount', 'status', 'rule', 'note', 'items', 'payers', 'variance', 'reason',
+            'resolved_at', 'resolved_by', 'resolved_note', 'id']
+    try:
+        rows, missing, _ = _bank_rows()
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction='ignore')
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: (' '.join(map(str, r[k])) if isinstance(r.get(k), list) else r.get(k, '')) for k in cols})
+        for m in missing:
+            w.writerow({'date': m['date'], 'desc': m['what'], 'amount': m['amount'], 'status': 'not in bank',
+                        'items': ' '.join(m['items']), 'reason': m['reason'], 'variance': m['amount']})
+        return Response(buf.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename="bank_reconciliation.csv"'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 def _reminder_rows():

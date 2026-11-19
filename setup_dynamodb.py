@@ -130,6 +130,17 @@ tables = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
+        # B10: the bank's transactions from the uploaded statements, one
+        # item each, with a person's review (docs/bank_reconcile.md).
+        # Created on first use by the dashboard too.
+        "TableName": "helixona-bank",
+        "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+        "AttributeDefinitions": [
+            {"AttributeName": "id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
         "TableName": "helixona-adjudications",
         "KeySchema": [{"AttributeName": "claim_id", "KeyType": "HASH"}],
         "AttributeDefinitions": [
