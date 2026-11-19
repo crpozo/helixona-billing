@@ -776,7 +776,7 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
 class TheTaskIsWiredReadOnly(unittest.TestCase):
     def test_the_bot_runs_it_and_opens_one_browser_on_demand(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile', 'eob_post'}", src)
         i = src.index("elif task_type == 'check_reconcile':")
         block = src[i:i + 1500]
         self.assertIn('run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)', block)
@@ -925,7 +925,8 @@ class TheTaskIsWiredReadOnly(unittest.TestCase):
         c = _read('src/eob/capture.py')
         self.assertIn("download_eob = bool(body.get('download_eob', False))", c)
         self.assertIn("pdf_path = _download_eob_pdf(page, check) if download_eob else ''", c)
-        self.assertIn("'force': bool(body.get('force', bool(only))), 'download_eob': False", _read('src/checks/run.py'))
+        # 2026-11: the report is saved only when the run asks for it (B10's daily run).
+        self.assertIn("'download_eob': bool(body.get('download_eob'))", _read('src/checks/run.py'))
 
     def test_the_table_is_declared_and_self_creating(self):
         self.assertIn("CHECKS_TABLE = 'helixona-checks'", _read('src/checks/run.py'))

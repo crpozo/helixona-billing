@@ -1,0 +1,19 @@
+{
+  "_comment": "B10 — how a payment is entered in eCW (docs/b10_posting.md). Each value is a choice the clinic confirms; where the September recordings and the November flow disagree, the note says so.",
+  "amount": "approve_to_pay",
+  "_amount": "approve_to_pay = the EOB's approved amount, without Blue Shield's interest (the recordings). The November flow says 'the total on the EOB'. To confirm with Vignesh.",
+  "received_date": "tracker",
+  "_received_date": "tracker = Date Check Received from Karina's Insurance Check Tracker (the November flow). 'today' leaves eCW's default (the recordings).",
+  "deposit_date": "tracker",
+  "_deposit_date": "tracker = the tracker's Deposit Date, else Blue Shield's cashed date. 'cashed' uses the portal's cashed date only (the recordings).",
+  "facility": "select",
+  "_facility": "select = pick the one office location (the November flow). 'leave' = leave it empty (the recordings).",
+  "attach_eob": true,
+  "_attach_eob": "Attach the EOB in the Payment Advisory window (Scan, Add, the file, OK).",
+  "commit_buttons": ["Auto Post", "Auto Post (F2)"],
+  "_commit_buttons": "The button that commits the typed lines. The recordings show Auto Post (F2), then Yes. The November flow says 'Post payment, then OK'. To confirm with Vignesh before the first real post.",
+  "multi_claim_checks": false,
+  "_multi_claim_checks": "false = a check that pays several claims is held for a person ('Add insurance payment' is not covered yet).",
+  "post_zero_eobs": false,
+  "_post_zero_eobs": "false = $0 EOBs (deductible, denial) are listed and held: how the denial is recorded in Payment Advisory is not defined yet."
+}

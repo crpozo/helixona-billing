@@ -416,7 +416,11 @@ def collect_blue_shield(page, aws_client, body, since, limit_checks, only):
     from src.eob.capture import run_eob_capture
     got = run_eob_capture(page, aws_client, {
         'since': since, 'limit_checks': limit_checks, 'check_eft': only,
-        'force': bool(body.get('force', bool(only))), 'download_eob': False}) or {}
+        'force': bool(body.get('force', bool(only))),
+        # B10: the EOB report is saved when the run asks for it (download_eob),
+        # and asked again for the deposited checks that have none (eob_for).
+        'download_eob': bool(body.get('download_eob')), 'eob_for': list(body.get('eob_for') or []),
+        'include_zero': bool(body.get('include_zero')), **({'refresh': body['refresh']} if 'refresh' in body else {})}) or {}
     if not got.get('ok'):
         logger.error(f"❌ Blue Shield: {got.get('reason') or 'the portal could not be walked'}")
     return [norm_check(c) for c in got.get('captured_checks', []) if norm_check(c)]
@@ -467,6 +471,16 @@ def run_check_reconcile(aws_client, body, login, get_page):
     targets = set()
     if blue_shield:
         progress('blue_shield', 'walking the portal…')
+        if body.get('download_eob') and 'eob_for' not in body:
+            # B10: the deposited checks whose EOB file is not saved get it now.
+            try:
+                from src.eob.ready import eob_wanted, load_policy, ready_queue
+                body = {**body, 'eob_for': eob_wanted(ready_queue(scan_all(aws_client.dynamodb.Table(EOB_TABLE)),
+                                                                   scan_all(table), load_policy()))}
+                if body['eob_for']:
+                    logger.info(f"📥 {len(body['eob_for'])} deposited check(s) have no EOB file — asked again from the portal")
+            except Exception as e:
+                logger.warning(f"  (EOBs to download again not worked out: {str(e)[:100]})")
         try:
             caught = collect_blue_shield(get_page(), aws_client, body, since, limit_checks, only)
         except Exception as e:

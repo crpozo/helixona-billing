@@ -169,12 +169,14 @@ def _type_into(page, handle, value):
     time.sleep(0.4)
 
 
-def _apply_filters(page, since):
-    """Finalized · Claim amount paid ≥ $0.01 · status/payment date from `since`."""
-    logger.info("🔎 Applying EOB search filters")
+def _apply_filters(page, since, include_zero=False):
+    """Finalized · Claim amount paid ≥ $0.01 · status/payment date from `since`.
+    `include_zero` leaves the amount filter off, so the $0 EOBs (deductible,
+    denial) are listed too — the B10 flow posts those as well."""
+    logger.info("🔎 Applying EOB search filters" + (' ($0 EOBs included: no amount filter)' if include_zero else ''))
     _mat_select(page, 'Claim status', 'Finalized')
     time.sleep(0.8)
-    if _mat_select(page, 'Payment information', 'Claim amount paid'):
+    if not include_zero and _mat_select(page, 'Payment information', 'Claim amount paid'):
         time.sleep(1.0)
         # The amount range appears once the option is chosen: two inputs,
         # minimum first. Anything that looks like a money field will do; the
@@ -664,7 +666,11 @@ def run_eob_capture(page, aws_client, body):
     _wait_for(page, lambda: page.query_selector('mat-select, [role="combobox"]') is not None, timeout=20)
     time.sleep(0.5)
 
-    _apply_filters(page, since)
+    _apply_filters(page, since, include_zero=bool(body.get('include_zero')))
+    # Checks on file whose EOB report is wanted (deposited per the tracker,
+    # the file not saved): re-opened for the report even though captured.
+    from src.checks.reconcile import norm_check as _norm
+    eob_for = {_norm(c) for c in (body.get('eob_for') or []) if _norm(c)}
 
     # What is already on file, so a run can be repeated and only does new work.
     claim_idx = index_claims(scan_all(
@@ -680,6 +686,8 @@ def run_eob_capture(page, aws_client, body):
         # was missing from the projection, so once the PDFs were skipped
         # every check looked new and a test of 1 re-opened the same one.)
         done[str(it.get('check_eft'))] = bool(it.get('eob_pdf_s3_path') or it.get('captured_at'))
+        if download_eob and not it.get('eob_pdf_s3_path') and _norm(it.get('check_eft')) in eob_for:
+            done[str(it.get('check_eft'))] = False
         if it.get('eob_pdf_sha256'):
             known_pdfs[str(it['eob_pdf_sha256'])] = (str(it.get('check_eft')),
                                                      str(it.get('eob_pdf_s3_path') or ''))

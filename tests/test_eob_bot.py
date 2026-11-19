@@ -271,7 +271,7 @@ class TheEobPdfGivesUpTheAccountNumber(unittest.TestCase):
 class TheRoleIsFencedBothWays(unittest.TestCase):
     def test_the_eob_bot_only_runs_eob_tasks(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile', 'eob_post'}", src)
         self.assertIn("_settings.bot_role == 'eob' and task_type not in EOB_TASKS", src)
 
     def test_the_other_bots_never_run_eob_tasks(self):
@@ -423,7 +423,8 @@ class RemittanceHasItsPlaceOnTheDashboard(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertEqual(m.group(1).split(), ['eob'])
         self.assertNotIn('value="eob_capture"', html)
-        self.assertNotIn('value="eob_post"', html)
+        # Entering payments is back (B10, 2026-11), on the Remittance bot only.
+        self.assertEqual(re.search(r'<option value="eob_post" data-bot="([^"]+)"', html).group(1).split(), ['eob'])
         m = re.search(r'<option value="blueshield_submissions" data-bot="([^"]+)"', html)
         self.assertNotIn('eob', m.group(1).split())
 

@@ -3105,9 +3105,10 @@ IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 
 # The Remittance bot reconciles checks — the copies we hold, Blue Shield's
 # status, eCW's payments — and never submits; the submitting bots never touch
-# payments. Fenced both ways, like the IV bot. (Entering payments into eCW is
-# Vignesh's team's work, not the bot's: the old eob_post task is gone.)
-EOB_TASKS = {'check_reconcile'}
+# payments. Fenced both ways, like the IV bot. Since 2026-11 (the B10 flows)
+# it also enters the payments that are ready — eob_post — which saves nothing
+# in eCW unless the task says "post": true.
+EOB_TASKS = {'check_reconcile', 'eob_post'}
 
 # The Reminders bot is the only one that writes to patients, and it does
 # nothing else: fenced both ways, like Remittance.
@@ -11612,6 +11613,22 @@ def process_message(message: dict, aws_client: AWSClient):
         finally:
             if holder.get('manager'):
                 holder['manager'].stop()
+
+    elif task_type == 'eob_post':
+        # B10: enter in eCW the payments that are ready — the check is in
+        # Karina's tracker (deposited) and its EOB is saved (src/eob/ready,
+        # src/eob/post, docs/b10_posting.md). A DRY RUN unless the task says
+        # "post": true: the Payments popup is filled, photographed and
+        # cancelled, and nothing is saved.
+        logger.info(f"═══ B10 — payments into eCW ({'POST' if body.get('post') else 'DRY RUN'}) ═══")
+        from src.eob.post import run_eob_post
+        manager = BrowserManager().start(proxy_config=None)
+        try:
+            run_eob_post(manager.new_page(), aws_client, body, login=_perform_ecw_login)
+        except Exception as e:
+            logger.error(f"B10 posting run failed: {e}")
+        finally:
+            manager.stop()
 
     elif task_type == 'claim_denials':
         # Denials: the claims eCW shows as denied, each one's reason codes,

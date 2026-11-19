@@ -107,20 +107,32 @@ class GridRowsArePinnedBeforeTyping(unittest.TestCase):
         self.assertIsNone(rows)
 
 
-class ThePostingTaskIsRetired(unittest.TestCase):
-    """2026-09-17: entering payments is Vignesh's team's work; the bot only
-    compares. The module stays for its eCW helpers (open_payments, the field
-    and click helpers the Payments lookup uses) — no task reaches run_eob_post."""
-    def test_no_task_runs_it(self):
+class ThePostingTaskIsBackBehindItsGate(unittest.TestCase):
+    """2026-09-17 the task was retired (entering payments was the team's
+    work). 2026-11, the B10 flows: the bot enters the payments that are
+    ready. It is wired again, on the Remittance bot only, and saves nothing
+    without "post": true."""
+    def test_only_the_remittance_bot_runs_it(self):
         src = _read('src/main.py')
-        self.assertNotIn("task_type == 'eob_post'", src)
-        self.assertNotIn('run_eob_post', src)
-        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
+        self.assertIn("elif task_type == 'eob_post':", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile', 'eob_post'}", src)
+        self.assertIn("if _settings.bot_role != 'eob' and task_type in EOB_TASKS:", src)
 
-    def test_the_dashboard_no_longer_offers_it(self):
+    def test_the_card_that_writes_asks_first_and_the_default_is_a_dry_run(self):
+        import re
         d = _read('dashboard.py')
-        self.assertNotIn('value="eob_post"', d)
-        self.assertNotIn('Payment Advisory', d)
+        cards = re.findall(r"\{icon: '[^']+', title: '[^']+', task: 'eob_post',.*?payload: \{[^}]*\}", d, re.S)
+        self.assertEqual(len(cards), 2)
+        posting = [c for c in cards if 'post: true' in c]
+        self.assertEqual(len(posting), 1)
+        self.assertIn('confirm:', posting[0])
+        self.assertIn('limit_checks: 1', posting[0], 'one check at a time while it is supervised')
+        self.assertIn('post: false', d[d.index('eob_post: JSON.stringify'):][:400])
+
+    def test_a_dry_run_still_stops_before_the_save(self):
+        p = _read('src/eob/post.py')
+        body = p[p.index('def post_check('):]
+        self.assertLess(body.index('if not post:'), body.index("['Payment Advisory']"))
 
     def test_the_capture_still_never_touches_ecw(self):
         c = _read('src/eob/capture.py')

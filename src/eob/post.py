@@ -566,6 +566,12 @@ def fill_payment_popup(page, fields):
         ok &= _set_field(page, r'check\s*no|check\s*#|chk\s*no', fields['Check No.'], what='Check No.', prefer='last')
     if fields.get('Amount $'):
         ok &= _set_field(page, r'^amount|amount\s*\$|amt', fields['Amount $'], what='Amount $', prefer='last')
+    if fields.get('Facility') == 'select':
+        # One office location: not finding the control is not a reason to stop.
+        select_facility(page)
+    if fields.get('Received Date'):
+        if not _set_field(page, r'rece?i?ve?d\s*date|rcvd\s*date', fields['Received Date'], what='Received Date', prefer='last'):
+            logger.warning("  ⚠️ Received Date not set — eCW's own date stands")
     if fields.get('Check Date'):
         ok &= _set_field(page, r'check\s*date|chk\s*date', fields['Check Date'], what='Check Date', prefer='last')
     if fields.get('EOB Date'):
@@ -575,6 +581,62 @@ def fill_payment_popup(page, fields):
         _tick(page, r'deposit', what='Deposit')
         ok &= _set_field(page, r'deposit\s*date|deposit', fields['Deposit Date'], what='Deposit Date', prefer='last')
     return bool(ok)
+
+
+def select_facility(page):
+    """Facility: Select → the drop-down → the one office → OK (the B10 flow:
+    "only one option is shown because there is a single office location").
+    Best-effort; returns whether it was set."""
+    try:
+        for frm in page.frames:
+            hit = frm.evaluate(_js(r"""() => {
+                // A <select> labelled Facility with real options: take the first.
+                for (const sel of document.querySelectorAll('select')) {
+                    if (!vis(sel)) continue;
+                    const near = (sel.closest('tr, div, td') || sel.parentElement || sel).textContent || '';
+                    const hint = [sel.id, sel.name, sel.getAttribute('ng-model')].filter(Boolean).join(' ');
+                    if (!/facilit/i.test(near.slice(0, 80) + ' ' + hint)) continue;
+                    const opt = Array.from(sel.options).find(o => o.value && txt(o) && !/^select/i.test(txt(o)));
+                    if (!opt) continue;
+                    if (sel.value === opt.value) return 'kept ' + txt(opt);
+                    sel.value = opt.value;
+                    sel.dispatchEvent(new Event('change', { bubbles: true }));
+                    return txt(opt);
+                }
+                return ''; }"""))
+            if hit:
+                logger.info(f"  ✅ Facility: {hit}")
+                return True
+    except Exception as e:
+        logger.info(f"  (Facility: {str(e)[:80]})")
+    logger.warning("  ⚠️ Facility not selected (no drop-down found) — left as eCW shows it")
+    return False
+
+
+def attach_eob(page, pdf_path, check):
+    """In the Payment Advisory window: Scan → Add → the EOB file → OK. The
+    payment exists by now; an attachment that does not go through is reported
+    for a person to add, never a reason to abandon the posting."""
+    if not pdf_path or not os.path.exists(pdf_path):
+        return False, 'no EOB file to attach'
+    if not _click_text(page, ['Scan'], timeout=5, what='Scan (attach the EOB)'):
+        _shot(page, f'{check}_no_scan_button')
+        return False, 'the Scan button was not found in Payment Advisory'
+    time.sleep(2)
+    try:
+        with page.expect_file_chooser(timeout=8000) as chooser:
+            if not _click_text(page, ['Add', 'Add File', 'Browse', 'Upload'], timeout=5, what='Add (file)'):
+                raise RuntimeError('the Add button was not found')
+        chooser.value.set_files(pdf_path)
+    except Exception as e:
+        _shot(page, f'{check}_attach_failed')
+        _click_text(page, ['Cancel', 'Close'], timeout=2)
+        return False, f'the file could not be handed to eCW: {str(e)[:120]}'
+    time.sleep(4)
+    _shot(page, f'{check}_eob_attached')
+    _click_text(page, ['OK', 'Ok', 'Done', 'Close'], timeout=4, what='close the scan window')
+    time.sleep(1.5)
+    return True, 'EOB attached'
 
 
 def read_payment_id(page):
@@ -711,13 +773,21 @@ def cancel_popups(page):
 
 
 # ------------------------------------------------------------- one check
-def post_check(page, item, plan, since, post):
-    """Enter one planned check. Returns the result dict stored on the item."""
+def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_file=None, verify=None):
+    """Enter one planned check. Returns the result dict stored on the item.
+
+    `tracker` and `policy` shape the popup (payment_header); `eob_file()`
+    returns a local path of the EOB to attach; `verify(page, check)` reads
+    the payment back and returns its unposted amount (the quality check of
+    the B10 flow: posted correctly only when Unposted is 0)."""
+    policy = policy or {}
     check = str(item['check_eft'])
     claims = plan.get('claims') or []
     logger.info(f"═══ Check {check} · approve-to-pay ${plan['totals'].get('approve_to_pay')} · "
                 f"{len(claims)} claim(s) · {'POST' if post else 'DRY RUN'} ═══")
-    fields, problems = payment_header({'approve_to_pay': plan['totals'].get('approve_to_pay')}, item)
+    if len(claims) > 1 and not policy.get('multi_claim_checks', True):
+        return {'status': 'held', 'reason': f"the check pays {len(claims)} claims — 'Add insurance payment' is not covered yet"}
+    fields, problems = payment_header({'approve_to_pay': plan['totals'].get('approve_to_pay')}, item, tracker, policy)
     if problems:
         return {'status': 'held', 'reason': '; '.join(problems)}
     typed = {}
@@ -761,6 +831,13 @@ def post_check(page, item, plan, since, post):
     _dismiss_dialogs(page, answer='OK')
     payment_id = read_payment_id(page)
     logger.info(f"  💾 payment saved · Payment ID {payment_id or '?'}")
+    attached, attach_note = None, ''
+    if policy.get('attach_eob') and eob_file:
+        try:
+            attached, attach_note = attach_eob(page, eob_file(), check)
+        except Exception as e:
+            attached, attach_note = False, f'attaching failed: {str(e)[:120]}'
+        logger.info(f"  📎 EOB: {attach_note}")
 
     posted, left = [], []
     for c in claims:
@@ -781,20 +858,41 @@ def post_check(page, item, plan, since, post):
             continue
         _shot(page, f'{check}_{cid}_grid_typed')
         # ── second write ──
-        if not _click_text(page, ['Auto Post', 'Auto Post (F2)'], timeout=6, what='Auto Post F2'):
-            page.keyboard.press('F2')
+        commit = list(policy.get('commit_buttons') or ['Auto Post', 'Auto Post (F2)'])
+        if not _click_text(page, commit, timeout=6, what='commit the lines'):
+            if any('auto post' in c.lower() for c in commit):
+                page.keyboard.press('F2')
+            else:
+                _shot(page, f'{check}_{cid}_no_commit_button')
+                left.append(f"claim {cid}: the lines were typed but none of {commit} was found to commit them")
+                continue
         time.sleep(2)
         _dismiss_dialogs(page, answer='Yes')
         posted.append(f'{cid} (${posting_total(typed[cid])}, {written} cells)')
         logger.info(f"  ✅ claim {cid}: {written} cells, paid ${posting_total(typed[cid])}, Auto Post")
 
+    extra = {'eob_attached': attached} if attached is not None else {}
+    tail = '' if attached is not False else f' · EOB NOT attached ({attach_note}) — attach it by hand'
     if left:
         _shot(page, f'{check}_incomplete')
-        return {'status': 'incomplete', 'payment_id': payment_id,
+        return {'status': 'incomplete', 'payment_id': payment_id, **extra,
                 'reason': f"payment {payment_id or '?'} was created; posted {', '.join(posted) or 'nothing'}; "
-                          f"NOT posted: {'; '.join(left)} — finish or delete it in eCW"}
-    return {'status': 'posted', 'payment_id': payment_id,
-            'reason': f"payment {payment_id or '?'}: {', '.join(posted)}"}
+                          f"NOT posted: {'; '.join(left)} — finish or delete it in eCW{tail}"}
+    # The flow's quality check: the payment read back, Unposted must be 0.
+    unposted = None
+    if verify:
+        try:
+            cancel_popups(page)
+            unposted = verify(page, check)
+        except Exception as e:
+            logger.warning(f"  ⚠️ the payment could not be read back: {str(e)[:120]}")
+    if unposted is not None and _d(unposted) is not None and _d(unposted) != 0:
+        return {'status': 'unbalanced', 'payment_id': payment_id, 'unposted': str(unposted), **extra,
+                'reason': f"payment {payment_id or '?'} was posted but eCW shows ${unposted} unposted — a mistake to find{tail}"}
+    checked = ' · Unposted 0.00' if unposted is not None and _d(unposted) == 0 else ' · not read back'
+    return {'status': 'posted', 'payment_id': payment_id, **extra,
+            'unposted': '' if unposted is None else str(unposted),
+            'reason': f"payment {payment_id or '?'}: {', '.join(posted)}{checked}{tail}"}
 
 
 # ------------------------------------------------------------------- run
@@ -829,24 +927,40 @@ def run_eob_post(page, aws_client, body, login):
     logger.info(f"Remittance → eCW: mode={'POST' if post else 'DRY RUN'} only={only or 'all'} "
                 f"limit={limit or 'none'} since={since}")
 
+    from src.checks.reconcile import norm_check
+    from src.eob.ready import load_policy, stage_of, tracker_of
+    policy = load_policy()
     eobs = aws_client.dynamodb.Table(EOB_TABLE)
     readers = make_readers(aws_client)
-    todo = []
+    try:
+        check_rows = {norm_check(r.get('check_number')): r for r in scan_all(aws_client.dynamodb.Table('helixona-checks'))}
+    except Exception as e:
+        logger.error(f"❌ helixona-checks not read ({str(e)[:100]}) — no check can be shown as deposited; nothing entered")
+        return {'ok': False, 'reason': 'the tracker rows could not be read'}
+    # The B10 rule: a payment is entered when the check is deposited — its
+    # number is in Karina's tracker — and its EOB is saved. Naming a check
+    # does not lift the rule; `force_not_deposited` does, for a test.
+    todo, waiting = [], 0
     for it in scan_all(eobs):
         ck = str(it.get('check_eft', ''))
-        if only and ck != only:
+        if only and norm_check(ck) != norm_check(only):
             continue
-        if it.get('posted_in_ecw') and not only:
+        stage, why = stage_of(it, check_rows.get(norm_check(ck)), policy)
+        if stage != 'ready' and not (only and body.get('force_not_deposited') and stage == 'waiting for deposit' and it.get('eob_pdf_s3_path')):
+            waiting += stage in ('waiting for deposit', 'EOB missing')
+            if only:
+                logger.info(f"  ⏸ check {ck} is not ready: {stage} — {why}")
             continue
-        if not it.get('eob_pdf_s3_path'):
-            continue
+        it['_tracker'] = tracker_of(check_rows.get(norm_check(ck)))
         todo.append(it)
+    if waiting:
+        logger.info(f"⏳ {waiting} check(s) wait for their deposit or their EOB")
     todo.sort(key=lambda it: str(it.get('check_date', '')))
     logger.info(f"📋 {len(todo)} check(s) to consider")
 
     # Plan first, so a run with nothing ready never opens eCW.
     ready = []
-    counts = {'posted': 0, 'dry_run': 0, 'existing': 0, 'held': 0, 'incomplete': 0, 'failed': 0}
+    counts = {'posted': 0, 'dry_run': 0, 'existing': 0, 'held': 0, 'incomplete': 0, 'unbalanced': 0, 'failed': 0}
     for it in todo:
         ck = str(it['check_eft'])
         try:
@@ -874,13 +988,31 @@ def run_eob_post(page, aws_client, body, login):
         return {'ok': False, 'reason': 'login'}
 
     done = 0
+    def verify(pg, ck):
+        """The payment read back by Check #: its unposted amount ('' when
+        eCW shows no such payment)."""
+        from src.checks.ecw_payments import find_payments
+        got = find_payments(pg, ck, since, navigate=True, shot=False) or []
+        return str(got[0].get('unposted', '')) if got else None
+
+    tmpdir = tempfile.mkdtemp(prefix='eob_attach_')
     for it, plan in ready:
         if limit and done >= limit:
             break
         done += 1
         ck = str(it['check_eft'])
+
+        def eob_file(it=it, ck=ck):
+            m = re.match(r's3://([^/]+)/(.+)', str(it.get('eob_pdf_s3_path') or ''))
+            if not m:
+                return ''
+            # Named after the check, as the team names it.
+            path = os.path.join(tmpdir, f"{re.sub(r'[^0-9A-Za-z]', '', ck)}.pdf")
+            boto3.client('s3', region_name='us-west-2').download_file(m.group(1), m.group(2), path)
+            return path
         try:
-            res = post_check(page, it, plan, since, post)
+            res = post_check(page, it, plan, since, post, tracker=it.get('_tracker'), policy=policy,
+                             eob_file=eob_file, verify=verify)
         except Exception as e:
             res = {'status': 'failed', 'reason': str(e)[:300]}
             logger.error(f"  ❌ check {ck}: {e}")

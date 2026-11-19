@@ -28,15 +28,22 @@ def _d(v):
         return None
 
 
-def payment_header(eob, check):
+def payment_header(eob, check, tracker=None, policy=None):
     """The `Payments` popup for one check: {field label: value or None}.
 
     `eob` is the parsed report (src/eob/eob_pdf.py), `check` the portal's
     Check/EFT summary (check_eft, check_date, cashed_date). Fields the operator
     leaves alone are None, so the browser step knows not to touch them.
 
+    `tracker` is what Karina's Insurance Check Tracker says of the check
+    ({'received', 'deposit'}) and `policy` data/ecw_posting_policy.json: with
+    them the Received and Deposit dates come from the tracker (the B10 flow,
+    2026-11) and the Facility is selected. Without them the popup is the one
+    of the September recordings.
+
     Returns (fields, problems). Any problem means do not open the popup.
     """
+    tracker, policy = tracker or {}, policy or {}
     problems = []
     amount = _d(eob.get('approve_to_pay'))
     if amount is None:
@@ -52,16 +59,19 @@ def payment_header(eob, check):
     if not check_date:
         problems.append('the check has no Check/EFT date')
     deposit = str(check.get('cashed_date') or '').strip()
+    if policy.get('deposit_date') == 'tracker' and str(tracker.get('deposit') or '').strip():
+        deposit = str(tracker['deposit']).strip()
     if not deposit:
-        problems.append('the check has no cashed date for the deposit date')
+        problems.append('no deposit date: the tracker has none and Blue Shield shows no cashed date')
+    received = str(tracker.get('received') or '').strip() if policy.get('received_date') == 'tracker' else ''
 
     fields = {
-        'Facility': None,                     # left empty
+        'Facility': 'select' if policy.get('facility') == 'select' else None,
         'Type': 'Check',
         'Check No.': check_no,
         'Batch No.': None,                    # left at 0
         'Amount $': f'{amount:.2f}' if amount is not None else '',
-        'Received Date': None,                # left at today
+        'Received Date': received or None,    # the tracker's, else left at today
         'Check Date': check_date,
         # The operator puts the check's date in both boxes, not the EOB's
         # receipt date. docs/ecw_posting.md: confirm this is policy.

@@ -404,7 +404,7 @@ tr.processing-row{background:rgba(59,130,246,.10) !important;animation:rowPulse 
 /* One main-column panel per tab — the claims table on Intake and Follow-up,
    the checks table on Remittance — pinned so an extra panel can never again
    push the rail out of its column. */
-.main > #checks-section, .main > #bank-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #reminders-section, .main > #claims-section-submissions{grid-column:1}
+.main > #checks-section, .main > #post-section, .main > #bank-section, .main > #folders-section, .main > #denials-section, .main > #priority-section, .main > #reminders-section, .main > #claims-section-submissions{grid-column:1}
 .ftree details{margin:2px 0 2px 14px;border-left:1px solid var(--bdr);padding-left:10px}
 .ftree > details{margin-left:0;border-left:none;padding-left:0}
 .ftree summary{cursor:pointer;padding:6px 4px;list-style:none;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -759,6 +759,27 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
+      <!-- POSTING QUEUE (Remittance, B10) — which payments are ready to be entered in eCW -->
+      <div class="claims-section" id="post-section" hidden>
+        <div class="section-title">
+          📥 Payments to enter in eCW
+          <span id="post-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
+          <a class="btn" href="/api/post-queue.csv" style="margin-left:auto">⬇ CSV</a>
+          <button class="btn btn-refresh" onclick="loadPostQueue()">↻ Refresh</button>
+        </div>
+        <div class="chk-tiles" id="post-tiles"></div>
+        <div class="claims-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stage</th><th>Check</th><th>Payer · patient</th><th class="num">Amount</th><th>Tracker</th><th>EOB</th><th>Why · last attempt</th>
+              </tr>
+            </thead>
+            <tbody id="post-body"><tr><td colspan="7" class="empty-state">Nothing yet. Run <strong>▶ Run → B10 daily run</strong>: it downloads the EOBs from Blue Shield, reads Karina's tracker and lists here what is ready to enter in eCW. A payment is ready when its check number is in the tracker (deposited) and its EOB is saved.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- BANK (Remittance, B10) — the bank statement against the checks, the 835s and eCW -->
       <div class="claims-section" id="bank-section" hidden>
         <div class="section-title">
@@ -865,6 +886,7 @@ tbody tr:last-child td{border-bottom:none}
               <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
                 <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
                 <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield check vs SharePoint vs eCW</option>
+                <option value="eob_post" data-bot="eob">📥 B10: enter the ready payments in eCW (dry run unless post:true)</option>
               </optgroup>
             </select>
 
@@ -1123,6 +1145,13 @@ window.scrollToEl = function(sel){
                 send: false,
                 test_to: ""
             }, null, 2),
+            eob_post: JSON.stringify({
+                since: "07/01/2025",
+                check_eft: "",
+                limit_checks: 1,
+                post: false,
+                note: "B10. Enters in eCW the payments that are READY: the check number is in Karina's tracker (deposited) and the EOB is saved. post:false is a DRY RUN — the Payments popup is filled, photographed and cancelled; nothing is saved. post:true saves the payment (Payment Advisory), attaches the EOB, types the CPT lines, commits them and reads the payment back: Unposted must be 0."
+            }, null, 2),
             check_reconcile: JSON.stringify({
                 since: "07/01/2025",
                 blue_shield: false,
@@ -1207,6 +1236,18 @@ window.scrollToEl = function(sel){
                  payload: {weekly: true, remind: false, dry_run: true}},
             ],
             eob: [
+                {icon: '📥', title: 'B10 daily run', task: 'check_reconcile',
+                 desc: 'The daily step of B10: walks Blue Shield, saves each new EOB (and the EOB of every deposited check that has none), asks again the status of uncashed checks, reads the scans and Karina&#39;s tracker, looks the checks up in eCW, and refreshes the list of payments ready to enter. Reads only.',
+                 payload: {since: '07/01/2025', blue_shield: true, download_eob: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true, era: false}},
+                {icon: '🧪', title: 'Dry run: 1 payment in eCW', task: 'eob_post',
+                 desc: 'Takes one READY check (or the one you name), opens Single Ins Payment in eCW, fills the Payments popup with the values it would enter, takes a screenshot and cancels. Nothing is saved in eCW.',
+                 payload: {since: '07/01/2025', limit_checks: 1, post: false},
+                 input: {key: 'check_eft', placeholder: 'Check # (empty = the first ready check)'}},
+                {icon: '💵', title: 'Post 1 payment in eCW', task: 'eob_post',
+                 desc: 'WRITES TO eCW. One READY check: saves the payment, attaches the EOB, types Allowed / Deduct / CoPay / Paid on each CPT line, commits, and reads the payment back — it is correct only when Unposted is 0. Watch it on the live screen.',
+                 confirm: 'This SAVES a payment in eCW for one check. Run the dry run for this check first and look at its screenshot. Continue?',
+                 payload: {since: '07/01/2025', limit_checks: 1, post: true},
+                 input: {key: 'check_eft', placeholder: 'Check # (empty = the first ready check)'}},
                 {icon: '✅', title: 'Reconcile all checks', task: 'check_reconcile',
                  desc: 'Walks Blue Shield for new checks, reads new check images in SharePoint, looks each check up in eCW, reads the unposted 835s in Billing → ERA, and refreshes every verdict. Reads only.',
                  payload: {since: '07/01/2025', blue_shield: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true, era: true}},
@@ -1423,6 +1464,9 @@ window.scrollToEl = function(sel){
                 if (remLabel) remLabel.textContent = 'need a person';
                 if (typeof loadDenials === 'function') loadDenials();
             }
+            const postSec = document.getElementById('post-section');
+            if (postSec) postSec.hidden = (bot !== 'eob');
+            if (bot === 'eob' && typeof loadPostQueue === 'function') loadPostQueue();
             const bankSec = document.getElementById('bank-section');
             if (bankSec) bankSec.hidden = (bot !== 'eob');
             if (bot === 'eob' && typeof loadBank === 'function') loadBank();
@@ -1933,6 +1977,66 @@ window.scrollToEl = function(sel){
                 window._denials = data;
                 renderDenials();
             } catch (e) { console.warn('denials', e); }
+        }
+
+        // ---- Payments to enter in eCW (B10) ----
+        window._postFilter = window._postFilter || 'work';
+        const POST_STAGE = {'ready': 'var(--success)', 'EOB missing': 'var(--warning)', 'needs a person': 'var(--bad)', 'held': 'var(--warning)',
+                            '$0 EOB': 'var(--info)', 'waiting for deposit': 'var(--text-muted)', 'other payer': 'var(--info)',
+                            'posted': 'var(--text-muted)', 'voided': 'var(--text-muted)'};
+        function setPostFilter(f) { window._postFilter = f; renderPostQueue(); }
+        function renderPostQueue() {
+            const data = window._postQueue;
+            if (!data) return;
+            const sm = data.summary || {};
+            const nf = n => Number(n || 0).toLocaleString('en-US');
+            const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+            const money = v => (v === '' || v == null) ? '' : '$' + Number(String(v).replace(/[^0-9.-]/g, '') || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const work = r => ['ready', 'EOB missing', 'needs a person', 'held'].includes(r.stage);
+            const meta = document.getElementById('post-meta');
+            if (meta) meta.textContent = data.rows.length ? `${nf(sm.ready)} ready · ${money(sm.ready_amount)} · ${nf(sm.waiting_for_deposit)} waiting for their deposit` : '';
+            const tiles = document.getElementById('post-tiles');
+            if (tiles) {
+                const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._postFilter === f ? ' on' : ''}" onclick="setPostFilter('${f}')" style="border-color:${window._postFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
+                tiles.innerHTML = data.rows.length ? [
+                    tile('to work', data.rows.filter(work).length, 'work', 'var(--text-secondary)', 'ready, missing, held'),
+                    tile('ready to post', sm.ready, 'ready', 'var(--success)', money(sm.ready_amount) + ' · deposited, EOB saved'),
+                    tile('EOB missing', sm.EOB_missing, 'EOB missing', 'var(--warning)', 'deposited · the next daily run downloads it'),
+                    tile('needs a person', sm.needs_a_person, 'needs a person', 'var(--bad)', 'in eCW, not finished'),
+                    tile('held', sm.held, 'held', 'var(--warning)', 'the plan is not complete'),
+                    tile('$0 EOBs', sm.zero, '$0 EOB', 'var(--info)', 'no check · steps to define'),
+                    tile('waiting for deposit', sm.waiting_for_deposit, 'waiting for deposit', 'var(--text-muted)', money(sm.waiting_for_deposit_amount) + ' · not in the tracker'),
+                    tile('other payers', sm.other_payer, 'other payer', 'var(--info)', 'EOB in the scan · by hand for now'),
+                    tile('posted', sm.posted, 'posted', 'var(--text-muted)', money(sm.posted_amount)),
+                ].join('') : '';
+            }
+            const body = document.getElementById('post-body');
+            if (!body) return;
+            const f = window._postFilter;
+            const rows = data.rows.filter(r => f === 'work' ? work(r) : r.stage === f).slice(0, 500);
+            if (!rows.length) {
+                body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'Nothing yet. Run <strong>▶ Run → B10 daily run</strong>.'}</td></tr>`;
+                return;
+            }
+            body.innerHTML = rows.map(r => `
+                <tr>
+                  <td><span class="verdict-pill" style="color:${POST_STAGE[r.stage] || 'var(--text-muted)'};font-weight:700">${esc(r.stage)}</span></td>
+                  <td><strong>${esc(r.check_as_printed || r.check)}</strong><div style="font-size:11px;color:var(--text-muted)">${esc(r.check_date || '')}${r.payment_id ? ' · eCW payment ' + esc(r.payment_id) : ''}</div></td>
+                  <td>${esc(r.payer || '')}<div style="font-size:11px;color:var(--text-muted)">${esc((r.patients || []).join(' · '))}${(r.claim_ids || []).length ? ' · claim ' + esc(r.claim_ids.join(', ')) : ''}</div></td>
+                  <td class="num">${money(r.amount)}${r.approve_to_pay && r.approve_to_pay !== r.amount ? `<div style="font-size:11px;color:var(--text-muted)">${money(r.approve_to_pay)} approved</div>` : ''}</td>
+                  <td>${r.in_tracker ? '<span style="color:var(--success)">deposited</span>' : '<span style="color:var(--text-muted)">not yet</span>'}<div style="font-size:11px;color:var(--text-muted)">${r.tracker_deposit ? 'dep. ' + esc(r.tracker_deposit) : ''}${r.tracker_received ? ' · rcvd ' + esc(r.tracker_received) : ''}</div></td>
+                  <td>${r.has_eob ? '<span style="color:var(--success)">saved</span>' : '<span style="color:var(--warning)">not saved</span>'}</td>
+                  <td style="font-size:12px">${esc(r.reason || '')}${r.last_attempt ? `<div style="font-size:11px;color:var(--text-muted)">${esc(r.last_mode === 'post' ? 'post' : 'dry run')}: ${esc(r.last_attempt)} · ${esc(r.last_attempt_at || '')}</div>` : ''}</td>
+                </tr>`).join('');
+        }
+        async function loadPostQueue() {
+            try {
+                const res = await fetch('/api/post-queue');
+                const data = await res.json();
+                if (data.error) { console.warn('post-queue', data.error); return; }
+                window._postQueue = data;
+                renderPostQueue();
+            } catch (e) { console.warn('post-queue', e); }
         }
 
         // ---- Bank reconciliation (B10) ----
@@ -2978,6 +3082,7 @@ window.scrollToEl = function(sel){
         setInterval(() => { if (window.activeBot === 'reminders') loadReminders(); }, 15000);
         setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
         setInterval(() => { if (window.activeBot === 'eob') loadBank(); }, 60000);
+        setInterval(() => { if (window.activeBot === 'eob') loadPostQueue(); }, 30000);
 
         // ---- SharePoint folders (Remittance) ----
         // The folder tree exactly as the bot walked it, with the check
@@ -3366,6 +3471,41 @@ def api_usage_credits():
     claude_usage.ensure_table(dynamodb)
     item = claude_usage.set_credits(dynamodb, balance, who)
     return jsonify({'ok': True, 'balance_usd': float(item['balance_usd']), 'as_of': item['as_of']})
+
+
+# ── B10: which payments are ready to be entered in eCW ────────────────────
+def _post_queue():
+    from src.eob.ready import load_policy, ready_queue, summarize as _sum
+    rows = ready_queue(scan_all(dynamodb.Table('helixona-eobs')), scan_all(dynamodb.Table('helixona-checks')), load_policy())
+    return rows, _sum(rows)
+
+
+@app.route('/api/post-queue')
+def api_post_queue():
+    try:
+        rows, summary = _post_queue()
+        return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
+    except Exception as e:
+        return jsonify({'error': str(e), 'rows': [], 'summary': {}})
+
+
+@app.route('/api/post-queue.csv')
+def api_post_queue_csv():
+    import csv
+    import io
+    from flask import Response
+    cols = ['stage', 'check_as_printed', 'payer', 'amount', 'approve_to_pay', 'check_date', 'in_tracker', 'tracker_received',
+            'tracker_deposit', 'has_eob', 'claim_ids', 'patients', 'reason', 'last_mode', 'last_attempt', 'last_attempt_at', 'payment_id']
+    try:
+        rows, _ = _post_queue()
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction='ignore')
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: (' '.join(map(str, r[k])) if isinstance(r.get(k), list) else r.get(k, '')) for k in cols})
+        return Response(buf.getvalue(), mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename="payments_to_enter.csv"'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 # ── B10: the bank statement against the checks, the 835s and eCW ──────────
