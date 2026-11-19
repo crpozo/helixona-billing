@@ -151,12 +151,42 @@ class TheDailyRunSavesTheEobs(unittest.TestCase):
         self.assertIn("if download_eob and not it.get('eob_pdf_s3_path') and _norm(it.get('check_eft')) in eob_for:", cap)
         self.assertIn("include_zero=bool(body.get('include_zero'))", cap)
 
-    def test_the_daily_card_downloads_and_reads_only(self):
+    def test_the_daily_run_is_the_posting_bots_own_task_and_reads_only(self):
         d = _read('dashboard.py')
-        card = d[d.index("title: 'B10 daily run'"):][:900]
-        self.assertIn("task: 'check_reconcile'", card)
-        self.assertIn('download_eob: true', card)
+        block = d[d.index('ACTIONS.posting = ['):]
+        card = block[:block.index("{icon: '🧪'")]
+        self.assertIn("task: 'b10_daily'", card)
         self.assertNotIn('post:', card)
+        m = _read('src/main.py')
+        daily = m[m.index("elif task_type == 'b10_daily':"):m.index("elif task_type == 'eob_post':")]
+        self.assertIn("{'blue_shield': True, 'download_eob': True, 'copies': True, 'ecw': True, 'era': False, **body}", daily)
+        self.assertIn('run_check_reconcile(aws_client, daily,', daily)
+        self.assertNotIn('run_eob_post', daily)
+
+
+class ItIsItsOwnBot(unittest.TestCase):
+    """The operator, 2026-11-19: Remittance is the SharePoint checks flow;
+    B10 is a new bot."""
+
+    def test_its_tab_unit_screen_and_queue(self):
+        os.environ.setdefault('SQS_QUEUE_URL', 'https://sqs.test/q')
+        import dashboard
+        r = dashboard.BOT_ROUTING['posting']
+        self.assertEqual((r['name'], r['service'], r['novnc_port']), ('Posting', 'helixona-agent-posting', 6087))
+        self.assertIn("""data-bot="posting" onclick="setActiveBot('posting')">💵 Posting""", dashboard.DASHBOARD_HTML)
+        unit = os.path.join(REPO, 'infra', 'helixona-agent-posting.service')
+        if os.path.exists(unit):
+            u = _read('infra/helixona-agent-posting.service')
+            self.assertIn('Environment=DISPLAY=:106', u)
+            self.assertIn('Environment=BOT_ROLE=posting', u)
+
+    def test_its_panels_are_on_its_tab_and_remittance_is_as_it_was(self):
+        d = _read('dashboard.py')
+        self.assertIn("if (postSec) postSec.hidden = (bot !== 'posting');", d)
+        self.assertIn("if (bankSec) bankSec.hidden = (bot !== 'posting');", d)
+        eob_cards = d[d.index('            eob: ['):d.index('        ACTIONS.denials')] if 'ACTIONS.denials' in d else d[d.index('            eob: ['):][:6000]
+        self.assertNotIn("task: 'eob_post'", eob_cards[:eob_cards.index("title: 'Test one check'")])
+        self.assertNotIn('download_eob', eob_cards[:eob_cards.index("title: 'Test one check'")])
 
 
 if __name__ == '__main__':

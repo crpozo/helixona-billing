@@ -1,0 +1,19 @@
+[Unit]
+Description=Helixona Billing Agent (Posting Bot — B10)
+After=network.target xvfb@106.service
+# Wants (not Requires): a flapping display must not crash-loop the worker. See
+# helixona-agent.service for the rationale.
+Wants=xvfb@106.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/helixona-agent
+ExecStart=/opt/helixona-agent/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+Environment=DISPLAY=:106
+Environment=BOT_ROLE=posting
+
+[Install]
+WantedBy=multi-user.target

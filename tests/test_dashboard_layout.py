@@ -36,7 +36,7 @@ def _fn(name):
 
 class EachTabShowsOneMainPanel(unittest.TestCase):
     def test_remittance_hides_the_claims_table(self):
-        self.assertIn("claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders')", _fn('setActiveBot'))
+        self.assertIn("claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders' || bot === 'posting')", _fn('setActiveBot'))
 
     def test_the_other_tabs_hide_the_checks_table(self):
         self.assertIn("chkSec.hidden = (bot !== 'eob')", _fn('setActiveBot'))
@@ -130,7 +130,7 @@ class TheChecksTableIsTheRemittancePanel(unittest.TestCase):
                      "renderActions(bot);"):
             self.assertIn(want, src)
         # The checks tab: the headline is what needs attention, the tiles are the only filter, seven columns.
-        self.assertIn("if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return;   // those tabs write their own headline", src)
+        self.assertIn("if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders' || window.activeBot === 'posting') return;   // those tabs write their own headline", src)
         self.assertIn("set('hero-pct-label', 'posted & matching');", src)
         self.assertNotIn('id="checks-filters"', src)
         self.assertIn("tile('need attention', mism, 'mismatch', 'var(--bad)', 'a person must act')", src)

@@ -3105,10 +3105,15 @@ IV_CORRECTIONS_TASKS = {'fix_coding_ivs'}
 
 # The Remittance bot reconciles checks — the copies we hold, Blue Shield's
 # status, eCW's payments — and never submits; the submitting bots never touch
-# payments. Fenced both ways, like the IV bot. Since 2026-11 (the B10 flows)
-# it also enters the payments that are ready — eob_post — which saves nothing
-# in eCW unless the task says "post": true.
-EOB_TASKS = {'check_reconcile', 'eob_post'}
+# payments. Fenced both ways, like the IV bot. It reads only: entering
+# payments belongs to the Posting bot below.
+EOB_TASKS = {'check_reconcile'}
+
+# The Posting bot (B10, 2026-11): the daily EOB download and readiness
+# check, and entering the ready payments in eCW — which saves nothing unless
+# the task says "post": true. The only bot that writes money into eCW, and
+# it does nothing else: fenced both ways.
+POSTING_TASKS = {'b10_daily', 'eob_post'}
 
 # The Reminders bot is the only one that writes to patients, and it does
 # nothing else: fenced both ways, like Remittance.
@@ -3135,6 +3140,12 @@ def process_message(message: dict, aws_client: AWSClient):
         logger.warning(f"BOT_ROLE=eob refused task_type={task_type}")
         return
     if _settings.bot_role != 'eob' and task_type in EOB_TASKS:
+        logger.warning(f"BOT_ROLE={_settings.bot_role} refused task_type={task_type}")
+        return
+    if _settings.bot_role == 'posting' and task_type not in POSTING_TASKS:
+        logger.warning(f"BOT_ROLE=posting refused task_type={task_type}")
+        return
+    if _settings.bot_role != 'posting' and task_type in POSTING_TASKS:
         logger.warning(f"BOT_ROLE={_settings.bot_role} refused task_type={task_type}")
         return
     if _settings.bot_role == 'reminders' and task_type not in REMINDER_TASKS:
@@ -11610,6 +11621,30 @@ def process_message(message: dict, aws_client: AWSClient):
             run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)
         except Exception as e:
             logger.error(f"Check reconciliation failed: {e}")
+        finally:
+            if holder.get('manager'):
+                holder['manager'].stop()
+
+    elif task_type == 'b10_daily':
+        # B10, the daily run: Blue Shield's checks with each EOB saved, the
+        # scans, Karina's tracker and eCW's payments — everything the list
+        # of payments ready to enter is worked out from. The same reading the
+        # Remittance bot does (src/checks/run), with the EOB reports kept.
+        # Reads only.
+        logger.info("═══ B10 — daily run: EOBs, the tracker, what is ready to enter ═══")
+        from src.checks.run import run_check_reconcile
+        daily = {'blue_shield': True, 'download_eob': True, 'copies': True, 'ecw': True, 'era': False, **body}
+        holder = {}
+
+        def get_page():
+            if not holder.get('manager'):
+                holder['manager'] = BrowserManager().start(proxy_config=None)
+            return holder['manager'].new_page()
+
+        try:
+            run_check_reconcile(aws_client, daily, login=_perform_ecw_login, get_page=get_page)
+        except Exception as e:
+            logger.error(f"B10 daily run failed: {e}")
         finally:
             if holder.get('manager'):
                 holder['manager'].stop()

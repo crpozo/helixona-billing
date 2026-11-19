@@ -776,7 +776,7 @@ class TheFolderIsReadThroughTheBrowser(unittest.TestCase):
 class TheTaskIsWiredReadOnly(unittest.TestCase):
     def test_the_bot_runs_it_and_opens_one_browser_on_demand(self):
         src = _read('src/main.py')
-        self.assertIn("EOB_TASKS = {'check_reconcile', 'eob_post'}", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
         i = src.index("elif task_type == 'check_reconcile':")
         block = src[i:i + 1500]
         self.assertIn('run_check_reconcile(aws_client, body, login=_perform_ecw_login, get_page=get_page)', block)

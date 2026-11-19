@@ -2,11 +2,30 @@
 
 The B10 flows (2026-11): *B10a Payer EOB Download and EOB-Ready Check*,
 *B10b Manual Posting in eCW*, *B10 Remittance to Bank to eCW Reconciliation
-v2*. All of it runs on the 🧾 Remittance bot and tab.
+v2*.
 
-## The daily run — ▶ Run → B10 daily run
+**Its own bot** (the operator, 2026-11-19: Remittance is the SharePoint
+checks flow; B10 is a new bot): tab **💵 Posting · EOB to eCW (B10)**, unit
+`helixona-agent-posting`, display :106, noVNC 6087, queue
+`SQS_QUEUE_URL_POSTING`, Chrome profile `browser-profile-posting`, tasks
+`b10_daily` and `eob_post` — fenced to this bot, and this bot runs nothing
+else. It reuses Remittance's readers (no second reconciliation code);
+Remittance itself is unchanged and still only reads.
 
-`check_reconcile` with `blue_shield: true, download_eob: true`. Reads only.
+## Host, once
+
+    sudo bash -c 'ROLE=posting bash /opt/helixona-agent/setup_denials_host.sh 106 6087'
+
+creates display :106, VNC 5907, noVNC 6087, the queue
+`helixona-agent-tasks-posting` and `SQS_QUEUE_URL_POSTING` in `.env`. Open
+TCP 6087 on the security group. On the first daily run the bot's own Chrome
+asks for the **SharePoint sign-in once** on its live screen (the scans and
+Karina's tracker are read through it) — sign in and tick *Stay signed in*.
+
+## The daily run — ▶ Run → Daily run
+
+`b10_daily`: Remittance's reading with the EOB reports kept
+(`blue_shield: true, download_eob: true`). Reads only.
 
 1. **Blue Shield** — Claims → Check claim status. Every new check is opened
    and its **EOB report saved** (S3, under the check number). A check
@@ -69,7 +88,7 @@ A payment created whose lines could not be finished is reported as
 `data/ecw_posting_policy.json` holds every choice above (amount, dates,
 facility, attaching, the commit button, multi-claim checks, $0 EOBs).
 
-## The bank — 🏦 Bank reconciliation
+## The bank — 🏦 Bank reconciliation (same tab)
 
 docs/bank_reconcile.md: the statement uploaded by a person, each credit
 matched to its checks and to what eCW has posted.
@@ -78,7 +97,7 @@ matched to its checks and to what eCW has posted.
 
 | card | writes? |
 |---|---|
-| 📥 B10 daily run | no |
+| 📥 Daily run | no |
 | 🧪 Dry run: 1 payment in eCW | no — fills the popup and cancels |
 | 💵 Post 1 payment in eCW | **yes** — asks first; one check |
 

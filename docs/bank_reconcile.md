@@ -8,7 +8,7 @@ Built on Remittance, not beside it ("no duplicate reconciliation codebase"):
 the 🧾 Remittance tab already knows, per check or EFT, the scan, the deposit
 slip, the tracker's deposit date, the payer's status, the 835 and the eCW
 payment. B10 adds the one source it lacked — **the bank's own transactions**
-— in a panel on the same tab, **🏦 Bank reconciliation**.
+— in the panel **🏦 Bank reconciliation** on the 💵 Posting tab (B10's own bot).
 
 No bot, no browser, no model and no host setup: the dashboard computes it
 from the uploaded statement and the Checks table each time the panel loads.
@@ -17,7 +17,7 @@ Read-only: nothing is written to the bank or to eCW.
 ## How to use it
 
 1. Export the account's transactions from the bank as **CSV or Excel**.
-2. 🧾 Remittance → 🏦 Bank reconciliation → choose the file → **⬆ Upload
+2. 💵 Posting → 🏦 Bank reconciliation → choose the file → **⬆ Upload
    statement**. Overlapping statements are fine: a line already on file is
    not added twice.
 3. Run the check reconciliation first (▶ Run → Reconcile all checks) so the

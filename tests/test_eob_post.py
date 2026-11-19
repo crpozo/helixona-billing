@@ -109,14 +109,16 @@ class GridRowsArePinnedBeforeTyping(unittest.TestCase):
 
 class ThePostingTaskIsBackBehindItsGate(unittest.TestCase):
     """2026-09-17 the task was retired (entering payments was the team's
-    work). 2026-11, the B10 flows: the bot enters the payments that are
-    ready. It is wired again, on the Remittance bot only, and saves nothing
-    without "post": true."""
-    def test_only_the_remittance_bot_runs_it(self):
+    work). 2026-11, the B10 flows: a bot enters the payments that are ready
+    — the Posting bot, its own tab, unit and screen. Remittance still only
+    reads. Nothing is saved without "post": true."""
+    def test_only_the_posting_bot_runs_it(self):
         src = _read('src/main.py')
         self.assertIn("elif task_type == 'eob_post':", src)
-        self.assertIn("EOB_TASKS = {'check_reconcile', 'eob_post'}", src)
-        self.assertIn("if _settings.bot_role != 'eob' and task_type in EOB_TASKS:", src)
+        self.assertIn("POSTING_TASKS = {'b10_daily', 'eob_post'}", src)
+        self.assertIn("if _settings.bot_role != 'posting' and task_type in POSTING_TASKS:", src)
+        self.assertIn("if _settings.bot_role == 'posting' and task_type not in POSTING_TASKS:", src)
+        self.assertIn("EOB_TASKS = {'check_reconcile'}", src)
 
     def test_the_card_that_writes_asks_first_and_the_default_is_a_dry_run(self):
         import re

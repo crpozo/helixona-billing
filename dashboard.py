@@ -35,6 +35,7 @@ SQS_URL_EOB = os.environ.get('SQS_QUEUE_URL_EOB', '')
 SQS_URL_DENIALS = os.environ.get('SQS_QUEUE_URL_DENIALS', '')
 SQS_URL_PRIORITY = os.environ.get('SQS_QUEUE_URL_PRIORITY', '')
 SQS_URL_REMINDERS = os.environ.get('SQS_QUEUE_URL_REMINDERS', '')
+SQS_URL_POSTING = os.environ.get('SQS_QUEUE_URL_POSTING', '')
 S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '')
 EC2_IP = "54.189.175.233"
 
@@ -156,6 +157,17 @@ BOT_ROUTING = {
         'emoji': '💌',
         'label': 'Checks sent to patients',
         'novnc_port': 6086,
+    },
+    # Posting (B10, 2026-11): the payer's EOB to the payment in eCW — the
+    # daily EOB download, what is ready to enter, the entering itself, and
+    # the bank statement as the last check. Display :106, noVNC 6087.
+    'posting': {
+        'queue_url': SQS_URL_POSTING,
+        'service': 'helixona-agent-posting',
+        'name': 'Posting',
+        'emoji': '💵',
+        'label': 'EOB to eCW (B10)',
+        'novnc_port': 6087,
     },
 }
 
@@ -610,6 +622,7 @@ tbody tr:last-child td{border-bottom:none}
       <div class="subtab" data-bot="denials" onclick="setActiveBot('denials')">🚫 Denials · Claim denials</div>
       <div class="subtab" data-bot="priority" onclick="setActiveBot('priority')">🎯 Priority · Claim prioritization</div>
       <div class="subtab" data-bot="reminders" onclick="setActiveBot('reminders')">💌 Reminders · Checks sent to patients</div>
+      <div class="subtab" data-bot="posting" onclick="setActiveBot('posting')">💵 Posting · EOB to eCW (B10)</div>
     </div>
 
     <!-- HERO KPI: Submission progress (Bot 1 — Submissions) -->
@@ -759,7 +772,7 @@ tbody tr:last-child td{border-bottom:none}
         </div>
       </div>
 
-      <!-- POSTING QUEUE (Remittance, B10) — which payments are ready to be entered in eCW -->
+      <!-- POSTING QUEUE (Posting bot, B10) — which payments are ready to be entered in eCW -->
       <div class="claims-section" id="post-section" hidden>
         <div class="section-title">
           📥 Payments to enter in eCW
@@ -775,12 +788,12 @@ tbody tr:last-child td{border-bottom:none}
                 <th>Stage</th><th>Check</th><th>Payer · patient</th><th class="num">Amount</th><th>Tracker</th><th>EOB</th><th>Why · last attempt</th>
               </tr>
             </thead>
-            <tbody id="post-body"><tr><td colspan="7" class="empty-state">Nothing yet. Run <strong>▶ Run → B10 daily run</strong>: it downloads the EOBs from Blue Shield, reads Karina's tracker and lists here what is ready to enter in eCW. A payment is ready when its check number is in the tracker (deposited) and its EOB is saved.</td></tr></tbody>
+            <tbody id="post-body"><tr><td colspan="7" class="empty-state">Nothing yet. Run <strong>▶ Run → Daily run</strong>: it downloads the EOBs from Blue Shield, reads Karina's tracker and lists here what is ready to enter in eCW. A payment is ready when its check number is in the tracker (deposited) and its EOB is saved.</td></tr></tbody>
           </table>
         </div>
       </div>
 
-      <!-- BANK (Remittance, B10) — the bank statement against the checks, the 835s and eCW -->
+      <!-- BANK (Posting bot, B10) — the bank statement against the checks, the 835s and eCW -->
       <div class="claims-section" id="bank-section" hidden>
         <div class="section-title">
           🏦 Bank reconciliation
@@ -886,7 +899,10 @@ tbody tr:last-child td{border-bottom:none}
               <optgroup label="🧾 Remittance · EOB Bot" data-bot="eob">
                 <option value="check_reconcile" data-bot="eob">✅ Reconcile checks: copies · Blue Shield · eCW</option>
                 <option value="check_test_one" data-bot="eob">🧪 Test of 1: one Blue Shield check vs SharePoint vs eCW</option>
-                <option value="eob_post" data-bot="eob">📥 B10: enter the ready payments in eCW (dry run unless post:true)</option>
+              </optgroup>
+              <optgroup label="💵 Posting · B10" data-bot="posting">
+                <option value="b10_daily" data-bot="posting">📥 Daily run: save the EOBs, read the tracker, list what is ready</option>
+                <option value="eob_post" data-bot="posting">💵 Enter the ready payments in eCW (dry run unless post:true)</option>
               </optgroup>
             </select>
 
@@ -1145,6 +1161,12 @@ window.scrollToEl = function(sel){
                 send: false,
                 test_to: ""
             }, null, 2),
+            b10_daily: JSON.stringify({
+                since: "07/01/2025",
+                limit_checks: 0,
+                check_eft: "",
+                note: "B10 daily run. Reads only: walks Blue Shield and saves each EOB (and the EOB of every deposited check that has none), asks again the status of uncashed checks, reads the scans and Karina's tracker, looks the checks up in eCW. The list of payments ready to enter is worked out from it."
+            }, null, 2),
             eob_post: JSON.stringify({
                 since: "07/01/2025",
                 check_eft: "",
@@ -1236,18 +1258,6 @@ window.scrollToEl = function(sel){
                  payload: {weekly: true, remind: false, dry_run: true}},
             ],
             eob: [
-                {icon: '📥', title: 'B10 daily run', task: 'check_reconcile',
-                 desc: 'The daily step of B10: walks Blue Shield, saves each new EOB (and the EOB of every deposited check that has none), asks again the status of uncashed checks, reads the scans and Karina&#39;s tracker, looks the checks up in eCW, and refreshes the list of payments ready to enter. Reads only.',
-                 payload: {since: '07/01/2025', blue_shield: true, download_eob: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true, era: false}},
-                {icon: '🧪', title: 'Dry run: 1 payment in eCW', task: 'eob_post',
-                 desc: 'Takes one READY check (or the one you name), opens Single Ins Payment in eCW, fills the Payments popup with the values it would enter, takes a screenshot and cancels. Nothing is saved in eCW.',
-                 payload: {since: '07/01/2025', limit_checks: 1, post: false},
-                 input: {key: 'check_eft', placeholder: 'Check # (empty = the first ready check)'}},
-                {icon: '💵', title: 'Post 1 payment in eCW', task: 'eob_post',
-                 desc: 'WRITES TO eCW. One READY check: saves the payment, attaches the EOB, types Allowed / Deduct / CoPay / Paid on each CPT line, commits, and reads the payment back — it is correct only when Unposted is 0. Watch it on the live screen.',
-                 confirm: 'This SAVES a payment in eCW for one check. Run the dry run for this check first and look at its screenshot. Continue?',
-                 payload: {since: '07/01/2025', limit_checks: 1, post: true},
-                 input: {key: 'check_eft', placeholder: 'Check # (empty = the first ready check)'}},
                 {icon: '✅', title: 'Reconcile all checks', task: 'check_reconcile',
                  desc: 'Walks Blue Shield for new checks, reads new check images in SharePoint, looks each check up in eCW, reads the unposted 835s in Billing → ERA, and refreshes every verdict. Reads only.',
                  payload: {since: '07/01/2025', blue_shield: true, limit_checks: 0, check_eft: '', copies: true, limit_files: 0, ecw: true, era: true}},
@@ -1287,6 +1297,20 @@ window.scrollToEl = function(sel){
             {icon: '📋', title: 'Prioritize without creating claims', task: 'claim_priority',
              desc: 'The same, skipping the Claims IPE All step: nothing is written in eCW.',
              payload: {since: '07/01/2025', limit_claims: 0, create_claims: false, redo: false}},
+        ];
+        ACTIONS.posting = [
+            {icon: '📥', title: 'Daily run', task: 'b10_daily',
+             desc: 'Walks Blue Shield and saves each new EOB (and the EOB of every deposited check that has none), asks again the status of uncashed checks, reads the scans and Karina&#39;s tracker, looks the checks up in eCW, and refreshes the list of payments ready to enter. Reads only.',
+             payload: {since: '07/01/2025', limit_checks: 0, check_eft: ''}},
+            {icon: '🧪', title: 'Dry run: 1 payment in eCW', task: 'eob_post',
+             desc: 'Takes one READY check (or the one you name), opens Single Ins Payment in eCW, fills the Payments popup with the values it would enter, takes a screenshot and cancels. Nothing is saved in eCW.',
+             payload: {since: '07/01/2025', limit_checks: 1, post: false},
+             input: {key: 'check_eft', placeholder: 'Check # (empty = the first ready check)'}},
+            {icon: '💵', title: 'Post 1 payment in eCW', task: 'eob_post',
+             desc: 'WRITES TO eCW. One READY check: saves the payment, attaches the EOB, types Allowed / Deduct / CoPay / Paid on each CPT line, commits, and reads the payment back — it is correct only when Unposted is 0. Watch it on the live screen.',
+             confirm: 'This SAVES a payment in eCW for one check. Run the dry run for this check first and look at its screenshot. Continue?',
+             payload: {since: '07/01/2025', limit_checks: 1, post: true},
+             input: {key: 'check_eft', placeholder: 'Check # (empty = the first ready check)'}},
         ];
         ACTIONS.reminders = [
             {icon: '🧪', title: 'Test on 1 check', task: 'patient_check_reminders',
@@ -1408,7 +1432,7 @@ window.scrollToEl = function(sel){
             if (firstVisible) { sel.value = firstVisible.value; updateTaskTemplate(); }
             renderActions(bot);
             const df = document.getElementById('date-filter');
-            if (df) df.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders');
+            if (df) df.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders' || bot === 'posting');
             const numLabel = document.getElementById('hero-num-label');
             if (numLabel) { numLabel.hidden = false; numLabel.textContent = bot === 'eob' ? ' need attention,' : ' claims to send'; }
             const heroOf = document.getElementById('hero-of');
@@ -1429,7 +1453,7 @@ window.scrollToEl = function(sel){
             const chkSec = document.getElementById('checks-section');
             if (chkSec) chkSec.hidden = (bot !== 'eob');
             const claimsSec = document.getElementById('claims-section-submissions');
-            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders');
+            if (claimsSec) claimsSec.hidden = (bot === 'eob' || bot === 'denials' || bot === 'priority' || bot === 'reminders' || bot === 'posting');
             if (bot === 'eob' && typeof loadChecks === 'function') loadChecks();
             // Denials: eCW's denied claims with the SOP's answer, one panel.
             const denSec = document.getElementById('denials-section');
@@ -1464,12 +1488,20 @@ window.scrollToEl = function(sel){
                 if (remLabel) remLabel.textContent = 'need a person';
                 if (typeof loadDenials === 'function') loadDenials();
             }
+            // Posting (B10): the payments to enter and the bank, two panels.
             const postSec = document.getElementById('post-section');
-            if (postSec) postSec.hidden = (bot !== 'eob');
-            if (bot === 'eob' && typeof loadPostQueue === 'function') loadPostQueue();
+            if (postSec) postSec.hidden = (bot !== 'posting');
             const bankSec = document.getElementById('bank-section');
-            if (bankSec) bankSec.hidden = (bot !== 'eob');
-            if (bot === 'eob' && typeof loadBank === 'function') loadBank();
+            if (bankSec) bankSec.hidden = (bot !== 'posting');
+            if (bot === 'posting') {
+                if (numLabel) numLabel.textContent = ' payments ready to enter,';
+                if (heroOf) heroOf.hidden = false;
+                if (denom) denom.textContent = 'checks in the queue';
+                if (pctLabel) pctLabel.textContent = 'already posted';
+                if (remLabel) remLabel.textContent = 'waiting for their deposit';
+                if (typeof loadPostQueue === 'function') loadPostQueue();
+                if (typeof loadBank === 'function') loadBank();
+            }
             const fldSec = document.getElementById('folders-section');
             if (fldSec) fldSec.hidden = (bot !== 'eob');
             if (bot === 'eob' && typeof loadFolders === 'function') loadFolders();
@@ -1663,7 +1695,7 @@ window.scrollToEl = function(sel){
             const isResub = c => /resub/i.test(c.submission_type || '');
             if (window.activeBot === 'resubmissions') return claims.filter(isResub);
             if (window.activeBot === 'submissions') return claims.filter(c => !isResub(c));
-            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return [];  // those tabs show their own tables
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders' || window.activeBot === 'posting') return [];  // those tabs show their own tables
             return claims;
         }
 
@@ -1995,6 +2027,14 @@ window.scrollToEl = function(sel){
             const work = r => ['ready', 'EOB missing', 'needs a person', 'held'].includes(r.stage);
             const meta = document.getElementById('post-meta');
             if (meta) meta.textContent = data.rows.length ? `${nf(sm.ready)} ready · ${money(sm.ready_amount)} · ${nf(sm.waiting_for_deposit)} waiting for their deposit` : '';
+            if (window.activeBot === 'posting') {
+                const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+                const total = data.rows.length, posted = sm.posted || 0;
+                set('hero-submitted', nf(sm.ready)); set('hero-total', nf(total));
+                set('hero-pct', (total ? Math.round(posted / total * 100) : 0) + '%'); set('hero-remaining', nf(sm.waiting_for_deposit));
+                const fill = document.getElementById('hero-progress-fill');
+                if (fill) fill.style.width = (total ? Math.round(posted / total * 100) : 0) + '%';
+            }
             const tiles = document.getElementById('post-tiles');
             if (tiles) {
                 const tile = (label, n, f, color, meaning) => `<div class="chk-tile${window._postFilter === f ? ' on' : ''}" onclick="setPostFilter('${f}')" style="border-color:${window._postFilter === f ? color : 'var(--bdr)'}"><div class="chk-tile-n" style="color:${color}">${nf(n)}</div><div class="chk-tile-l">${label}</div>${meaning ? `<div class="chk-tile-m">${meaning}</div>` : ''}</div>`;
@@ -2015,7 +2055,7 @@ window.scrollToEl = function(sel){
             const f = window._postFilter;
             const rows = data.rows.filter(r => f === 'work' ? work(r) : r.stage === f).slice(0, 500);
             if (!rows.length) {
-                body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'Nothing yet. Run <strong>▶ Run → B10 daily run</strong>.'}</td></tr>`;
+                body.innerHTML = `<tr><td colspan="7" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'Nothing yet. Run <strong>▶ Run → Daily run</strong>.'}</td></tr>`;
                 return;
             }
             body.innerHTML = rows.map(r => `
@@ -2417,7 +2457,7 @@ window.scrollToEl = function(sel){
         }
 
         async function loadCounts() {
-            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return;   // those tabs write their own headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders' || window.activeBot === 'posting') return;   // those tabs write their own headline
             // With a date filter on, the headline is computed from the cached
             // claims with the SAME state definition the server uses
             // (PIPELINE_STAGES.submitted) — one definition, two callers.
@@ -2530,7 +2570,7 @@ window.scrollToEl = function(sel){
         }
 
         function renderStats(claims) {
-            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders') return;   // those tabs write their own headline
+            if (window.activeBot === 'eob' || window.activeBot === 'denials' || window.activeBot === 'priority' || window.activeBot === 'reminders' || window.activeBot === 'posting') return;   // those tabs write their own headline
             const live = claims.filter(c => !isSent(c));
             window._archivedCount = live.filter(isArchived).length;
             const pending = live.filter(c => !isArchived(c));
@@ -3081,8 +3121,8 @@ window.scrollToEl = function(sel){
         setInterval(() => { if (window.activeBot === 'priority') loadPriority(); }, 15000);
         setInterval(() => { if (window.activeBot === 'reminders') loadReminders(); }, 15000);
         setInterval(() => { if (window.activeBot === 'eob') loadFolders(); }, 60000);
-        setInterval(() => { if (window.activeBot === 'eob') loadBank(); }, 60000);
-        setInterval(() => { if (window.activeBot === 'eob') loadPostQueue(); }, 30000);
+        setInterval(() => { if (window.activeBot === 'posting') loadBank(); }, 60000);
+        setInterval(() => { if (window.activeBot === 'posting') loadPostQueue(); }, 30000);
 
         // ---- SharePoint folders (Remittance) ----
         // The folder tree exactly as the bot walked it, with the check

@@ -301,7 +301,7 @@ class TheDashboardPanel(unittest.TestCase):
         self.assertIn('REMOTE DEPOSIT', text)
         self.assertIn('unmatched', text)
 
-    def test_the_panel_lives_in_the_remittance_tab(self):
+    def test_the_panel_lives_on_the_posting_bots_tab(self):
         html = self.d.DASHBOARD_HTML
         self.assertIn('id="bank-section" hidden', html)
-        self.assertIn("if (bankSec) bankSec.hidden = (bot !== 'eob');", html)
+        self.assertIn("if (bankSec) bankSec.hidden = (bot !== 'posting');", html)

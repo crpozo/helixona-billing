@@ -83,6 +83,8 @@ scp -i $KEY_FILE -o StrictHostKeyChecking=no \
     infra/helixona-agent-priority.service ubuntu@$EC2_IP:/tmp/helixona-agent-priority.service
 scp -i $KEY_FILE -o StrictHostKeyChecking=no \
     infra/helixona-agent-reminders.service ubuntu@$EC2_IP:/tmp/helixona-agent-reminders.service
+scp -i $KEY_FILE -o StrictHostKeyChecking=no \
+    infra/helixona-agent-posting.service ubuntu@$EC2_IP:/tmp/helixona-agent-posting.service
 # The Denials bot's one-time host setup (display :103, noVNC 6084, its queue);
 # infra/ is not synced, so the script travels on its own. Run it once on the
 # host: sudo bash /opt/helixona-agent/setup_denials_host.sh
@@ -113,6 +115,7 @@ sudo mv /tmp/helixona-agent-eob.service /etc/systemd/system/helixona-agent-eob.s
 sudo mv /tmp/helixona-agent-denials.service /etc/systemd/system/helixona-agent-denials.service
 sudo mv /tmp/helixona-agent-priority.service /etc/systemd/system/helixona-agent-priority.service
 sudo mv /tmp/helixona-agent-reminders.service /etc/systemd/system/helixona-agent-reminders.service
+sudo mv /tmp/helixona-agent-posting.service /etc/systemd/system/helixona-agent-posting.service
 sudo cp /tmp/helixona-unlocked-notes.service /tmp/helixona-unlocked-notes.timer \
         /tmp/helixona-unlocked-notes-weekly.service /tmp/helixona-unlocked-notes-weekly.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -125,12 +128,15 @@ sudo systemctl enable helixona-agent-denials
 sudo systemctl enable helixona-agent-priority
 # Reminders bot: ROLE=reminders bash /opt/helixona-agent/setup_denials_host.sh 105 6086 once (docs/reminders.md).
 sudo systemctl enable helixona-agent-reminders
+# Posting bot (B10): ROLE=posting bash /opt/helixona-agent/setup_denials_host.sh 106 6087 once (docs/b10_posting.md).
+sudo systemctl enable helixona-agent-posting
 sudo systemctl restart helixona-agent
 sudo systemctl restart helixona-agent-resub
 sudo systemctl restart helixona-agent-eob
 sudo systemctl restart helixona-agent-denials
 sudo systemctl restart helixona-agent-priority
 sudo systemctl restart helixona-agent-reminders
+sudo systemctl restart helixona-agent-posting
 sudo systemctl restart helixona-dashboard
 sleep 2
 sudo systemctl status helixona-agent --no-pager
@@ -139,6 +145,7 @@ sudo systemctl status helixona-agent-eob --no-pager
 sudo systemctl status helixona-agent-denials --no-pager || true
 sudo systemctl status helixona-agent-priority --no-pager || true
 sudo systemctl status helixona-agent-reminders --no-pager || true
+sudo systemctl status helixona-agent-posting --no-pager || true
 sudo systemctl status helixona-dashboard --no-pager
 echo "Deploy complete."
 ENDSSH
