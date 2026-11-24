@@ -18,7 +18,7 @@ def _read(rel):
         return fh.read()
 
 
-def eob(check='0031401901', payee='KARI THORNE', status='Check Issued', member='THORNE, KARI', **kw):
+def eob(check='0031401901', payee='JANE DOE', status='Check Issued', member='DOE, JANE', **kw):
     return {'check_eft': check, 'check_amount': '$257.09', 'check_status': status, 'check_date': '10/20/2026',
             'payee_name': payee, 'claims': [{'member_name': member, 'claim_id': '2187', 'dos': '09/01/2026'}], **kw}
 
@@ -29,7 +29,7 @@ class WhichChecks(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         r = rows[0]
         self.assertEqual((r['check_number'], r['amount'], r['patient'], r['claim_ids'], r['dos']),
-                         ('31401901', '257.09', 'THORNE, KARI', ['2187'], '09/01/2026'))
+                         ('31401901', '257.09', 'DOE, JANE', ['2187'], '09/01/2026'))
         self.assertFalse(r['in_hand'])
 
     def test_helixona_and_other_payees_are_left_out(self):
@@ -90,7 +90,7 @@ class FoundOnTheFirstRealRun(unittest.TestCase):
         index = run.index_patients([{'claim_id': '2190', 'patient_name': 'Almanza, Yazmin M', 'service_date': '10/23/2026'},
                                     {'claim_id': '2150', 'patient_name': 'Almanza, Yazmin M', 'service_date': '09/04/2026'},
                                     {'claim_id': '2200', 'patient_name': 'Almanza, Rosa', 'service_date': '10/23/2026'}],
-                                   [{'claim_id': '_run'}, {'claim_id': '2301', 'patient': 'THORNE, KARI', 'dos': '10/23/2026'}])
+                                   [{'claim_id': '_run'}, {'claim_id': '2301', 'patient': 'DOE, JANE', 'dos': '10/23/2026'}])
         row = {'patient': 'YAZMIN ALMANZA', 'dos': '10/23/2026'}
         self.assertEqual(run.match_by_patient(row, index), (['2190'], 'patient + DOS'))
         # Another date of service: any claim of hers leads to her record.
@@ -119,7 +119,7 @@ class TheMessage(unittest.TestCase):
         row = run.patient_checks([eob()])[0]
         subject, text = run.compose(POLICY, row, date(2026, 11, 26))
         self.assertIn('Blue Shield', subject)
-        for piece in ('Hello Kari,', '31401901', '$257.09', '10/20/2026', 'November 26, 2026', 'card we have on file'):
+        for piece in ('Hello Jane,', '31401901', '$257.09', '10/20/2026', 'November 26, 2026', 'card we have on file'):
             self.assertIn(piece, text)
         self.assertNotIn('{', text)
 
@@ -144,25 +144,25 @@ class TheMessage(unittest.TestCase):
         self.assertTrue(run.compose(POLICY, row, date(2026, 11, 26), 'final')[0].startswith('Final notice'))
 
     def test_first_names(self):
-        self.assertEqual([run.first_name(n) for n in ('THORNE, KARI A', 'Kari Thorne', '')], ['Kari', 'Kari', 'there'])
+        self.assertEqual([run.first_name(n) for n in ('DOE, JANE A', 'Jane Doe', '')], ['Jane', 'Jane', 'there'])
 
 
 class TheContact(unittest.TestCase):
     def test_the_labelled_address_wins_and_the_clinics_own_is_never_the_patients(self):
-        got = ecw.contact_in("billing@helixona.com\nother@example.org\nE-mail: kari.t@example.com   Cell: 415-555-0100\nHome: (415) 555-0199")
-        self.assertEqual(got, {'email': 'kari.t@example.com', 'phone': '(415) 555-0100'})
+        got = ecw.contact_in("billing@helixona.com\nother@example.org\nE-mail: jane.d@example.com   Cell: 415-555-0100\nHome: (415) 555-0199")
+        self.assertEqual(got, {'email': 'jane.d@example.com', 'phone': '(415) 555-0100'})
 
     def test_the_address_inside_a_form_box_is_read_by_the_boxs_name(self):
         # 2026-11-17, claim 7874: "e-mail not found · phone found" — the
         # address was in an <input>, and a box's value is not page text.
-        fields = [{'name': 'ptFname First Name', 'value': 'KARI'},
+        fields = [{'name': 'ptFname First Name', 'value': 'JANE'},
                   {'name': 'respEmail Guarantor', 'value': 'someone@helixona.com'},
                   {'name': 'homePhone Home', 'value': '415-555-0199'},
                   {'name': 'cellPhone Cell', 'value': '(415) 555-0100'},
                   {'name': 'faxNo Fax', 'value': '415-555-0000'},
                   {'name': 'notes', 'value': 'alt contact old@example.org'},
-                  {'name': 'patientEmail E-mail', 'value': 'Kari.T@Example.com'}]
-        self.assertEqual(ecw.contact_in_fields(fields), {'email': 'kari.t@example.com', 'phone': '(415) 555-0100'})
+                  {'name': 'patientEmail E-mail', 'value': 'Jane.D@Example.com'}]
+        self.assertEqual(ecw.contact_in_fields(fields), {'email': 'jane.d@example.com', 'phone': '(415) 555-0100'})
         self.assertEqual(ecw.contact_in_fields([{'name': 'zip', 'value': '94110'}]), {'email': '', 'phone': ''})
 
     HUB = ("Patient Hub\nDOE, Jane\nJan 1, 1990 (36 yo F)\nAcc No. 99999\nDoe, Jane 36Y, F\nINFO\n1 Main St, TOWN,CA-90000\n|\n555-010-0199\n|\n"
@@ -184,12 +184,12 @@ class TheContact(unittest.TestCase):
         self.assertLess(body.index("_click_text(page, HUB,"), body.index("_click_text(page, ['Info'],"))
 
     def test_nothing_found_is_empty(self):
-        self.assertEqual(ecw.contact_in('Claim 2187 · THORNE, KARI · 09/01/2026 · 257.09'), {'email': '', 'phone': ''})
+        self.assertEqual(ecw.contact_in('Claim 2187 · DOE, JANE · 09/01/2026 · 257.09'), {'email': '', 'phone': ''})
 
     def test_the_contact_file_by_claim_or_by_name(self):
-        row = {'claim_ids': ['2187'], 'patient': 'THORNE, KARI'}
+        row = {'claim_ids': ['2187'], 'patient': 'DOE, JANE'}
         self.assertEqual(run.contact_from_file({'claims': {'2187': {'email': 'a@x.com'}}, 'patients': {}}, row)['email'], 'a@x.com')
-        self.assertEqual(run.contact_from_file({'claims': {}, 'patients': {'Kari Thorne': {'email': 'b@x.com'}}}, row)['email'], 'b@x.com')
+        self.assertEqual(run.contact_from_file({'claims': {}, 'patients': {'Jane Doe': {'email': 'b@x.com'}}}, row)['email'], 'b@x.com')
         self.assertIsNone(run.contact_from_file({'claims': {}, 'patients': {}}, row))
 
 
@@ -234,7 +234,7 @@ class TheRun(unittest.TestCase):
             out = run.run_patient_check_reminders(aws, {'today': '2026-11-12', **body})
         return out, table.items, sent
 
-    CONTACTS = {'claims': {'2187': {'email': 'kari.t@example.com'}}, 'patients': {}}
+    CONTACTS = {'claims': {'2187': {'email': 'jane.d@example.com'}}, 'patients': {}}
 
     def test_without_send_nothing_is_emailed_and_the_draft_is_kept(self):
         out, items, sent = self._run({}, self.CONTACTS)
@@ -246,7 +246,7 @@ class TheRun(unittest.TestCase):
 
     def test_send_emails_the_patient_once_and_sets_the_deadline(self):
         out, items, sent = self._run({'send': True}, self.CONTACTS)
-        self.assertEqual([s[0] for s in sent], [['kari.t@example.com']])
+        self.assertEqual([s[0] for s in sent], [['jane.d@example.com']])
         it = items['31401901']
         self.assertEqual((it['stage'], it['reminders_sent'], it['deadline'], it['last_reminder_at']),
                          ('reminded', 1, '2026-11-26', '2026-11-12'))

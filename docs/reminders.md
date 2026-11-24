@@ -117,7 +117,7 @@ Optional contact file (host only, git-ignored — it is PHI),
 
 ```json
 {"claims": {"2187": {"email": "patient@example.com", "phone": "(415) 555-0100"}},
- "patients": {"THORNE, KARI": {"email": "patient@example.com"}}}
+ "patients": {"DOE, JANE": {"email": "patient@example.com"}}}
 ```
 
 ## First run

@@ -1,6 +1,6 @@
 {
   "_comment": "Reminders bot (docs/reminders.md). The numbers and the wording are the clinic's to set; the bot only fills the {placeholders}. Nothing here charges a card: after the deadline the check is listed for a person to decide.",
-  "from": "",
+  "from": "billingsupport@helixona.com",
   "clinic": "Helixona",
   "phone": "",
   "mail_days": 7,

@@ -180,7 +180,7 @@ def reconcile(copies, checks, payments, ecw_checked=True, eras=(), tracker=(), t
         r.update(in_blue_shield=True, bs_amount=money(q.get('check_amount')), bs_status=q.get('check_status', ''),
                  bs_date=q.get('check_date', ''), cashed_date=q.get('cashed_date', ''),
                  bs_payee=norm_text(q.get('payee_name', '')), bs_paid_to_member=bool(q.get('paid_to_member')),
-                 # ' · ' between names: the portal writes them 'THORNE, KARI'.
+                 # ' · ' between names: the portal writes them 'DOE, JANE'.
                  bs_patients=' · '.join(patients[:4]) + (' …' if len(patients) > 4 else ''))
     for p in payments:
         key = norm_check(p.get('check_no'))

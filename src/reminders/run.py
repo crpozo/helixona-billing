@@ -136,7 +136,7 @@ def _date(text):
 
 
 def first_name(patient):
-    """'THORNE, KARI A' → 'Kari'; 'Kari Thorne' → 'Kari'."""
+    """'DOE, JANE A' → 'Jane'; 'Jane Doe' → 'Jane'."""
     s = norm_text(patient)
     part = s.split(',', 1)[1] if ',' in s else s
     words = [w for w in re.split(r'[^A-Za-z\'\-]+', part) if w]

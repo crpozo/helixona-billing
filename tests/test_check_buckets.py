@@ -39,7 +39,7 @@ class WhoHasBlueShieldsMoney(unittest.TestCase):
             _bs('8', 'Void - Check Payment Stopped', '06/01/2026'),
             _bs('9', 'Check Cashed', '08/01/2026', payee='DOE, JANE', cashed='08/10/2026'),    # patient payee, but posted in eCW
             # Paid by name to a clinician, not to the patient on the claim: not the patient's.
-            _bs('10', 'Check Cashed', '08/01/2026', payee='ALISON K. ETTER', cashed='08/10/2026', patient='THORNE, KARI'),
+            _bs('10', 'Check Cashed', '08/01/2026', payee='ALISON K. ETTER', cashed='08/10/2026', patient='DOE, JANE'),
             _bs('11', 'Check Number Assigned', '06/01/2026', payee='JEFFREY L. TAYLOR', patient='TAYLOR, EMMA'),
             # The payee written differently from the claim's member name is still the patient.
             _bs('12', 'Check Number Assigned', '09/20/2026', payee='NICOLE D. RUSSELL HERNANDEZ', patient='NICOLE D RUSSELL HERNANDEZ'),
@@ -58,9 +58,9 @@ class WhoHasBlueShieldsMoney(unittest.TestCase):
         self.assertIn('cashed by patient, bill the patient', r2['flags'])
         self.assertEqual((r2['bs_payee'], r2['bs_patients']), ('DOE, JANE', 'DOE, JANE'))
         # Two patients on one check are joined with ' · ', since names hold commas.
-        rows2, _ = reconcile(copies=[], checks=[{**_bs('20', 'Check Cashed', '08/01/2026'), 'claims': [{'member_name': 'THORNE, KARI'}, {'member_name': 'DOE, JANE'}]}],
+        rows2, _ = reconcile(copies=[], checks=[{**_bs('20', 'Check Cashed', '08/01/2026'), 'claims': [{'member_name': 'ROE, MARY'}, {'member_name': 'DOE, JANE'}]}],
                              payments=[], today=TODAY)
-        self.assertEqual(rows2[0]['bs_patients'], 'DOE, JANE · THORNE, KARI')
+        self.assertEqual(rows2[0]['bs_patients'], 'DOE, JANE · ROE, MARY')
         self.assertIn('missing, ask Blue Shield to reissue', next(r for r in rows if r['check_number'] == '4')['flags'])
         self.assertEqual((sm['bs_sent'], sm['bs_cashed_helixona'], sm['bs_cashed_patient'], sm['bs_cashed_unknown'],
                           sm['bs_missing'], sm['bs_in_transit'], sm['bs_in_hand_uncleared'], sm['bs_to_patient_uncashed'], sm['bs_voided']),
