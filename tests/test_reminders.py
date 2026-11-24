@@ -268,6 +268,47 @@ class TheRun(unittest.TestCase):
         self.assertEqual(out['no_email'], 1)
 
 
+class TheReviewList(unittest.TestCase):
+    """What would be sent and to whom, for the people who approve it."""
+    ROWS = [
+        {'check_number': '111', 'patient': 'DOE, JANE', 'amount': '250.00', 'check_date': '10/20/2026', 'dos': '09/01/2026',
+         'stage': 'to remind', 'next_action': 'first', 'email': 'jane.d@example.com', 'claim_ids': ['2187'], 'card_on_file': False},
+        {'check_number': '222', 'patient': 'ROE, MARY', 'amount': '80.00', 'check_date': '10/21/2026', 'stage': 'to remind',
+         'next_action': 'first', 'email': '', 'claim_ids': ['2190'], 'cashed': True},
+        {'check_number': '333', 'patient': 'POE, ANN', 'amount': '10.00', 'check_date': '11/10/2026', 'stage': 'in the mail', 'next_action': ''},
+        {'check_number': '444', 'patient': 'LOE, SAM', 'amount': '99.00', 'stage': 'received', 'next_action': ''},
+    ]
+
+    def test_who_gets_a_message_who_gets_a_call_and_who_waits(self):
+        from src.reminders import review
+        to_send, to_call, waiting, sm = review.review_lists(self.ROWS, POLICY, TODAY)
+        self.assertEqual([(r[0], r[1], r[10], r[11]) for r in to_send], [('DOE, JANE', 'jane.d@example.com', 'NO', 'First notice')])
+        self.assertIn('billed to you as a patient balance', to_send[0][14])
+        self.assertEqual(to_send[0][12], '11/26/2026')
+        self.assertEqual([(r[0], r[8]) for r in to_call], [('ROE, MARY', 'yes')])
+        self.assertIn('not looked up yet', to_call[0][9])
+        self.assertEqual([r[0] for r in waiting], ['POE, ANN'])
+        self.assertEqual((sm['to_send'], sm['to_call'], sm['waiting'], sm['to_send_amount'], sm['no_card']), (1, 1, 1, 250.0, 1))
+
+    def test_the_workbook_opens_and_carries_the_message_as_it_will_go_out(self):
+        import io
+        import openpyxl
+        from src.reminders import review
+        wb = openpyxl.load_workbook(io.BytesIO(review.review_workbook(self.ROWS, POLICY, TODAY)))
+        self.assertEqual(wb.sheetnames, ['Summary', 'To send', 'No e-mail - call', 'Not due now', 'Message wording'])
+        row = [c.value for c in wb['To send'][2]]
+        self.assertEqual(row[:2], ['DOE, JANE', 'jane.d@example.com'])
+        self.assertIn('Hello Jane,', row[14])
+        self.assertEqual(wb['Message wording'].max_row, 5)
+        self.assertIn('Nothing has been sent', ' '.join(str(c.value) for c in wb['Summary']['A']))
+
+    def test_the_download_is_on_the_tab_and_sends_nothing(self):
+        self.assertIn('href="/api/reminders/review.xlsx"', _read('dashboard.py'))
+        src = _read('src/reminders/review.py')
+        for word in ('mail.send', 'send_email', 'update_item', 'put_item'):
+            self.assertNotIn(word, src)
+
+
 class Wiring(unittest.TestCase):
     def test_the_bot_never_charges_a_card(self):
         for rel in ('src/reminders/run.py', 'src/reminders/ecw.py'):

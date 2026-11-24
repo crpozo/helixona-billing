@@ -710,7 +710,8 @@ tbody tr:last-child td{border-bottom:none}
         <div class="section-title">
           💌 Blue Shield checks sent to patients
           <span id="reminders-meta" style="font-size:11px;color:var(--text-muted);margin-left:8px;font-weight:500"></span>
-          <a class="btn" href="/api/reminders.csv" style="margin-left:auto">⬇ CSV</a>
+          <a class="btn" href="/api/reminders/review.xlsx" style="margin-left:auto" title="What would be sent and to whom, with each message — for review before sending">⬇ Review list (Excel)</a>
+          <a class="btn" href="/api/reminders.csv">⬇ CSV</a>
           <button class="btn btn-refresh" onclick="loadReminders()">↻ Refresh</button>
         </div>
         <div id="reminders-run" style="font-size:12px;color:var(--text-muted);margin:8px 14px 0;line-height:1.7"></div>
@@ -3691,6 +3692,24 @@ def api_reminders():
         return jsonify(json.loads(json.dumps({'rows': rows, 'summary': summary}, default=str)))
     except Exception as e:
         return jsonify({'error': str(e), 'rows': [], 'summary': {}})
+
+
+@app.route('/api/reminders/review.xlsx')
+def api_reminders_review():
+    """What the bot is about to send, to whom, with each message — one
+    workbook for the people who approve the sending. Reads only."""
+    from flask import Response
+    from src.reminders.review import review_workbook
+    from src.reminders.run import load_policy
+    try:
+        rows, _ = _reminder_rows()
+        data = review_workbook(rows, load_policy())
+        import time as _t
+        name = f"patient_check_reminders_review_{_t.strftime('%Y-%m-%d', _t.gmtime())}.xlsx"
+        return Response(data, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': f'attachment; filename="{name}"'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 @app.route('/api/reminders.csv')
