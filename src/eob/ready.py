@@ -27,8 +27,8 @@ from src.eob.parse import norm_text
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 POLICY_FILE = os.path.join(_ROOT, 'data', 'ecw_posting_policy.json')
 DEFAULT_POLICY = {'amount': 'approve_to_pay', 'received_date': 'tracker', 'deposit_date': 'tracker', 'facility': 'select',
-                  'attach_eob': True, 'commit_buttons': ['Auto Post', 'Auto Post (F2)'], 'multi_claim_checks': False,
-                  'post_zero_eobs': False}
+                  'attach_eob': True, 'commit_buttons': ['Post Payment', 'Post Payment (F4)', 'Auto Post', 'Auto Post (F2)'],
+                  'set_claim_status': True, 'multi_claim_checks': False, 'post_zero_eobs': False, 'post_denied_lines': False}
 # Worked first to last on the tab.
 STAGES = ('ready', 'EOB missing', 'needs a person', 'held', '$0 EOB', 'waiting for deposit', 'other payer', 'posted', 'voided')
 
@@ -56,8 +56,33 @@ def tracker_of(check_row):
             'deposit': str(h.get('tracker_deposit') or '')}
 
 
-def stage_of(eob, check_row, policy=None):
-    """(stage, reason) for one Blue Shield check."""
+def earlier_payments(eobs):
+    """{check: (claim, the earlier check)} for every check that pays a claim
+    an earlier check already paid — an adjusted payment (the B10d call): a
+    corrected claim paid again under a new check number. Its EOB lists every
+    line as paid again, so posting it needs the reversal (REV) steps."""
+    by_claim = {}
+    for e in eobs or ():
+        key = norm_check(e.get('check_eft'))
+        for c in (e.get('claims') or []):
+            if isinstance(c, dict) and c.get('claim_id') and key:
+                by_claim.setdefault(str(c['claim_id']), []).append((_sort_date(e.get('check_date')), key))
+    out = {}
+    for claim, checks in by_claim.items():
+        checks = sorted(set(checks))
+        for (_, later) in checks[1:]:
+            out.setdefault(later, (claim, checks[0][1]))
+    return out
+
+
+def _sort_date(text):
+    m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', str(text or ''))
+    return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else '9999'
+
+
+def stage_of(eob, check_row, policy=None, adjusted=None):
+    """(stage, reason) for one Blue Shield check. `adjusted`: (claim, the
+    earlier check) when this check pays a claim an earlier one already paid."""
     policy = policy or DEFAULT_POLICY
     h = check_row or {}
     res = eob.get('post_result') or {}
@@ -89,6 +114,9 @@ def stage_of(eob, check_row, policy=None):
     if not eob.get('eob_pdf_s3_path'):
         return 'EOB missing', 'deposited per the tracker, but the EOB file is not saved — download it again'
     claims = [c for c in (eob.get('claims') or []) if isinstance(c, dict)]
+    if adjusted:
+        return 'held', (f"a second payment for claim {adjusted[0]} (first: check {adjusted[1]}) — an adjusted payment needs the "
+                        f"reversal steps (REV); by hand for now")
     if len(claims) > 1 and not policy.get('multi_claim_checks'):
         return 'held', f"the check pays {len(claims)} claims — 'Add insurance payment' is not covered yet"
     if res_status == 'held':
@@ -109,13 +137,15 @@ def ready_queue(eobs, check_rows, policy=None):
         if key and not key.startswith(('_', 'deposit:', 'unreadable:')):
             by[norm_check(key)] = r
     rows, seen = [], set()
-    for e in eobs or ():
+    eobs = list(eobs or ())
+    again = earlier_payments(eobs)
+    for e in eobs:
         key = norm_check(e.get('check_eft'))
         if not key:
             continue
         seen.add(key)
         h = by.get(key, {})
-        stage, reason = stage_of(e, h, policy)
+        stage, reason = stage_of(e, h, policy, again.get(key))
         claims = [c for c in (e.get('claims') or []) if isinstance(c, dict)]
         res = e.get('post_result') if isinstance(e.get('post_result'), dict) else {}
         t = tracker_of(h)
@@ -131,6 +161,7 @@ def ready_queue(eobs, check_rows, policy=None):
             'claims': len(claims),
             'last_attempt': str(res.get('status') or ''), 'last_attempt_at': str(e.get('post_attempted_at') or ''),
             'last_mode': str(e.get('post_mode') or ''), 'payment_id': str(res.get('payment_id') or ''),
+            'claim_status': str(res.get('claim_status') or ''),
         })
     # Other payers: a scan the tracker confirms, that the Blue Shield portal does not list.
     for key, h in by.items():
@@ -151,7 +182,7 @@ def ready_queue(eobs, check_rows, policy=None):
             'tracker_deposit': str(h.get('tracker_deposit') or ''), 'has_eob': True, 'has_scan': True,
             'scan_file': str(h.get('copy_file') or ''), 'claim_ids': [str(h['tracker_claim'])] if h.get('tracker_claim') else [],
             'patients': [], 'claims': 1 if h.get('tracker_claim') else 0, 'last_attempt': '', 'last_attempt_at': '',
-            'last_mode': '', 'payment_id': str(h.get('ecw_payment_id') or ''),
+            'last_mode': '', 'payment_id': str(h.get('ecw_payment_id') or ''), 'claim_status': '',
         })
     order = {s: i for i, s in enumerate(STAGES)}
     rows.sort(key=lambda r: (order.get(r['stage'], 99), r['tracker_deposit'] or r['check_date'] or '', r['check']))

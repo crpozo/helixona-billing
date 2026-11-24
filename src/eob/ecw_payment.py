@@ -46,6 +46,12 @@ def payment_header(eob, check, tracker=None, policy=None):
     tracker, policy = tracker or {}, policy or {}
     problems = []
     amount = _d(eob.get('approve_to_pay'))
+    zero = amount is not None and amount == 0 and bool(policy.get('post_zero_eobs'))
+    if zero:
+        # A $0 EOB (deductible, denial): no check exists. Vignesh, the B10b
+        # call: Type = Non Payment Data, the EOB number in the check number
+        # box, and the received, check, EOB and deposit dates all the same.
+        return zero_header(eob, check, policy)
     if amount is None:
         problems.append('the EOB has no approve-to-pay amount')
     elif amount <= 0:
@@ -82,6 +88,55 @@ def payment_header(eob, check, tracker=None, policy=None):
     return fields, problems
 
 
+def zero_header(eob, check, policy=None):
+    """The popup for a $0 EOB: nothing was paid, so there is no check — the
+    EOB's own number stands in for it and one date fills all four boxes."""
+    policy = policy or {}
+    problems = []
+    number = str(eob.get('eob_number') or check.get('eob_number') or '').strip()
+    if not number:
+        problems.append('the $0 EOB has no EOB number to use as the check number')
+    when = str(check.get('check_date') or check.get('eob_issue_date') or eob.get('issue_date') or '').strip()
+    if not when:
+        problems.append('the $0 EOB has no date')
+    return {
+        'Facility': 'select' if policy.get('facility') == 'select' else None,
+        'Type': 'Non Payment Data',
+        'Check No.': number,
+        'Batch No.': None,
+        'Amount $': '0.00',
+        'Received Date': when or None,
+        'Check Date': when,
+        'EOB Date': when,
+        'Deposit Date': when,
+        'Notes': None,
+    }, problems
+
+
+def is_denied(row):
+    """A line the payer denied: billed, and nothing allowed and nothing paid.
+    eCW has no denial column — the line takes Allowed 0, Paid 0 and the
+    EOB's reason code (PI 16 in the demo) in its Code box."""
+    allowed, paid = _d(row.get('allowed')), _d(row.get('paid'))
+    billed = _d(row.get('ecw_billed') or row.get('eob_billed') or row.get('billed'))
+    return allowed is not None and paid is not None and allowed == 0 and paid == 0 and (billed is None or billed > 0)
+
+
+def claim_status_for(rows):
+    """The status the claim is set to once its payment is posted — Vignesh,
+    the B10c call: "it's always these three statuses".
+
+        even one denied line                          → ERA Payer Denied
+        no denial, any deductible / coinsurance / copay → Patient
+        no denial and nothing owed by the patient       → Paid in Full
+    """
+    rows = list(rows or [])
+    if any(is_denied(r) for r in rows):
+        return 'ERA Payer Denied'
+    owed = sum(((_d(r.get(k)) or Decimal('0')) for r in rows for k in ('deductible', 'coinsurance', 'copay')), Decimal('0'))
+    return 'Patient' if owed > 0 else 'Paid in Full'
+
+
 def line_overflows(row, ecw_billed):
     """True when eCW would warn that this line's amounts exceed its billed fee.
 
@@ -93,7 +148,8 @@ def line_overflows(row, ecw_billed):
     if any(p is None for p in parts):
         return False
     ded, copay, paid, allowed = parts
-    return ded + copay + paid > allowed
+    coins = _d(row.get('coinsurance')) or Decimal('0')
+    return ded + coins + copay + paid > allowed
 
 
 def grid_rows(claim_plan):
@@ -109,6 +165,11 @@ def grid_rows(claim_plan):
     for r in claim_plan.get('rows') or []:
         values = {'Allowed': r.get('allowed', ''), 'Deduct': r.get('deductible', ''),
                   'CoPay': r.get('copay', ''), 'Paid': r.get('paid', '')}
+        # Coinsurance has its own column in eCW; Blue Shield's EOB has none,
+        # UHC's PRA does (PR2 = coinsurance, PR3 = copay). Typed only when
+        # the EOB gave one.
+        if _d(r.get('coinsurance')) not in (None, Decimal('0')):
+            values['CoIns'] = r.get('coinsurance')
         if any(_d(v) is None for v in values.values()):
             problems.append(f"{r.get('cpt')}: the EOB amounts for this line were not all read")
             continue
@@ -123,6 +184,8 @@ def grid_rows(claim_plan):
             'ecw_billed': r.get('ecw_billed', ''),
             'drug': r.get('ecw_drug', ''),
             'values': values,
+            'denied': is_denied(r),
+            'reason_code': str(r.get('reason_code') or ''),
         })
     return rows, problems
 

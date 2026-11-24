@@ -1,19 +1,28 @@
 {
   "_comment": "B10 — how a payment is entered in eCW (docs/b10_posting.md). Each value is a choice the clinic confirms; where the September recordings and the November flow disagree, the note says so.",
   "amount": "approve_to_pay",
-  "_amount": "approve_to_pay = the EOB's approved amount, without Blue Shield's interest (the recordings). The November flow says 'the total on the EOB'. To confirm with Vignesh.",
+  "_amount": "approve_to_pay = the EOB's approved amount, without Blue Shield's interest (the September recordings; it is what leaves Unposted at 0). The B10 calls say 'the statement total' / 'the total on the check'. To confirm with Vignesh on a check that carries interest.",
   "received_date": "tracker",
-  "_received_date": "tracker = Date Check Received from Karina's Insurance Check Tracker (the November flow). 'today' leaves eCW's default (the recordings).",
+  "_received_date": "tracker = Date Check Received from Karina's Insurance Check Tracker (the B10b call: 'receipt date and deposit date will be extracted from the Excel sheet'); when the tracker has none, eCW's own date (today) stands, as in the B10c demo.",
   "deposit_date": "tracker",
   "_deposit_date": "tracker = the tracker's Deposit Date, else Blue Shield's cashed date. 'cashed' uses the portal's cashed date only (the recordings).",
   "facility": "select",
   "_facility": "select = pick the one office location (the November flow). 'leave' = leave it empty (the recordings).",
   "attach_eob": true,
   "_attach_eob": "Attach the EOB in the Payment Advisory window (Scan, Add, the file, OK).",
-  "commit_buttons": ["Auto Post", "Auto Post (F2)"],
-  "_commit_buttons": "The button that commits the typed lines. The recordings show Auto Post (F2), then Yes. The November flow says 'Post payment, then OK'. To confirm with Vignesh before the first real post.",
+  "commit_buttons": [
+    "Post Payment",
+    "Post Payment (F4)",
+    "Auto Post",
+    "Auto Post (F2)"
+  ],
+  "_commit_buttons": "The button that commits the typed lines; the first one found on the screen is pressed, and the log lists every button the screen offered. Vignesh's B10b demo (2026-11): 'Post payment', then OK. The September recordings: Auto Post (F2), then Yes. A check for several claims uses Save and Next per claim (B10c).",
+  "set_claim_status": true,
+  "_set_claim_status": "After the lines: Set claim status — any denied line: ERA Payer Denied; no denial but a deductible, coinsurance or copay: Patient; nothing owed: Paid in Full (the B10c call: 'it's always these three statuses'; it applies to a single claim too).",
+  "post_denied_lines": false,
+  "_post_denied_lines": "false = a claim with a denied line is held: the line needs the EOB's reason code (PI 16 in the demo) entered in eCW's Code box, and the code is not read off the Blue Shield EOB yet.",
   "multi_claim_checks": false,
-  "_multi_claim_checks": "false = a check that pays several claims is held for a person ('Add insurance payment' is not covered yet).",
+  "_multi_claim_checks": "false = a check that pays several claims is held for a person. true = 'Add Ins Payment (F3)', the payer chosen in the insurance lookup, each claim typed and committed with Save and Next (the B10c call). Written from the call, not yet run.",
   "post_zero_eobs": false,
-  "_post_zero_eobs": "false = $0 EOBs (deductible, denial) are listed and held: how the denial is recorded in Payment Advisory is not defined yet."
+  "_post_zero_eobs": "false = $0 EOBs are listed and held. true = Type 'Non Payment Data', the EOB number as the check number, one date in all four boxes (the B10b call). The portal walk must list them first (include_zero)."
 }

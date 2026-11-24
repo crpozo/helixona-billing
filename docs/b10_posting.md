@@ -101,24 +101,72 @@ matched to its checks and to what eCW has posted.
 | 🧪 Dry run: 1 payment in eCW | no — fills the popup and cancels |
 | 💵 Post 1 payment in eCW | **yes** — asks first; one check |
 
+## What the calls with Vignesh settled (2026-11)
+
+From the recordings of B10a (EOB downloads), B10b (single claim), B10c
+(several claims on one check) and B10d (adjusted payment), and the weekly
+B10 meeting. Each line is in the code or in `data/ecw_posting_policy.json`.
+
+- **The claim number** is the EOB's *patient account number* — four digits
+  today, five later; never the long number printed under it. On a UHC PRA
+  it is the *Patient Control Number*.
+- **One insurance on the patient** is selected by default after Get
+  Insurance: OK. No radio to pick is not a failure.
+- **Facility**: Select → the drop-down → the one office.
+- **Check date = EOB date**, always: the EOB is issued with the check.
+- **Received and Deposit dates** come from Karina's tracker. A check that is
+  not in the tracker is not cashed yet — the bot waits; it never assumes
+  today.
+- **Paid** is typed per CPT line, never the statement total. **Adjust** is
+  eCW's arithmetic. **Coinsurance** has its own column (UHC: PR2 =
+  coinsurance, PR3 = copay; Blue Shield's EOB has none).
+- **The commit**: "Post payment", then OK (B10b). The bot presses the first
+  of `commit_buttons` it finds and logs every button the screen offered.
+- **The quality check**: Unposted (the balance on Payment Advisory) is 0.
+- **The claim's status after posting** — always one of three:
+  any denied line → **ERA Payer Denied**; no denial but a deductible,
+  coinsurance or copay → **Patient**; nothing owed → **Paid in Full**.
+  The bot works it out (`claim_status_for`) and sets it before the commit;
+  when the control is not found the result says "set the status by hand".
+- **A denied line**: Allowed 0, Paid 0, and the EOB's reason code (PI 16 in
+  the demo; "hundreds of codes, assign the right one") in the line's Code
+  box. The Blue Shield EOB reader does not read reason codes yet, so a
+  claim with a denied line is **held**, with the status it will need.
+- **A $0 EOB**: Type *Non Payment Data*, the EOB number as the check
+  number, one date in all four boxes, the EOB attached and the denial
+  recorded in Payment Advisory. Coded (`post_zero_eobs`), off until the
+  portal walk lists them.
+- **Several claims on one check** (B10c): *Add Ins Payment (F3)*, the payer
+  chosen in the insurance lookup (any entry — only the payer ID matters),
+  each claim typed and committed with *Save and Next*, the EOB uploaded
+  once, OK at the end. Coded (`multi_claim_checks`), off until tried.
+- **An adjusted payment** (B10d): a corrected claim paid again under a new
+  check number. Its EOB lists every line as paid again, so after posting
+  Unposted is negative; a reversal line (REV, "Insurance payment reversal")
+  is added on the claim for that amount and posted. The bot **recognises**
+  it — a second check for a claim an earlier check paid — and **holds** it.
+- **Anthem and Medicare** pay by ACH with an ERA in eCW (Billing → ERA →
+  E-post): not part of this bot. **B05** is not needed, per Vignesh.
+
 ## Not built yet, and what each needs
 
 - **UHC** — portal credentials, a sample PRA, and who answers the
-  verification call every 30 days.
+  verification call every 30 days. Its rules are known (above).
 - **Other payers' EOBs** (Cigna, UMR) read from the scan — sample PDFs.
-- **$0 EOBs** — how the denial is recorded in Payment Advisory, which date
-  goes in the four date boxes; the portal search must list them
-  (`include_zero: true` is there to try).
+  "Each insurance issues the EOBs in their own way."
+- **Reason codes on denied lines** — read off the EOB, then typed in the
+  Code box. Until then such claims are held.
+- **The reversal for adjusted payments** (B10d) — the field that takes the
+  negative amount was not clear in the recording.
 - **Moving the file** Unposted → Posted checks, and **tracker column G** —
   permission to write in SharePoint and in Karina's sheet.
-- **A check for several claims** — "Add insurance payment".
 - **Posting every ready check in one run** — after the supervised pilot.
 
 ## To confirm before the first real post
 
-1. The commit button: Auto Post (F2) (the September recordings) or "Post
-   payment, then OK" (the November flow)?
-2. Amount: approve-to-pay (without Blue Shield's interest) or the EOB total?
-3. What to do when Unposted is not 0; can a payment be deleted, by whom?
-4. Who approves the bot's postings, and the eCW user it posts with.
-5. A patient with more than one insurance: which is selected?
+1. Amount when Blue Shield adds interest: approve-to-pay or the check total?
+2. What to do when Unposted is not 0; can a payment be deleted, by whom?
+3. Who approves the bot's postings, and the eCW user it posts with.
+4. Is the claim status set before "Post payment" or by going back into the
+   claim afterwards (the B10c demo went back in)?
+5. Received date when the tracker has none: today (B10c) or wait?

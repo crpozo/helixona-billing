@@ -18,9 +18,10 @@ def _read(rel):
 
 
 def eob(check='0031401901', amount='257.09', pdf='s3://b/eob.pdf', **kw):
+    # Each check pays its own claim unless a test says otherwise.
     return {'check_eft': check, 'check_amount': amount, 'check_status': 'Check Cashed', 'check_date': '10/20/2026',
             'cashed_date': '11/02/2026', 'payee_name': 'HELIXONA INC', 'eob_pdf_s3_path': pdf,
-            'claims': [{'claim_id': '2187', 'member_name': 'DOE, JANE'}], **kw}
+            'claims': [{'claim_id': str(int(check) % 10000), 'member_name': 'DOE, JANE'}], **kw}
 
 
 TRACKED = {'check_number': '31401901', 'in_tracker': True, 'tracker_received': '10/28/2026', 'tracker_deposit': '10/30/2026'}
@@ -71,6 +72,80 @@ class TheRule(unittest.TestCase):
         self.assertEqual([r['stage'] for r in rows], ['ready', '$0 EOB', 'waiting for deposit'])
         sm = ready.summarize(rows)
         self.assertEqual((sm['ready'], sm['zero'], sm['waiting_for_deposit'], sm['ready_amount']), (1, 1, 1, '257.09'))
+
+
+class WhatTheCallsTaught(unittest.TestCase):
+    """The B10b, B10c and B10d calls with Vignesh (2026-11)."""
+
+    def test_the_claim_status_is_always_one_of_three(self):
+        from src.eob.ecw_payment import claim_status_for
+        paid = {'ecw_billed': '100.00', 'allowed': '80.00', 'deductible': '0.00', 'copay': '0.00', 'paid': '80.00'}
+        owes = {**paid, 'copay': '20.00', 'paid': '60.00'}
+        denied = {'ecw_billed': '125.00', 'allowed': '0.00', 'deductible': '0.00', 'copay': '0.00', 'paid': '0.00'}
+        self.assertEqual(claim_status_for([paid]), 'Paid in Full')
+        self.assertEqual(claim_status_for([paid, owes]), 'Patient')
+        self.assertEqual(claim_status_for([paid, {**paid, 'coinsurance': '5.00'}]), 'Patient')
+        self.assertEqual(claim_status_for([paid, owes, denied]), 'ERA Payer Denied', 'even one denied line')
+        # A deductible that takes the whole allowed amount is owed, not denied.
+        self.assertEqual(claim_status_for([{**paid, 'deductible': '80.00', 'paid': '0.00'}]), 'Patient')
+
+    def test_a_denied_line_is_held_until_its_reason_code_can_be_entered(self):
+        from src.eob import post
+        plan = {'totals': {'approve_to_pay': '80.00'}, 'claims': [{'claim_id': '2187', 'rows': [
+            {'ecw_index': 0, 'cpt': '96365', 'ecw_billed': '100.00', 'allowed': '80.00', 'deductible': '0.00', 'copay': '0.00', 'paid': '80.00'},
+            {'ecw_index': 1, 'cpt': 'J3490', 'ecw_billed': '125.00', 'allowed': '0.00', 'deductible': '0.00', 'copay': '0.00', 'paid': '0.00'}]}]}
+        page = mock.Mock()
+        res = post.post_check(page, {'check_eft': '31401901', 'check_date': '10/20/2026', 'cashed_date': '11/02/2026'}, plan,
+                              '07/01/2025', post=True, policy=POLICY)
+        self.assertEqual((res['status'], res['claim_status']), ('held', 'ERA Payer Denied'))
+        self.assertIn('J3490', res['reason'])
+        page.assert_not_called()
+
+    def test_coinsurance_has_its_own_column_and_counts_against_the_allowed_amount(self):
+        from src.eob.ecw_payment import grid_rows, line_overflows
+        row = {'ecw_index': 0, 'cpt': 'J3490', 'ecw_billed': '360.00', 'allowed': '72.00', 'deductible': '0.00', 'copay': '0.00',
+               'coinsurance': '28.80', 'paid': '43.20'}
+        rows, problems = grid_rows({'rows': [row]})
+        self.assertEqual((problems, rows[0]['values'].get('CoIns')), ([], '28.80'))
+        self.assertTrue(line_overflows({**row, 'paid': '50.00'}, '360.00'))
+        # Blue Shield's EOB has no coinsurance: the column is left alone.
+        plain, _ = grid_rows({'rows': [{**row, 'coinsurance': '', 'paid': '72.00'}]})
+        self.assertNotIn('CoIns', plain[0]['values'])
+
+    def test_a_second_payment_for_a_claim_is_an_adjusted_payment_and_is_held(self):
+        first = eob('1111111', check_date='09/01/2026', claims=[{'claim_id': '9322'}])
+        second = eob('2222222', amount='30.77', check_date='10/15/2026', claims=[{'claim_id': '9322'}])
+        tracked = [{**TRACKED, 'check_number': '1111111'}, {**TRACKED, 'check_number': '2222222'}]
+        by = {r['check']: r for r in ready.ready_queue([second, first], tracked, POLICY)}
+        self.assertEqual(by['1111111']['stage'], 'ready')
+        self.assertEqual(by['2222222']['stage'], 'held')
+        self.assertIn('reversal', by['2222222']['reason'])
+        self.assertIn('check 1111111', by['2222222']['reason'])
+
+    def test_a_zero_eob_is_non_payment_data_under_the_eob_number_with_one_date(self):
+        f, problems = payment_header({'approve_to_pay': '0.00', 'eob_number': '260703051601'},
+                                     {'check_eft': '260703051601', 'check_date': '11/10/2026'}, {}, {**POLICY, 'post_zero_eobs': True})
+        self.assertEqual(problems, [])
+        self.assertEqual((f['Type'], f['Check No.'], f['Amount $'], f['Received Date'], f['Check Date'], f['EOB Date'], f['Deposit Date']),
+                         ('Non Payment Data', '260703051601', '0.00', '11/10/2026', '11/10/2026', '11/10/2026', '11/10/2026'))
+        # Off by default: a $0 EOB is refused before eCW is opened.
+        _, problems = payment_header({'approve_to_pay': '0.00'}, {'check_eft': '1', 'check_date': '11/10/2026', 'cashed_date': ''}, {}, POLICY)
+        self.assertTrue(problems)
+
+    def test_the_commit_follows_the_november_demo_first_and_the_status_is_set_before_it(self):
+        self.assertEqual(POLICY['commit_buttons'][0], 'Post Payment')
+        self.assertIn('Auto Post', POLICY['commit_buttons'])
+        p = _read('src/eob/post.py')
+        body = p[p.index('def post_check('):]
+        self.assertLess(body.index('set_claim_status(page, statuses[cid], check)'), body.index("what='commit the lines'"))
+        self.assertIn("commit = ['Save and Next', 'Save & Next'] + commit", body)
+        self.assertIn('visible_buttons(page)', body)
+
+    def test_one_insurance_selected_by_default_is_not_a_failure(self):
+        p = _read('src/eob/post.py')
+        fn = p[p.index('def open_single_insurance_payment('):p.index('def fill_payment_popup(')]
+        self.assertIn('taking the insurance eCW selected by default', fn)
+        self.assertNotIn("_no_payer_radio')\n        return False", fn)
 
 
 class ThePopupTakesTheTrackersDates(unittest.TestCase):

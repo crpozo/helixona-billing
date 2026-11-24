@@ -2066,7 +2066,7 @@ window.scrollToEl = function(sel){
                   <td class="num">${money(r.amount)}${r.approve_to_pay && r.approve_to_pay !== r.amount ? `<div style="font-size:11px;color:var(--text-muted)">${money(r.approve_to_pay)} approved</div>` : ''}</td>
                   <td>${r.in_tracker ? '<span style="color:var(--success)">deposited</span>' : '<span style="color:var(--text-muted)">not yet</span>'}<div style="font-size:11px;color:var(--text-muted)">${r.tracker_deposit ? 'dep. ' + esc(r.tracker_deposit) : ''}${r.tracker_received ? ' · rcvd ' + esc(r.tracker_received) : ''}</div></td>
                   <td>${r.has_eob ? '<span style="color:var(--success)">saved</span>' : '<span style="color:var(--warning)">not saved</span>'}</td>
-                  <td style="font-size:12px">${esc(r.reason || '')}${r.last_attempt ? `<div style="font-size:11px;color:var(--text-muted)">${esc(r.last_mode === 'post' ? 'post' : 'dry run')}: ${esc(r.last_attempt)} · ${esc(r.last_attempt_at || '')}</div>` : ''}</td>
+                  <td style="font-size:12px">${esc(r.reason || '')}${r.last_attempt ? `<div style="font-size:11px;color:var(--text-muted)">${esc(r.last_mode === 'post' ? 'post' : 'dry run')}: ${esc(r.last_attempt)} · ${esc(r.last_attempt_at || '')}${r.claim_status ? ' · status → ' + esc(r.claim_status) : ''}</div>` : ''}</td>
                 </tr>`).join('');
         }
         async function loadPostQueue() {

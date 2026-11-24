@@ -195,6 +195,11 @@ def plan_claim(eob_lines, ecw_lines, eob_claim_paid=None):
                    'ecw_drug': c.get('drug', ''), 'units': c.get('units', '')}
             for f in POSTED_FIELDS:
                 row[f] = e.get(f, '')
+            # Coinsurance and the denial's reason code, when the EOB gives
+            # them (UHC's PRA does; Blue Shield's report has neither).
+            for f in ('coinsurance', 'reason_code'):
+                if e.get(f):
+                    row[f] = e[f]
             rows.append(row)
 
     if eob_claim_paid is not None and not reasons:

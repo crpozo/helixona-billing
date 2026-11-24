@@ -46,7 +46,7 @@ from decimal import Decimal, InvalidOperation
 import boto3
 
 from src.aws.clients import scan_all
-from src.eob.ecw_payment import grid_rows, payment_header, posting_total
+from src.eob.ecw_payment import claim_status_for, grid_rows, payment_header, posting_total
 from src.eob.eob_pdf import read_eob_pdf
 from src.eob.hcfa_lines import hcfa_lines_from_pdf
 from src.eob.plan import plan_from_item
@@ -79,6 +79,7 @@ GRID_COLUMNS = {
     'billed': re.compile(r'^billed|^charge', re.I),
     'Allowed': re.compile(r'^allow', re.I),
     'Deduct': re.compile(r'^deduct', re.I),
+    'CoIns': re.compile(r'^co-?ins', re.I),
     'CoPay': re.compile(r'^co-?pay', re.I),
     'Paid': re.compile(r'^paid', re.I),
 }
@@ -541,8 +542,10 @@ def open_single_insurance_payment(page, claim_id):
         page.keyboard.press('Enter')
     time.sleep(2.5)
     if not _choose_radio(page, PAYER_RADIO):
-        _shot(page, f'{claim_id}_no_payer_radio')
-        return False
+        # One insurance on the patient is selected by default (Vignesh, the
+        # B10b call: "it's selected by default, so you can just click OK").
+        logger.info(f"  (no radio beside {PAYER_RADIO!r} — taking the insurance eCW selected by default)")
+        _shot(page, f'{claim_id}_insurance_default')
     if not _click_text(page, ['OK', 'Ok'], timeout=5, what='OK', after_target=True):
         _shot(page, f'{claim_id}_no_ok')
         return False
@@ -581,6 +584,75 @@ def fill_payment_popup(page, fields):
         _tick(page, r'deposit', what='Deposit')
         ok &= _set_field(page, r'deposit\s*date|deposit', fields['Deposit Date'], what='Deposit Date', prefer='last')
     return bool(ok)
+
+
+CLAIM_STATUS_CONTROLS = ['Set Claim Status', 'Set claim status', 'Update Claim Status', 'Claim Status']
+
+
+def set_claim_status(page, status, check=''):
+    """On the Payment Posting screen: Set claim status → the status. The
+    last step of the posting (Vignesh, the B10c call; it applies to a single
+    claim too). Best-effort: returns whether it was set, and the caller says
+    so — a status not set is a line in the result, never a silent miss."""
+    try:
+        if _set_field(page, r'set\s*claim\s*status|update\s*claim\s*status|claim\s*status', status, what='Claim status', prefer='last'):
+            return True
+        if _click_text(page, CLAIM_STATUS_CONTROLS, timeout=3, what='Set claim status'):
+            time.sleep(1.0)
+            if _click_text(page, [status], timeout=3, what=f'status {status}'):
+                return True
+    except Exception as e:
+        logger.info(f"  (claim status: {str(e)[:100]})")
+    _shot(page, f'{check}_claim_status_not_set')
+    logger.warning(f"  ⚠️ claim status not set to {status!r} — set it by hand")
+    return False
+
+
+def visible_buttons(page):
+    """The names of the buttons on screen — logged before a commit, so the
+    log says what the screen offered whichever one was pressed."""
+    names = []
+    for frm in page.frames:
+        try:
+            names += frm.evaluate(_js(r"""() => Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
+                .filter(vis).map(el => txt(el) || el.value || '').filter(t => t && t.length < 40)""")) or []
+        except Exception:
+            continue
+    return sorted(set(names))[:40]
+
+
+def open_add_insurance_payment(page, payer):
+    """Add Ins Payment (F3) → the insurance lookup by payer name → any entry
+    (only the payer ID matters, the claims go out electronically) → OK. The
+    way in for a check that pays several claims (the B10c call)."""
+    logger.info(f"➕ Add Ins Payment for {payer}")
+    if not _click_text(page, ['Add Ins Payment', 'Add Insurance Payment', 'Add Ins. Payment', 'Add Ins Payment (F3)'],
+                       timeout=6, what='new payment for several claims'):
+        page.keyboard.press('F3')
+    time.sleep(2.5)
+    if not _set_field(page, r'insurance|ins\.?\s*name|payer|look\s*up|search', payer, what='Insurance lookup', prefer='last'):
+        _shot(page, 'add_ins_no_lookup')
+        return False
+    page.keyboard.press('Enter')
+    time.sleep(2.5)
+    if not _choose_radio(page, payer):
+        # A grid of entries: the first row that names the payer.
+        for frm in page.frames:
+            try:
+                if frm.evaluate(_js(r"""(name) => {
+                    const tr = Array.from(document.querySelectorAll('tbody tr, tr')).find(r => vis(r) && txt(r).toLowerCase().includes(name.toLowerCase()) && r.querySelector('td'));
+                    if (!tr) return false; (tr.querySelector('input[type=radio], input[type=checkbox]') || tr.querySelector('td')).click(); return true; }"""), payer):
+                    break
+            except Exception:
+                continue
+    if not _click_text(page, ['OK', 'Ok'], timeout=5, what='OK'):
+        return False
+    time.sleep(3)
+    if not _page_has(page, ('Payment Advisory', 'Payment ID')):
+        _shot(page, 'add_ins_no_popup')
+        return False
+    logger.info("  ✅ Payments popup is up")
+    return True
 
 
 def select_facility(page):
@@ -740,7 +812,9 @@ def type_grid(page, frm, cols, located):
     (cells written, problems)."""
     written, problems = 0, []
     for row, p in located:
-        for key in ('Allowed', 'Deduct', 'CoPay', 'Paid'):
+        for key in ('Allowed', 'Deduct', 'CoIns', 'CoPay', 'Paid'):
+            if key not in p['values']:
+                continue
             col, val = cols.get(key), p['values'].get(key, '')
             if col is None:
                 problems.append(f"{p['cpt']}: the grid has no {key} column")
@@ -790,12 +864,20 @@ def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_fil
     fields, problems = payment_header({'approve_to_pay': plan['totals'].get('approve_to_pay')}, item, tracker, policy)
     if problems:
         return {'status': 'held', 'reason': '; '.join(problems)}
-    typed = {}
+    typed, statuses = {}, {}
     for c in claims:
         rows, probs = grid_rows(c)
         if probs or not rows:
             return {'status': 'held', 'reason': f"claim {c.get('claim_id')}: " + ('; '.join(probs) or 'nothing to type')}
         typed[str(c['claim_id'])] = rows
+        statuses[str(c['claim_id'])] = claim_status_for(c.get('rows'))
+        denied = [r for r in rows if r['denied']]
+        # A denied line takes the EOB's reason code in eCW. Without the
+        # code read off the EOB the line cannot be finished by the bot.
+        if denied and not (policy.get('post_denied_lines') and all(r['reason_code'] for r in denied)):
+            return {'status': 'held', 'claim_status': statuses[str(c['claim_id'])],
+                    'reason': f"claim {c.get('claim_id')}: {len(denied)} line(s) denied ({', '.join(r['cpt'] for r in denied)}) — "
+                              f"each needs its reason code entered in eCW and the claim set to ERA Payer Denied; by hand for now"}
 
     if not open_payments(page):
         return {'status': 'failed', 'reason': 'Payments screen not reached'}
@@ -806,7 +888,12 @@ def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_fil
         return {'status': 'failed', 'reason': 'Check # field not found on the Payments screen'}
 
     first = str(claims[0]['claim_id'])
-    if not open_single_insurance_payment(page, first):
+    if len(claims) > 1:
+        # One check, several claims: Add Ins Payment, the payer chosen first.
+        if not open_add_insurance_payment(page, PAYER_RADIO):
+            cancel_popups(page)
+            return {'status': 'failed', 'reason': 'Add Ins Payment / insurance lookup did not open the popup'}
+    elif not open_single_insurance_payment(page, first):
         cancel_popups(page)
         return {'status': 'failed', 'reason': 'Single Ins Payment / claim lookup did not open the popup'}
     if not fill_payment_popup(page, fields):
@@ -819,8 +906,9 @@ def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_fil
         # Payment Advisory is the save. A dry run does not click it.
         cancel_popups(page)
         n = sum(len(r) for r in typed.values())
-        return {'status': 'dry_run', 'reason': f'popup filled for ${fields["Amount $"]}, {n} line(s) planned '
-                                               f'across {len(claims)} claim(s); not saved'}
+        return {'status': 'dry_run', 'claim_status': ', '.join(f"{k}: {v}" for k, v in statuses.items()),
+                'reason': f'popup filled for ${fields["Amount $"]}, {n} line(s) planned across {len(claims)} claim(s); '
+                          f'status after posting: {", ".join(sorted(set(statuses.values())))}; not saved'}
 
     # ── first write ──
     if not _click_text(page, ['Payment Advisory'], timeout=8, what='Payment Advisory — saves the payment'):
@@ -839,7 +927,7 @@ def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_fil
             attached, attach_note = False, f'attaching failed: {str(e)[:120]}'
         logger.info(f"  📎 EOB: {attach_note}")
 
-    posted, left = [], []
+    posted, left, notes = [], [], []
     for c in claims:
         cid = str(c['claim_id'])
         if not open_advisory_for_claim(page, cid):
@@ -857,8 +945,15 @@ def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_fil
             left.append(f'claim {cid}: ' + '; '.join(probs))
             continue
         _shot(page, f'{check}_{cid}_grid_typed')
+        # The claim's status, by the three rules, before the lines are committed.
+        status_set = set_claim_status(page, statuses[cid], check) if policy.get('set_claim_status', True) else None
+        if status_set is False:
+            notes.append(f"claim {cid}: set the status to {statuses[cid]} by hand")
+        logger.info(f"  🔘 buttons on the posting screen: {visible_buttons(page)}")
         # ── second write ──
         commit = list(policy.get('commit_buttons') or ['Auto Post', 'Auto Post (F2)'])
+        if len(claims) > 1:
+            commit = ['Save and Next', 'Save & Next'] + commit
         if not _click_text(page, commit, timeout=6, what='commit the lines'):
             if any('auto post' in c.lower() for c in commit):
                 page.keyboard.press('F2')
@@ -872,7 +967,10 @@ def post_check(page, item, plan, since, post, tracker=None, policy=None, eob_fil
         logger.info(f"  ✅ claim {cid}: {written} cells, paid ${posting_total(typed[cid])}, Auto Post")
 
     extra = {'eob_attached': attached} if attached is not None else {}
+    extra['claim_status'] = ', '.join(f"{k}: {v}" for k, v in statuses.items())
     tail = '' if attached is not False else f' · EOB NOT attached ({attach_note}) — attach it by hand'
+    if notes:
+        tail += ' · ' + '; '.join(notes)
     if left:
         _shot(page, f'{check}_incomplete')
         return {'status': 'incomplete', 'payment_id': payment_id, **extra,
@@ -928,7 +1026,7 @@ def run_eob_post(page, aws_client, body, login):
                 f"limit={limit or 'none'} since={since}")
 
     from src.checks.reconcile import norm_check
-    from src.eob.ready import load_policy, stage_of, tracker_of
+    from src.eob.ready import earlier_payments, load_policy, stage_of, tracker_of
     policy = load_policy()
     eobs = aws_client.dynamodb.Table(EOB_TABLE)
     readers = make_readers(aws_client)
@@ -941,11 +1039,13 @@ def run_eob_post(page, aws_client, body, login):
     # number is in Karina's tracker — and its EOB is saved. Naming a check
     # does not lift the rule; `force_not_deposited` does, for a test.
     todo, waiting = [], 0
-    for it in scan_all(eobs):
+    all_eobs = scan_all(eobs)
+    again = earlier_payments(all_eobs)
+    for it in all_eobs:
         ck = str(it.get('check_eft', ''))
         if only and norm_check(ck) != norm_check(only):
             continue
-        stage, why = stage_of(it, check_rows.get(norm_check(ck)), policy)
+        stage, why = stage_of(it, check_rows.get(norm_check(ck)), policy, again.get(norm_check(ck)))
         if stage != 'ready' and not (only and body.get('force_not_deposited') and stage == 'waiting for deposit' and it.get('eob_pdf_s3_path')):
             waiting += stage in ('waiting for deposit', 'EOB missing')
             if only:

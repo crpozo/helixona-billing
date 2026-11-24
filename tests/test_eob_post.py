@@ -60,7 +60,7 @@ class TheDryRunStopsBeforeTheSave(unittest.TestCase):
 class TheValuesComeFromThePlanNotFromHere(unittest.TestCase):
     def test_the_popup_and_grid_values_are_decided_in_ecw_payment(self):
         p = _read('src/eob/post.py')
-        self.assertIn('from src.eob.ecw_payment import grid_rows, payment_header, posting_total', p)
+        self.assertIn('from src.eob.ecw_payment import claim_status_for, grid_rows, payment_header, posting_total', p)
         self.assertIn('from src.eob.plan import plan_from_item', p)
         # No drug-table or matching logic of its own.
         self.assertNotIn('DRUG_TABLE', p)
