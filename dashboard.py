@@ -1090,6 +1090,24 @@ tbody tr:last-child td{border-bottom:none}
 </div>
 
 <script>
+// The PIN: any answer of 401 from this dashboard's own API means the PIN is
+// missing or ran out. Go back to the door rather than sit there empty
+// (2026-11-25: a page open from before the PIN showed "Nothing yet").
+(function () {
+    const real = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+        const res = await real(input, init);
+        try {
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            if (res.status === 401 && url.indexOf('/api/') !== -1 && !window._goingToPin) {
+                window._goingToPin = true;
+                location.href = '/pin?next=' + encodeURIComponent(location.pathname);
+            }
+        } catch (e) {}
+        return res;
+    };
+})();
+
 // ═══════════════ Augmentations on top of the original dashboard JS ═══════════════
 // Wraps loadData to also render hero cards, sidebar list,
 // nav counts and refreshed timestamp.

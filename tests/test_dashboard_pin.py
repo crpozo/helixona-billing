@@ -75,5 +75,17 @@ class TheDoor(unittest.TestCase):
         self.assertIn("if (res.status === 401) { location.href = '/pin'; return; }", dashboard.DASHBOARD_HTML)
 
 
+class AnOpenPageDoesNotSitThereEmpty(unittest.TestCase):
+    """2026-11-25: Karina's tab, open from before the PIN, showed "Nothing
+    yet" on every panel — each loader swallowed the 401."""
+
+    def test_any_401_from_the_api_sends_the_page_to_the_pin(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for src in (dashboard.DASHBOARD_HTML, open(os.path.join(here, 'dashboard_checks.html'), encoding='utf-8').read()):
+            self.assertIn("if (res.status === 401 && url.indexOf('/api/') !== -1 && !window._goingToPin) {", src)
+            self.assertIn("location.href = '/pin?next=' + encodeURIComponent(location.pathname);", src)
+            self.assertLess(src.index('window.fetch = async function'), src.index("fetch('/api/"))
+
+
 if __name__ == '__main__':
     unittest.main()
