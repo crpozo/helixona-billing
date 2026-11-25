@@ -11,10 +11,10 @@ from datetime import date, timedelta
 
 from src.reminders.run import _date, compose
 
-SEND_COLS = ['Patient', 'E-mail', 'Phone', 'Check #', 'Check date', 'Amount', 'Date of service', 'eCW claim', 'Blue Shield status',
+SEND_COLS = ['Patient', 'Sent to', 'Phone', 'Check #', 'Check date', 'Amount', 'Date of service', 'eCW claim', 'Blue Shield status',
              'Cashed by patient', 'Card on file', 'Notice', 'Deadline in the message', 'Subject', 'Message']
 CALL_COLS = ['Patient', 'Phone', 'Check #', 'Check date', 'Amount', 'Date of service', 'eCW claim', 'Blue Shield status',
-             'Cashed by patient', 'Why no e-mail']
+             'Cashed by patient', 'Why not']
 WAIT_COLS = ['Patient', 'Check #', 'Check date', 'Amount', 'Stage', 'Reminders sent', 'Last reminder', 'Deadline']
 NOTICE = {'first': 'First notice', 'reminder': 'Reminder', 'final': 'Final notice'}
 
@@ -33,21 +33,28 @@ def _amount(r):
 def review_lists(rows, policy, today=None):
     """(to_send, to_call, waiting, summary): the rows of each sheet."""
     today = today or date.today()
+    channel = str(policy.get('channel') or 'ohmd').lower()
     to_send, to_call, waiting = [], [], []
     for r in rows:
         stage, action = r.get('stage'), r.get('next_action') or ''
         base = [r.get('patient', ''), r.get('check_number', ''), r.get('check_date', ''), _amount(r)]
         if stage == 'to remind' and action:
             deadline = _date(r.get('deadline')) or today + timedelta(days=int(policy.get('deadline_days', 14)))
-            subject, text = compose(policy, r, deadline, action)
+            subject, text = compose(policy, r, deadline, action, channel)
             claim = ', '.join(r.get('claim_ids') or [])
-            if r.get('email'):
-                to_send.append([r.get('patient', ''), r['email'], r.get('phone', ''), r.get('check_number', ''), r.get('check_date', ''),
+            # OhMD: the patient's own conversation, once eCW's account number,
+            # date of birth or mobile can prove who it is. E-mail: the address.
+            proof = ('account no. ' + str(r['acct_no']) if r.get('acct_no') else 'date of birth' if r.get('dob')
+                     else 'mobile ' + str(r['phone']) if r.get('phone') else '')
+            dest = (f'OhMD conversation ({proof})' if proof else '') if channel == 'ohmd' else r.get('email', '')
+            if dest:
+                to_send.append([r.get('patient', ''), dest, r.get('phone', ''), r.get('check_number', ''), r.get('check_date', ''),
                                 _amount(r), r.get('dos', ''), claim, r.get('bs_status', ''), 'yes' if r.get('cashed') else 'no',
                                 _card(r), NOTICE.get(action, action), deadline.strftime('%m/%d/%Y'), subject, text])
             else:
-                why = ('not looked up yet — run "Find new checks and draft"' if not r.get('email_source') and claim
-                       else 'no eCW claim matched to this check' if not claim else 'eCW has no e-mail for this patient')
+                why = ('no eCW claim matched to this check' if not claim
+                       else 'not looked up in eCW yet — run "Find new checks and draft"' if not (r.get('email_source') or r.get('acct_no'))
+                       else 'eCW gave nothing to prove the patient in OhMD' if channel == 'ohmd' else 'eCW has no e-mail for this patient')
                 to_call.append([r.get('patient', ''), r.get('phone', ''), r.get('check_number', ''), r.get('check_date', ''), _amount(r),
                                 r.get('dos', ''), claim, r.get('bs_status', ''), 'yes' if r.get('cashed') else 'no', why])
         elif stage in ('in the mail', 'reminded', 'deadline passed'):
@@ -55,7 +62,8 @@ def review_lists(rows, policy, today=None):
     to_send.sort(key=lambda x: (x[0], x[3]))
     to_call.sort(key=lambda x: (x[0], x[2]))
     summary = {
-        'as_of': today.isoformat(), 'from': policy.get('from') or '(not set)',
+        'as_of': today.isoformat(), 'channel': channel,
+        'from': 'OhMD — the Billing and Insurance inbox' if channel == 'ohmd' else (policy.get('from') or '(not set)'),
         'to_send': len(to_send), 'to_send_amount': round(sum(x[5] for x in to_send), 2),
         'patients': len({x[1].lower() for x in to_send}),
         'to_call': len(to_call), 'to_call_amount': round(sum(x[4] for x in to_call), 2),
@@ -76,7 +84,7 @@ def samples(policy, today=None):
             ('Check not cashed · NO card on file', {'cashed': False, 'card_on_file': False}, 'first'),
             ('Check already cashed by the patient', {'cashed': True, 'card_on_file': True}, 'first'),
             ('Final notice', {'cashed': False, 'card_on_file': True}, 'final')):
-        subject, text = compose(policy, {**base, **extra}, deadline, action)
+        subject, text = compose(policy, {**base, **extra}, deadline, action, str(policy.get('channel') or 'ohmd').lower())
         out.append((label, subject, text))
     return out
 
@@ -98,7 +106,7 @@ def review_workbook(rows, policy, today=None):
             ('Messages ready to send', sm['to_send']), ('  to this many different addresses', sm['patients']),
             ('  amount they cover', sm['to_send_amount']), ('  of them: the patient already cashed the check', sm['cashed']),
             ('  of them: no card on file (the message says "billed", not "charged")', sm['no_card']),
-            ('No e-mail — to be called', sm['to_call']), ('  amount they cover', sm['to_call_amount']),
+            ('Cannot be messaged — to be called', sm['to_call']), ('  amount they cover', sm['to_call_amount']),
             ('Not due now (in the mail, already reminded, past the deadline)', sm['waiting']), ('', ''),
             ('The rules', ''),
             ('  First notice', f"once the check is {policy.get('mail_days', 7)} days old (or cashed)"),
@@ -120,7 +128,7 @@ def review_workbook(rows, policy, today=None):
         s.freeze_panes = 'A2'
         for i, name in enumerate(cols, 1):
             letter = openpyxl.utils.get_column_letter(i)
-            s.column_dimensions[letter].width = 90 if name in wide else 34 if name in ('E-mail', 'Subject', 'Why no e-mail') else 24 if name == 'Patient' else 16
+            s.column_dimensions[letter].width = 90 if name in wide else 34 if name in ('Sent to', 'Subject', 'Why not') else 24 if name == 'Patient' else 16
         if wide:
             for row in s.iter_rows(min_row=2):
                 for c in row:
@@ -128,7 +136,7 @@ def review_workbook(rows, policy, today=None):
         return s
 
     sheet('To send', SEND_COLS, to_send, wide=('Message',))
-    sheet('No e-mail - call', CALL_COLS, to_call)
+    sheet('To call', CALL_COLS, to_call)
     sheet('Not due now', WAIT_COLS, waiting)
     s = wb.create_sheet('Message wording')
     s.append(['Case', 'Subject', 'Message (made-up patient)'])

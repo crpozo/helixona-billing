@@ -155,6 +155,19 @@ CLOSE_HUB_JS = r"""() => {
 }"""
 
 
+def identity_in(text):
+    """What the Patient Hub says of who the patient is: {'acct_no', 'dob'}.
+    OhMD carries the same account number as its ID/MRN, so it is what
+    proves a conversation belongs to this patient."""
+    t = str(text or '')
+    m = re.search(r'Acc(?:ount)?\.?\s*No\.?\s*:?\s*(\d{3,9})', t, re.I)
+    acct = m.group(1) if m else ''
+    # The date of birth is the oldest date on the header.
+    years = [(int(y), f"{int(mo):02d}/{int(d):02d}/{y}") for mo, d, y in re.findall(r'\b(\d{1,2})/(\d{1,2})/((?:19|20)\d{2})\b', t[:1500])]
+    dob = min(years)[1] if years else ''
+    return {'acct_no': acct, 'dob': dob}
+
+
 def card_on_file(text):
     """What the Patient Hub's Billing box says after "Card on File": False
     when it offers "Add Card" (none on file), True when it names a card,
@@ -218,7 +231,7 @@ def read_contact(page, claim_id, open_claim, close_claim, shot=False):
         if shot:
             _shot(page, f'reminders_not_opened_{cid}')
         return None
-    out = {'email': '', 'phone': '', 'source': '', 'card_on_file': None}
+    out = {'email': '', 'phone': '', 'source': '', 'card_on_file': None, 'acct_no': '', 'dob': ''}
     try:
         # 1. The Patient Hub.
         if _click_text(page, HUB, timeout=3.0, what='Patient Hub'):
@@ -226,6 +239,7 @@ def read_contact(page, claim_id, open_claim, close_claim, shot=False):
             if text:
                 hub = contact_in(text)
                 out['card_on_file'] = card_on_file(text)
+                out.update(identity_in(text))
                 if hub['email'] or hub['phone']:
                     out.update(email=hub['email'], phone=hub['phone'], source='eCW Patient Hub')
             else:

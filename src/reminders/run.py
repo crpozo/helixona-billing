@@ -252,10 +252,13 @@ def plan(row, prev, policy, today):
     return 'reminded', ''
 
 
-def compose(policy, row, deadline, action='first'):
-    """(subject, text) of the reminder for one check."""
+def compose(policy, row, deadline, action='first', channel='email'):
+    """(subject, text) of the reminder for one check. `channel` 'ohmd' takes
+    the short wording written for a text conversation (no subject)."""
     cashed = bool(row.get('cashed'))
     body = policy.get('cashed_body' if cashed else 'body') or policy.get('body') or []
+    if channel == 'ohmd':
+        body = policy.get('ohmd_cashed_body' if cashed else 'ohmd_body') or policy.get('ohmd_body') or body
     subject = policy.get('cashed_subject' if cashed else 'subject') or policy.get('subject') or ''
     if action == 'final' and policy.get('final_subject'):
         subject = policy['final_subject']
@@ -281,6 +284,8 @@ def compose(policy, row, deadline, action='first'):
     # nobody can make. Unknown (not read) keeps the card sentence.
     key = 'no_card_sentence' if row.get('card_on_file') is False else 'card_sentence'
     vals['consequence'] = fill(policy.get(key) or '')
+    if channel == 'ohmd' and action == 'final' and policy.get('ohmd_final_prefix'):
+        body = [policy['ohmd_final_prefix']] + list(body)
     return fill(subject), '\n'.join(fill(line) for line in body)
 
 
@@ -297,11 +302,12 @@ def summarize(rows):
     out['no_email'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and not r.get('email'))
     out['cashed_by_patient'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and r.get('cashed'))
     out['no_card'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and r.get('card_on_file') is False)
+    out['no_identity'] = sum(1 for r in rows if r.get('stage') in OPEN_STAGES and not (r.get('acct_no') or r.get('dob') or r.get('phone')))
     return out
 
 
 def run_patient_check_reminders(aws_client, body, login=None, get_page=None, open_claim=None, close_claim=None,
-                                walk_portal=None):
+                                walk_portal=None, ohmd=None):
     """The task. body: since · blue_shield (walk the portal first) ·
     limit_checks · check_eft · ecw (look the e-mail up in eCW, default true) ·
     send (e-mail the patients; default false = drafts only) · test_to (send
@@ -315,7 +321,13 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
     limit = int(body.get('limit') or 0)
     only = norm_check(body.get('check_eft'))
     today = datetime.strptime(body['today'], '%Y-%m-%d').date() if body.get('today') else date.today()
-    mode = 'SEND' if do_send and not test_to else f'test → {test_to}' if test_to else 'drafts only'
+    policy_channel = load_policy().get('channel', 'ohmd')
+    channel = str(body.get('channel') or policy_channel).lower()
+    # ohmd_test: find the conversation, prove the patient, type the message,
+    # photograph it and clear the box — nothing is sent.
+    ohmd_test = bool(body.get('ohmd_test')) and channel == 'ohmd' and not do_send
+    mode = ('SEND' if do_send and not test_to else f'test → {test_to}' if test_to else
+            'OhMD test (typed, not sent)' if ohmd_test else 'drafts only') + f' · {channel}'
     logger.info(f"Reminders — checks mailed to patients: since={since_txt} blue_shield={bool(body.get('blue_shield'))} "
                 f"mode={mode} limit={limit or 'none'} as of {today}")
     table = ensure_table(aws_client)
@@ -382,6 +394,7 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
         prev = known.get(r['check_number'], {})
         r['stage'], r['action'] = plan(r, prev, policy, today)
         r['email'], r['phone'], r['email_source'] = prev.get('email', ''), prev.get('phone', ''), prev.get('email_source', '')
+        r['acct_no'], r['dob'] = prev.get('acct_no', ''), prev.get('dob', '')
         if prev.get('card_on_file') is not None:
             r['card_on_file'] = bool(prev['card_on_file'])
         if r['action'] and not r['email']:
@@ -392,7 +405,10 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
             due.append(r)
     if limit:
         due = due[:limit]
-    need_ecw = [r for r in due if not r['email'] and r['claim_ids']]
+    # E-mail needs the address; OhMD needs who the patient is (the account
+    # number is OhMD's MRN). Either comes off eCW's Patient Hub.
+    have = (lambda r: r['acct_no'] or r['dob']) if channel == 'ohmd' else (lambda r: r['email'])
+    need_ecw = [r for r in due if not have(r) and r['claim_ids']]
     if need_ecw and use_ecw and login and get_page and open_claim:
         from src.reminders.ecw import read_contact, go_to_claims
         progress('contacts', f"looking up {len(need_ecw)} patient e-mail(s) in eCW…")
@@ -406,15 +422,34 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
                     r['email'], r['phone'], r['email_source'] = got['email'], got['phone'], got['source']
                 if got and got.get('card_on_file') is not None:
                     r['card_on_file'] = got['card_on_file']
+                if got:
+                    r['acct_no'], r['dob'] = got.get('acct_no') or r['acct_no'], got.get('dob') or r['dob']
                 time.sleep(0.2)
         else:
             logger.error("❌ eCW login did not go through — no e-mail could be looked up")
-    progress('contacts', f"{sum(1 for r in due if r['email'])} of {len(due)} due reminder(s) have an e-mail"
+    progress('contacts', (f"{sum(1 for r in due if r['acct_no'] or r['dob'] or r['phone'])} of {len(due)} due reminder(s) can be proven in OhMD"
+                          if channel == 'ohmd' else f"{sum(1 for r in due if r['email'])} of {len(due)} due reminder(s) have an e-mail")
              + (f" · {sum(1 for r in due if not r['claim_ids'])} not matched to an eCW claim" if any(not r['claim_ids'] for r in due) else ''))
 
     # 3. Compose; send only when told to.
     sender = {'from': policy.get('from') or mail.NOTIFY_FROM}
-    if not sender['from'] and (do_send or test_to):
+    ohmd_page = None
+    if channel == 'ohmd' and (do_send or ohmd_test) and due and ohmd and get_page:
+        progress('ohmd', 'opening OhMD…')
+        try:
+            ohmd_page = get_page()
+            try:
+                creds = aws_client.secrets.get_secret_value(SecretId='prod/helixona/ohmd_credentials').get('SecretString')
+                creds = json.loads(creds) if creds else {}
+            except Exception:
+                creds = {}
+            if not ohmd.login(ohmd_page, creds):
+                ohmd_page = None
+                progress('ohmd', 'not signed in — sign in to OhMD on the live screen once, then run again')
+        except Exception as e:
+            ohmd_page = None
+            progress('ohmd', f'could not be opened: {str(e)[:100]}')
+    if channel == 'email' and not sender['from'] and (do_send or test_to):
         sender['from'] = mail.load_roster().get('from', '')
         if not sender['from']:
             logger.error("❌ no sender address — set \"from\" in data/patient_check_reminder.json (an address verified in Amazon SES)")
@@ -424,18 +459,38 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
         prev = known.get(r['check_number'], {})
         n = int(prev.get('reminders_sent') or 0)
         item = {k: r[k] for k in ('amount', 'check_date', 'bs_status', 'cashed', 'cashed_date', 'voided', 'payee', 'patient',
-                                  'claim_ids', 'dos', 'in_hand', 'in_hand_how', 'reconciled', 'stage', 'email', 'phone', 'email_source')}
+                                  'claim_ids', 'dos', 'in_hand', 'in_hand_how', 'reconciled', 'stage', 'email', 'phone', 'email_source',
+                                  'acct_no', 'dob')}
         item['claim_match'] = r.get('claim_match', '')
         if r.get('card_on_file') is not None:
             item['card_on_file'] = bool(r['card_on_file'])
         item.update(reminders_sent=n, updated_at=_now(), first_seen=prev.get('first_seen') or _now(), next_action=r['action'])
         if r['check_number'] in due_keys:
             deadline = _date(prev.get('deadline')) or today + timedelta(days=policy['deadline_days'])
-            subject, text = compose(policy, r, deadline, r['action'])
-            item.update(draft_subject=subject, draft_text=text, draft_deadline=deadline.isoformat(), draft_at=_now())
+            subject, text = compose(policy, r, deadline, r['action'], channel)
+            item.update(draft_subject=subject if channel == 'email' else '', draft_text=text, draft_deadline=deadline.isoformat(),
+                        draft_at=_now(), channel=channel)
             drafted += 1
             to = [test_to] if test_to else [r['email']] if r['email'] else []
-            if (do_send or test_to) and to:
+            if channel == 'ohmd':
+                if ohmd_page is not None:
+                    try:
+                        res = ohmd.send_message(ohmd_page, r, text, send=do_send)
+                    except Exception as e:
+                        res = {'status': 'failed', 'reason': str(e)[:160]}
+                    item.update(ohmd_status=res['status'], ohmd_reason=res.get('reason', '')[:300], ohmd_at=_now())
+                    logger.info(f"  → check {r['check_number']}: OhMD {res['status']} — {res.get('reason', '')}")
+                    if res['status'] == 'sent':
+                        sent += 1
+                        hist = list(prev.get('history') or [])[-19:] + [{'at': _now(), 'kind': r['action'], 'to': 'OhMD', 'message_id': ''}]
+                        item.update(reminders_sent=n + 1, last_reminder_at=today.isoformat(), history=hist,
+                                    first_reminder_at=prev.get('first_reminder_at') or today.isoformat(),
+                                    deadline=deadline.isoformat(), stage='reminded', next_action='')
+                    elif do_send:
+                        owed += 1
+                elif do_send:
+                    owed += 1
+            elif (do_send or test_to) and to:
                 mid = mail.send(aws_client, sender, to, ('[TEST] ' if test_to else '') + subject, text)
                 if mid and not test_to:
                     sent += 1
@@ -456,6 +511,6 @@ def run_patient_check_reminders(aws_client, body, login=None, get_page=None, ope
     _put(table, '_summary', {'run_at': _now(), 'as_of': today.isoformat(), 'since': since_txt, 'mode': mode,
                              'due': len(due), 'sent': sent, 'owed': owed, **summary})
     progress('done', f"{len(due)} reminder(s) due · {drafted} drafted · {sent} sent{' (test)' if test_to else ''}"
-             + (f" · {owed} not sent ({'no sender address set' if not sender['from'] else 'no e-mail or SES refused'})" if owed else '')
+             + (f" · {owed} not sent ({'see each row: not found in OhMD, identity not proven, or OhMD not open' if channel == 'ohmd' else 'no sender address set' if not sender['from'] else 'no e-mail or SES refused'})" if owed else '')
              + f" · {summary['deadline passed']} past the deadline — for a person to decide")
     return {'ok': True, 'due': len(due), 'sent': sent, 'owed': owed, **summary}

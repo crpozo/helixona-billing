@@ -1,5 +1,7 @@
 {
   "_comment": "Reminders bot (docs/reminders.md). The numbers and the wording are the clinic's to set; the bot only fills the {placeholders}. Nothing here charges a card: after the deadline the check is listed for a person to decide.",
+  "channel": "ohmd",
+  "_channel": "ohmd = the reminder goes into the patient's OhMD conversation (the operator, 2026-11-25). email = Amazon SES from the address below.",
   "from": "billingsupport@helixona.com",
   "clinic": "Helixona",
   "phone": "",
@@ -50,5 +52,24 @@
     "",
     "Thank you,",
     "{clinic} Billing"
-  ]
+  ],
+  "ohmd_body": [
+    "Hello {first_name}, this is {clinic} Billing. Blue Shield of California paid the claim for your visit{dos_phrase} by mailing a check to you instead of to us: check #{check_number}, dated {check_date}, for ${amount}.",
+    "",
+    "This payment belongs to {clinic}. Please bring or mail the check to our office, signed on the back with \"Pay to the order of {clinic}\", by {deadline}. If you already deposited it, please pay the same amount to {clinic}.",
+    "",
+    "{consequence}",
+    "",
+    "If you have not received the check, or think this is a mistake, please reply here and we will help. Thank you!"
+  ],
+  "ohmd_cashed_body": [
+    "Hello {first_name}, this is {clinic} Billing. Blue Shield of California paid the claim for your visit{dos_phrase} by mailing a check to you instead of to us (check #{check_number}, ${amount}), and Blue Shield shows the check was cashed.",
+    "",
+    "This payment belongs to {clinic}. Please pay ${amount} to {clinic} by {deadline}.",
+    "",
+    "{consequence}",
+    "",
+    "If you think this is a mistake, please reply here and we will help. Thank you!"
+  ],
+  "ohmd_final_prefix": "FINAL NOTICE."
 }

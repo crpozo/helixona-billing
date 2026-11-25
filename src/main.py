@@ -11735,7 +11735,7 @@ def process_message(message: dict, aws_client: AWSClient):
         try:
             run_patient_check_reminders(aws_client, body, login=_perform_ecw_login, get_page=get_page,
                                         open_claim=_open_claim_popup_via_lookup, close_claim=_close_claim_popup,
-                                        walk_portal=collect_blue_shield)
+                                        walk_portal=collect_blue_shield, ohmd=__import__('src.reminders.ohmd', fromlist=['x']))
         except Exception as e:
             logger.error(f"Reminders run failed: {e}")
         finally:

@@ -828,10 +828,10 @@ tbody tr:last-child td{border-bottom:none}
           <table>
             <thead>
               <tr>
-                <th>Stage</th><th>Check</th><th>Patient · DOS</th><th class="num">Amount</th><th>Blue Shield</th><th>E-mail</th><th>Reminders</th><th>Draft</th>
+                <th>Stage</th><th>Check</th><th>Patient · DOS</th><th class="num">Amount</th><th>Blue Shield</th><th>Contact · OhMD</th><th>Reminders</th><th>Draft</th>
               </tr>
             </thead>
-            <tbody id="reminders-body"><tr><td colspan="8" class="empty-state">Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> first. The bot finds the Blue Shield checks made out to the patient, looks up the patient's e-mail and writes the reminder as a draft. Nothing is e-mailed until you run <strong>Send the reminders</strong>.</td></tr></tbody>
+            <tbody id="reminders-body"><tr><td colspan="8" class="empty-state">Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> first. The bot finds the Blue Shield checks made out to the patient, looks up the patient's e-mail and writes the reminder as a draft. Nothing is sent until you run <strong>Send the reminders</strong>.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1441,15 +1441,14 @@ window.scrollToEl = function(sel){
         ];
         ACTIONS.reminders = [
             {icon: '🧪', title: 'Test on 1 check', task: 'patient_check_reminders',
-             desc: 'Takes the newest Blue Shield check made out to a patient, looks up the patient e-mail in eCW and writes the reminder as a draft. Nothing is e-mailed. Type your own address to receive that one message as a test.',
-             input: {key: 'test_to', placeholder: 'your e-mail (optional test copy)'},
-             payload: {since: '07/01/2025', blue_shield: false, limit: 1, ecw: true, send: false}},
+             desc: 'Takes the newest Blue Shield check made out to a patient, reads the patient in eCW, opens that patient&#39;s conversation in OhMD, proves it is the same person, types the reminder, takes a screenshot and clears the box. NOTHING IS SENT. Watch it on the live screen.',
+             payload: {since: '07/01/2025', blue_shield: false, limit: 1, ecw: true, send: false, ohmd_test: true}},
             {icon: '🔎', title: 'Find new checks and draft', task: 'patient_check_reminders',
-             desc: 'Walks the Blue Shield portal for new checks, keeps the ones made out to the patient that Helixona has not received, and drafts each reminder that is due. Nothing is e-mailed.',
+             desc: 'Walks the Blue Shield portal for new checks, keeps the ones made out to the patient that Helixona has not received, reads each patient in eCW and drafts each reminder that is due. Nothing is sent and OhMD is not opened.',
              payload: {since: '07/01/2025', blue_shield: true, limit: 0, ecw: true, send: false}},
             {icon: '💌', title: 'Send the reminders', task: 'patient_check_reminders',
-             desc: 'E-mails every reminder that is due to the patient: the first notice, then one every few days, the last as a final notice. Patients without an e-mail are listed for a call. The bot never charges a card.',
-             confirm: 'Send the reminder e-mails to the PATIENTS now? Check the drafts in the table first.',
+             desc: 'Sends every reminder that is due into the patient&#39;s OhMD conversation: the first notice, then one every few days, the last as a final notice. A patient who cannot be found or proven in OhMD is listed for a call. The bot never charges a card.',
+             confirm: 'Send the reminders to the PATIENTS through OhMD now? Check the drafts and the review list first.',
              payload: {since: '07/01/2025', blue_shield: false, limit: 0, ecw: true, send: true}},
         ];
         ACTIONS.resubmissions = ACTIONS.submissions;
@@ -2347,7 +2346,7 @@ window.scrollToEl = function(sel){
                     tile('in the mail', sm['in the mail'], 'in the mail', 'var(--text-muted)', 'just issued, not chased yet'),
                     tile('reminded', sm['reminded'], 'reminded', 'var(--info)', 'waiting for the patient'),
                     tile('deadline passed', sm['deadline passed'], 'deadline passed', 'var(--bad)', money(sm['deadline passed_amount']) + ' · a person decides'),
-                    tile('no e-mail', sm.no_email, 'no_email', 'var(--bad)', 'call the patient'),
+                    tile('not read in eCW', sm.no_identity, 'no_identity', 'var(--bad)', 'nothing yet to prove the patient'),
                     tile('cashed by patient', sm.cashed_by_patient, 'cashed', 'var(--warning)', 'Blue Shield shows it cashed'),
                     ...(sm.no_card ? [tile('no card on file', sm.no_card, 'no_card', 'var(--bad)', 'eCW has no card to charge')] : []),
                     tile('received', sm['received'], 'received', 'var(--success)', 'the check is at Helixona'),
@@ -2356,7 +2355,7 @@ window.scrollToEl = function(sel){
             const body = document.getElementById('reminders-body');
             if (!body) return;
             const f = window._remindersFilter;
-            const rows = data.rows.filter(r => f === 'open' ? open(r) : f === 'no_email' ? (open(r) && !r.email) : f === 'cashed' ? (open(r) && r.cashed) : f === 'no_card' ? (open(r) && r.card_on_file === false) : r.stage === f);
+            const rows = data.rows.filter(r => f === 'open' ? open(r) : f === 'no_identity' ? (open(r) && !(r.acct_no || r.dob || r.phone)) : f === 'cashed' ? (open(r) && r.cashed) : f === 'no_card' ? (open(r) && r.card_on_file === false) : r.stage === f);
             window._remindersShown = rows;
             if (!rows.length) {
                 body.innerHTML = `<tr><td colspan="8" class="empty-state">${data.rows.length ? 'Nothing under this tile.' : 'Nothing yet. Use <strong>▶ Run → Test on 1 check</strong> on the right.'}</td></tr>`;
@@ -2369,7 +2368,7 @@ window.scrollToEl = function(sel){
                   <td>${esc(r.patient || '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.dos || '')}${(r.claim_ids || []).length ? ' · claim ' + esc(r.claim_ids.join(', ')) + (r.claim_match ? ' (by ' + esc(r.claim_match) + ')' : '') : ' · no eCW claim matched'}</div></td>
                   <td class="num">${money(r.amount)}</td>
                   <td>${esc(r.bs_status || '—')}<div style="font-size:11px;color:var(--text-muted)">${r.in_hand ? 'at Helixona: ' + esc(r.in_hand_how) : r.cashed ? 'cashed ' + esc(r.cashed_date || '') : r.reconciled ? 'not received' : 'not reconciled yet'}</div></td>
-                  <td>${r.email ? esc(r.email) : (open(r) ? '<span style="color:var(--bad)">none on file</span>' : '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.phone || '')}${r.email_source ? ' · ' + esc(r.email_source) : ''}</div>${r.card_on_file === false ? '<div style="font-size:11px;color:var(--bad)">no card on file</div>' : r.card_on_file === true ? '<div style="font-size:11px;color:var(--text-muted)">card on file</div>' : ''}</td>
+                  <td>${r.ohmd_status ? `<span style="color:${r.ohmd_status === 'sent' ? 'var(--success)' : r.ohmd_status === 'typed' ? 'var(--info)' : 'var(--bad)'}" title="${esc(r.ohmd_reason || '')}">OhMD: ${esc(r.ohmd_status)}</span>` : (r.acct_no || r.dob) ? 'acct ' + esc(r.acct_no || '—') : r.email ? esc(r.email) : (open(r) ? '<span style="color:var(--bad)">not read in eCW yet</span>' : '—')}<div style="font-size:11px;color:var(--text-muted)">${esc(r.phone || '')}${r.email_source ? ' · ' + esc(r.email_source) : ''}</div>${r.card_on_file === false ? '<div style="font-size:11px;color:var(--bad)">no card on file</div>' : r.card_on_file === true ? '<div style="font-size:11px;color:var(--text-muted)">card on file</div>' : ''}</td>
                   <td><strong>${nf(r.reminders_sent)}</strong> sent<div style="font-size:11px;color:var(--text-muted)">${r.last_reminder_at ? 'last ' + esc(r.last_reminder_at) : ''}${r.deadline ? ' · deadline ' + esc(r.deadline) : ''}</div></td>
                   <td>${r.draft_text && r.next_action ? `<button class="btn" onclick="showReminderDraft(${i})">View draft</button>` : ''}</td>
                 </tr>`).join('');

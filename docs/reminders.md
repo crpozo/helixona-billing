@@ -64,6 +64,43 @@ as a patient balance") in place of `card_sentence`: the message never
 promises a charge nobody can make. Not read keeps the card sentence. The
 tab shows *no card on file* on the row and as a tile.
 
+## Through OhMD (2026-11-25)
+
+The operator: *"we have to send a message through here, not the SMS. We
+need an integration."* The reminder now goes into the patient's own
+conversation in **OhMD** (app.ohmd.io) — the inbox the team already reads —
+and the patient's answer comes back there. `"channel": "ohmd"` in
+`data/patient_check_reminder.json`; `"email"` brings back Amazon SES.
+
+How (src/reminders/ohmd.py) — the bot drives the OhMD web app in its own
+browser:
+
+1. **Sign in** — the Chrome profile keeps the session. The first time, sign
+   in on the bot's live screen (port 6086), or store
+   `prod/helixona/ohmd_credentials` `{"username": "...", "password": "..."}`;
+   a code or prompt is finished by a person on the live screen.
+2. **Search the patient by name** and open the conversation.
+3. **Prove it is the patient.** OhMD's Chat Details shows DOB, Mobile and
+   ID/MRN; the MRN is eCW's account number, which the bot read on the
+   Patient Hub. The account number must agree — or, when one side has none,
+   the date of birth, or the mobile. **The name alone never sends a
+   message**; an unproven conversation is listed for a person.
+4. **Type the reminder** — the short wording (`ohmd_body`,
+   `ohmd_cashed_body`), never in the internal Shared Notes box.
+5. **Send**, and see the message in the thread.
+
+**🧪 Test on 1 check** does steps 1–4, takes a screenshot
+(`eob_post_ohmd_typed_<check>.png`), **clears the box and sends nothing**.
+
+Each row shows the result: `OhMD: sent` · `typed` (a test) · `not found` ·
+`unproven` · `failed`, with the reason on hover.
+
+Not known yet, to tune on the first test: whether OhMD's search finds a
+patient with no open chat, and the exact Send control. OhMD only texts
+patients who have not opted out; an opted-out patient will show as a failed
+send. OhMD also sells an HTTP API (API key, webhooks) that would replace
+the clicking — it needs a key and its endpoint reference from OhMD.
+
 ## Stages
 
 | stage | meaning |
