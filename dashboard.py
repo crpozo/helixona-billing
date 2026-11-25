@@ -90,6 +90,114 @@ def admin_email():
 
 def is_admin():
     return bool(admin_email())
+
+
+# ── The door: a PIN before anything else ──────────────────────────────────
+# The dashboard shows patients' names, checks and balances and can start the
+# bots, and it had no door at all. Every page and every API now wants a PIN
+# (the operator, 2026-11-25). The PIN comes from DASHBOARD_PIN in .env, else
+# the one the operator chose. A correct PIN sets a signed cookie for 12
+# hours; five wrong tries from one address lock that address out for 10
+# minutes — four digits are ten thousand guesses. The host's own calls
+# (the systemd timers posting to 127.0.0.1) pass without it.
+DASHBOARD_PIN = os.environ.get('DASHBOARD_PIN', '2201').strip()
+PIN_COOKIE = 'hx_pin'
+PIN_HOURS = 12
+PIN_MAX_TRIES = 5
+PIN_LOCK_SECONDS = 600
+_pin_tries = {}      # address → [wrong tries, locked until (epoch seconds)]
+
+
+def _pin_serializer():
+    # Signed with the admin key AND the PIN: changing the PIN signs everyone out.
+    return URLSafeSerializer(admin_key() + '|' + DASHBOARD_PIN, salt='helixona-pin')
+
+
+def pin_ok():
+    """The request carries a PIN cookie that is still good."""
+    import time as _t
+    raw = request.cookies.get(PIN_COOKIE, '')
+    if not raw:
+        return False
+    try:
+        issued = float(_pin_serializer().loads(raw))
+    except (BadSignature, TypeError, ValueError):
+        return False
+    return 0 <= _t.time() - issued < PIN_HOURS * 3600
+
+
+def _from_this_host():
+    return (request.remote_addr or '') in ('127.0.0.1', '::1')
+
+
+PIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Helixona · Enter PIN</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d1117;color:#e6edf3;font:15px system-ui,-apple-system,Segoe UI,sans-serif}
+form{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:30px 28px;width:min(320px,86vw);text-align:center}
+h1{font-size:18px;margin:0 0 6px}p{color:#8b949e;font-size:13px;margin:0 0 18px}
+input{width:100%;box-sizing:border-box;font-size:26px;letter-spacing:.5em;text-align:center;padding:12px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3}
+button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:10px;background:#d4b572;color:#111;font-weight:700;font-size:15px;cursor:pointer}
+.err{color:#f85149;font-size:13px;margin-top:12px;min-height:18px}
+</style></head><body>
+<form method="post" action="/pin" autocomplete="off">
+<h1>Helixona Billing</h1><p>Enter the PIN to continue</p>
+<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autofocus required aria-label="PIN">
+<input type="hidden" name="next" value="{{ next }}">
+<button type="submit">Enter</button><div class="err">{{ error }}</div>
+</form></body></html>"""
+
+
+def _safe_next(target):
+    """Only a path on this dashboard — never another site."""
+    target = str(target or '/')
+    return target if target.startswith('/') and not target.startswith('//') and '\\' not in target else '/'
+
+
+@app.route('/pin', methods=['GET', 'POST'])
+def pin_gate():
+    import hmac
+    import time as _t
+    nxt = _safe_next(request.values.get('next'))
+    addr = request.remote_addr or '?'
+    tries, until = _pin_tries.get(addr, [0, 0])
+    now = _t.time()
+    if until > now:
+        mins = int((until - now) // 60) + 1
+        return render_template_string(PIN_PAGE, next=nxt, error=f'Too many wrong tries. Try again in {mins} min.'), 429
+    if request.method == 'POST':
+        if hmac.compare_digest(str(request.form.get('pin') or '').strip(), DASHBOARD_PIN):
+            _pin_tries.pop(addr, None)
+            resp = make_response(redirect(nxt))
+            resp.set_cookie(PIN_COOKIE, _pin_serializer().dumps(now), max_age=PIN_HOURS * 3600, httponly=True, samesite='Lax')
+            return resp
+        tries += 1
+        if tries >= PIN_MAX_TRIES:
+            _pin_tries[addr] = [0, now + PIN_LOCK_SECONDS]
+            return render_template_string(PIN_PAGE, next=nxt, error='Too many wrong tries. Try again in 10 min.'), 429
+        _pin_tries[addr] = [tries, 0]
+        return render_template_string(PIN_PAGE, next=nxt, error=f'Wrong PIN. {PIN_MAX_TRIES - tries} tries left.'), 401
+    return render_template_string(PIN_PAGE, next=nxt, error='')
+
+
+@app.route('/logout')
+def pin_logout():
+    resp = make_response(redirect('/pin'))
+    resp.delete_cookie(PIN_COOKIE)
+    return resp
+
+
+@app.before_request
+def _require_pin():
+    """Every page and every API, except the PIN page itself and the host's
+    own calls. An API answers 401 in JSON (the open page then sends the
+    person back to the PIN); a page is redirected."""
+    if not DASHBOARD_PIN or request.path in ('/pin', '/logout', '/favicon.ico') or _from_this_host() or pin_ok():
+        return None
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'PIN required', 'pin_required': True}), 401
+    from urllib.parse import quote
+    return redirect('/pin' if request.path == '/' else '/pin?next=' + quote(request.full_path.rstrip('?'), safe=''))
 KEY_FILE = "infra/helixona-agent-key.pem"
 
 # Per-bot routing: which SQS queue + systemd unit each tab targets.
@@ -2485,6 +2593,8 @@ window.scrollToEl = function(sel){
         async function loadData() {
             try {
                 const res = await fetch('/api/claims');
+                // The PIN lasts 12 hours: an open page whose PIN ran out goes back to the door.
+                if (res.status === 401) { location.href = '/pin'; return; }
                 const data = await res.json();
                 window._allClaims = data.claims;
                 const claims = applyDateFilter(claimsForActiveBot(data.claims));
