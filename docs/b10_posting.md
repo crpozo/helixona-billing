@@ -162,11 +162,30 @@ B10 meeting. Each line is in the code or in `data/ecw_posting_policy.json`.
   permission to write in SharePoint and in Karina's sheet.
 - **Posting every ready check in one run** — after the supervised pilot.
 
-## To confirm before the first real post
+## Answers of 2026-11-25 (Vignesh, by message)
 
-1. Amount when Blue Shield adds interest: approve-to-pay or the check total?
-2. What to do when Unposted is not 0; can a payment be deleted, by whom?
-3. Who approves the bot's postings, and the eCW user it posts with.
-4. Is the claim status set before "Post payment" or by going back into the
-   claim afterwards (the B10c demo went back in)?
-5. Received date when the tracker has none: today (B10c) or wait?
+- **Claim status** is set *before* clicking Post Payment — as the bot does.
+- **Received date** when the tracker has none: the deposit date.
+- **Unposted is not 0** in one situation only: an adjusted payment. That is
+  when the REV line is used to bring it to 0. Any other non-zero Unposted
+  is a mistake — the bot reports `unbalanced` for a person.
+- **Two insurances**: the one named on the EOB (the bot picks the radio
+  beside "Blue Shield of California").
+- **The REV line** takes the negative amount in its **Paid** box.
+- **A denied line's reason code** is always the one printed on the EOB.
+- **eCW user for the bot**: `billingsupport`. Its password goes in Secrets
+  Manager, secret `prod/helixona/ecw_posting_credentials`
+  (`{"username": "billingsupport", "password": "…"}`) — never in chat or in
+  the repository. Until the secret exists the bot uses the shared login.
+- **Portals**: UHC and Cigna invites went to billingsupport@helixona.com;
+  UMR will share UHC's credentials once UHC is set up.
+- **SharePoint and the tracker**: write permission is being granted to
+  billingsupport@helixona.com.
+
+## Still open
+
+1. Amount when Blue Shield adds interest (Vignesh is checking).
+2. Who answers UHC's verification call every 30 days.
+3. Sample checks and EOBs from Cigna and UMR, and a Blue Shield EOB with a
+   denied line (to read its reason code).
+4. Who approves the bot's postings during the pilot.

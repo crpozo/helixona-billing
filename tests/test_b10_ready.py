@@ -119,7 +119,7 @@ class WhatTheCallsTaught(unittest.TestCase):
         by = {r['check']: r for r in ready.ready_queue([second, first], tracked, POLICY)}
         self.assertEqual(by['1111111']['stage'], 'ready')
         self.assertEqual(by['2222222']['stage'], 'held')
-        self.assertIn('reversal', by['2222222']['reason'])
+        self.assertIn('REV line', by['2222222']['reason'])
         self.assertIn('check 1111111', by['2222222']['reason'])
 
     def test_a_zero_eob_is_non_payment_data_under_the_eob_number_with_one_date(self):
@@ -161,7 +161,23 @@ class ThePopupTakesTheTrackersDates(unittest.TestCase):
 
     def test_no_tracker_date_falls_back_to_the_cashed_date(self):
         f, problems = payment_header(self.EOB, self.CHECK, {'received': '', 'deposit': ''}, POLICY)
-        self.assertEqual((problems, f['Deposit Date'], f['Received Date']), ([], '11/02/2026', None))
+        self.assertEqual((problems, f['Deposit Date'], f['Received Date']), ([], '11/02/2026', '11/02/2026'))
+
+    def test_no_received_date_takes_the_deposit_date(self):
+        # Vignesh, 2026-11-25: "Use the deposit date instead".
+        f, _ = payment_header(self.EOB, self.CHECK, {'received': '', 'deposit': '10/30/2026'}, POLICY)
+        self.assertEqual((f['Received Date'], f['Deposit Date']), ('10/30/2026', '10/30/2026'))
+
+    def test_the_bot_posts_with_its_own_ecw_user_when_its_secret_exists(self):
+        from src.eob import post
+        aws = mock.Mock()
+        aws.secrets.get_secret_value.return_value = {'SecretString': '{"username": "billingsupport", "password": "x"}'}
+        self.assertEqual(post.posting_credentials(aws)['username'], 'billingsupport')
+        aws.get_secret.assert_not_called()
+        aws.secrets.get_secret_value.side_effect = Exception('ResourceNotFoundException')
+        aws.get_secret.return_value = {'username': 'shared', 'password': 'y'}
+        self.assertEqual(post.posting_credentials(aws)['username'], 'shared')
+        self.assertIn('creds = posting_credentials(aws_client)', _read('src/eob/post.py'))
 
     def test_no_deposit_date_anywhere_is_a_problem(self):
         _, problems = payment_header(self.EOB, {**self.CHECK, 'cashed_date': ''}, {}, POLICY)

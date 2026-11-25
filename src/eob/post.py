@@ -839,6 +839,28 @@ def type_grid(page, frm, cols, located):
     return written, problems
 
 
+POSTING_SECRET = 'ecw_posting_credentials'
+
+
+def posting_credentials(aws_client):
+    """The eCW user the payments are entered with. The bot's own account
+    (billingsupport, 2026-11-25) when its secret exists — every payment then
+    says in eCW that the bot posted it — else the shared login the other
+    bots read with. The password lives in Secrets Manager only."""
+    try:
+        import json as _json
+        from src.config import settings
+        raw = aws_client.secrets.get_secret_value(SecretId=f"{settings.secrets_manager_prefix}{POSTING_SECRET}").get('SecretString')
+        creds = _json.loads(raw) if raw else {}
+        if creds.get('username') and creds.get('password'):
+            logger.info(f"🔑 eCW user for posting: {creds['username']} (its own account)")
+            return creds
+    except Exception:
+        pass
+    logger.info(f"🔑 no {POSTING_SECRET} secret — using the shared eCW login")
+    return aws_client.get_secret('ecw_credentials')
+
+
 def cancel_popups(page):
     for _ in range(3):
         if not _click_text(page, ['Cancel', 'Close'], timeout=2):
@@ -1082,7 +1104,7 @@ def run_eob_post(page, aws_client, body, login):
     if not ready:
         return dict({'ok': True, 'checks': len(todo)}, **counts)
 
-    creds = aws_client.get_secret('ecw_credentials')
+    creds = posting_credentials(aws_client)
     if not login(page, creds, aws_client):
         logger.error("❌ eCW login failed — nothing entered")
         return {'ok': False, 'reason': 'login'}

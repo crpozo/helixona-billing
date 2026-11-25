@@ -70,6 +70,10 @@ def payment_header(eob, check, tracker=None, policy=None):
     if not deposit:
         problems.append('no deposit date: the tracker has none and Blue Shield shows no cashed date')
     received = str(tracker.get('received') or '').strip() if policy.get('received_date') == 'tracker' else ''
+    if policy.get('received_date') == 'tracker' and not received:
+        # Vignesh, 2026-11-25: "When the tracker has no received date — use
+        # the deposit date instead."
+        received = deposit
 
     fields = {
         'Facility': 'select' if policy.get('facility') == 'select' else None,

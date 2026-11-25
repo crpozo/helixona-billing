@@ -115,8 +115,8 @@ def stage_of(eob, check_row, policy=None, adjusted=None):
         return 'EOB missing', 'deposited per the tracker, but the EOB file is not saved — download it again'
     claims = [c for c in (eob.get('claims') or []) if isinstance(c, dict)]
     if adjusted:
-        return 'held', (f"a second payment for claim {adjusted[0]} (first: check {adjusted[1]}) — an adjusted payment needs the "
-                        f"reversal steps (REV); by hand for now")
+        return 'held', (f"a second payment for claim {adjusted[0]} (first: check {adjusted[1]}) — an adjusted payment: post its "
+                        f"lines, add the REV line on the claim and enter the negative unposted amount in its Paid box; by hand for now")
     if len(claims) > 1 and not policy.get('multi_claim_checks'):
         return 'held', f"the check pays {len(claims)} claims — 'Add insurance payment' is not covered yet"
     if res_status == 'held':
